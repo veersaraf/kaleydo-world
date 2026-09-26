@@ -399,7 +399,7 @@ export class Flow {
     const kal = item('◆', 'linear-gradient(135deg,#ff5a8a,#ffb13d,#4be3a2,#52a7ff)', 'Kaleido Rally', 'The world shatters as you play');
     const tb = loadTour().beaten;
     const tour = item('🏆', '#ffb13d', 'World Tour', tb >= TOUR.length ? 'The Prism is whole — play again' : `${Math.min(tb, 8)} of 8 shards restored`);
-    const help = item('?', '#35d49a', 'How to Play', 'Swinging, timing & spin');
+    const help = item('?', '#35d49a', 'How to Play', 'Tennis, bowling & sword duels');
     const set = item('⚙', '#8a7dff', 'Settings', 'Sound, voice, controls');
     const labItem = item('🎯', '#ff5a8a', 'Swing Lab', 'Ball machine + a read-out of every swing');
     const bowlItem = item('🎳', '#ff8a3d', 'Bowling', 'Grip, swing, let go — ten frames');
@@ -600,42 +600,57 @@ export class Flow {
     return this.navScreen('worlds', el, nav, () => this.go(this.setupScreen(this.mode)), { title: 'Choose a world', hint: '◀ ▶ browse · A play' });
   }
 
-  private helpScreen(): Screen {
+  private helpScreen(sport = 0): Screen {
     const tip = (art: string, t: string, d: string) => h('div', { class: 'tip' }, h('div', { class: 'art' }, art), h('b', null, t), h('span', null, d));
+    const kbd = (...parts: (string | [string])[]) => h('div', { class: 'keys' }, ...parts.map((p) => (typeof p === 'string' ? p : h('kbd', null, p[0]))));
+    const pages: { name: string; tips: HTMLElement[]; keys: HTMLElement }[] = [
+      {
+        name: 'Tennis',
+        tips: [
+          tip('📱', 'Swing your phone', 'Hold it like a racket handle and swing when the ball arrives. Your player runs to the ball for you.'),
+          tip('⏱️', 'Timing aims', 'Swing early to pull the ball cross-court. Swing late to push it down the line. Nail the moment for a PERFECT.'),
+          tip('💨', 'Speed = power', 'A fast swing hits hard and deep. A gentle swing floats it softly.'),
+          tip('🌀', 'Spin', 'Brush upward for topspin (dips and kicks). Chop downward for slice. A soft upward swing lobs; a soft chop drops it short.'),
+          tip('🎾', 'Serving', 'Lift your phone (or tap) to toss, then swing as the ball peaks. Perfect timing = a rocket serve.'),
+          tip('◆', 'Kaleido Rally', 'Long rallies build the music. Hit PERFECT shots and the whole world shatters into the next one.'),
+        ],
+        keys: kbd('No phone? Flick the mouse to swing (up = topspin, down = slice) · ', ['Space'], ' toss & swing · ', ['J'], ' ', ['K'], ' ', ['L'], ' flat / topspin / slice · ', ['Esc'], ' pause'),
+      },
+      {
+        name: 'Bowling',
+        tips: [
+          tip('🎳', 'Hold the ball', 'Press and hold the big ball on your phone — that’s your grip. The bowler walks up as you swing.'),
+          tip('💪', 'Swing and let go', 'Swing your arm back, then forward like bowling, and let go at the bottom. Faster swing, faster ball.'),
+          tip('🌀', 'Hook it', 'Twist your wrist as you let go to curve the ball late in the lane. Turn it left to hook left.'),
+          tip('🎯', 'Aim', '◀ ▶ step along the line, ↺ ↻ turn the aim line — one board per tap. A straight ball from where you start finds the pocket.'),
+          tip('✨', 'Strikes', 'Hit the pocket (just beside the head pin) with a little angle. Hooking? Move out and aim back in.'),
+          tip('👥', 'Take turns', 'Up to four bowlers, each on their own phone — add a CPU if you like. Ten frames, real pin physics.'),
+        ],
+        keys: kbd('No phone? Hold ', ['Space'], ' or the mouse and let go · ', ['J'], ' ', ['K'], ' ', ['L'], ' straight / hook left / hook right · arrows move & aim'),
+      },
+      {
+        name: 'Sword Duel',
+        tips: [
+          tip('⚔️', 'Your phone is the sword', 'Hold it like a sword’s grip. The sword on screen follows your phone.'),
+          tip('💥', 'Swing to strike', 'Swing in any direction — across, down, on a diagonal — or push forward to thrust. Hits knock them back.'),
+          tip('🛡️', 'Guard across', 'Hold GUARD and hold your sword across their swing: upright stops side swings, flat stops chops.'),
+          tip('😵', 'Stun them', 'A blocked attacker is stunned for a moment. That’s your chance — strike back!'),
+          tip('🔋', 'Don’t flail', 'Wild swinging tires your arm and your hits go weak. Watch their sword and pick your moment.'),
+          tip('🌊', 'Off the edge', 'Knock them off the end of the platform to take the round. Best of three.'),
+        ],
+        keys: kbd('No phone? Arrows or a mouse drag slash · hold ', ['Space'], ' or the right button to guard · ', ['X'], ' thrust'),
+      },
+    ];
+    const page = pages[sport];
+    const tabs = h('div', { class: 'row help-tabs' }, h('span', { class: 'k' }, 'Sport'), h('span', { class: 'v' }, h('span', { class: 'arrow' }, '◀'), h('span', null, page.name), h('span', { class: 'arrow' }, '▶')));
+    const flip = (d: number) => this.go(this.helpScreen((sport + d + pages.length) % pages.length));
     const back = h('div', { class: 'row go' }, 'Got it');
-    const nav = new Nav([{ el: back, onSelect: () => this.go(this.mainMenu()) }]);
-    const sheet = h(
-      'div',
-      { class: 'sheet panel' },
-      h('h2', null, 'How to play'),
-      h(
-        'div',
-        { class: 'help-grid' },
-        tip('📱', 'Swing your phone', 'Hold it like a racket handle and swing when the ball arrives. Your player runs to the ball for you.'),
-        tip('⏱️', 'Timing aims', 'Swing early to pull the ball cross-court. Swing late to push it down the line. Nail the moment for a PERFECT.'),
-        tip('💨', 'Speed = power', 'A fast swing hits hard and deep. A gentle swing floats it softly.'),
-        tip('🌀', 'Spin', 'Brush upward for topspin (dips and kicks). Chop downward for slice. A soft upward swing lobs; a soft chop drops it short.'),
-        tip('🎾', 'Serving', 'Tap your phone (or swing) to toss, then swing as the ball peaks. Perfect timing = a rocket serve.'),
-        tip('◆', 'Kaleido Rally', 'Long rallies build the music. Hit PERFECT shots and the whole world shatters into the next one.'),
-      ),
-      h(
-        'div',
-        { class: 'keys' },
-        'No phone? Flick the mouse to swing (up = topspin, down = slice) · ',
-        h('kbd', null, 'Space'),
-        ' toss & swing · ',
-        h('kbd', null, 'J'),
-        ' ',
-        h('kbd', null, 'K'),
-        ' ',
-        h('kbd', null, 'L'),
-        ' flat / topspin / slice · ',
-        h('kbd', null, 'Esc'),
-        ' pause',
-      ),
-      back,
-    );
-    return this.navScreen('help', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'How to play', hint: 'A to go back' });
+    const nav = new Nav([
+      { el: tabs, onLeft: () => flip(-1), onRight: () => flip(1), onSelect: () => flip(1) },
+      { el: back, onSelect: () => this.go(this.mainMenu()) },
+    ]);
+    const sheet = h('div', { class: 'sheet panel' }, h('h2', null, 'How to play'), tabs, h('div', { class: 'help-grid' }, ...page.tips), page.keys, back);
+    return this.navScreen('help', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'How to play', hint: '◀ ▶ sport · A to go back' });
   }
 
   private settingsScreen(): Screen {
