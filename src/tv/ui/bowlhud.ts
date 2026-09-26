@@ -63,9 +63,15 @@ export class BowlHud {
   /** Whose turn: a banner under the scorecard. */
   showTurn(b: Bowler, frame: number, ball: number) {
     clear(this.turn);
+    this.turn.style.visibility = '';
     this.turn.style.setProperty('--c', b.color);
     this.turn.append(h('b', null, b.name), h('span', null, frame === 9 ? `10th frame · ball ${ball + 1}` : `Frame ${frame + 1}${ball ? ' · 2nd ball' : ''}`));
     replay(this.turn, 'show');
+  }
+
+  hideTurn() {
+    this.turn.classList.remove('show');
+    this.turn.style.visibility = 'hidden';
   }
 
   /** The pin diagram (null hides it). */

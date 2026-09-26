@@ -1,11 +1,13 @@
 // Plays a bowling game on the TV (you + a CPU) through the real input callbacks,
 // screenshots key moments and prints the scoring as it goes.
 //   node scripts/bowl-play.mjs <outDir> [world] [frames]
+//   node scripts/bowl-play.mjs <outDir> [world] end   (frames 1–9 prefilled: the 10th frame and the results)
 import { chromium } from 'playwright-core';
 const BASE = process.env.BASE || 'http://localhost:3200';
 const out = process.argv[2];
 const world = process.argv[3] || 'park';
-const frames = +(process.argv[4] || 3);
+const toEnd = process.argv[4] === 'end';
+const frames = toEnd ? 10 : +(process.argv[4] || 3);
 const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'] });
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
 const tv = await ctx.newPage();
@@ -20,6 +22,15 @@ await tv.waitForTimeout(500);
 await tv.evaluate((w) => window.flow.beginBowling(w, 0.65), world);
 await tv.waitForFunction(() => window.kaleido.bowl && window.kaleido.bowl.state === 'ready', null, { timeout: 30000 });
 await tv.screenshot({ path: `${out}/bowl-${world}-ready.png` });
+if (toEnd) {
+  // nine frames already bowled (a strike, a spare, an open frame…), as if we'd played them
+  await tv.evaluate(() => {
+    const g = window.kaleido.bowl;
+    const rolls = [[10], [7, 3], [9, 0], [10], [10], [8, 2], [6, 3], [10], [9, 1]];
+    for (const b of g.bowlers) for (const f of rolls) for (const r of f) b.score.add(r);
+    window.flow.bowlHud?.update(g.current);
+  });
+}
 const shot = { back: false, lane: false, pins: false, result: false };
 let lastFrame = -1;
 for (let turn = 0; turn < frames * 4; turn++) {
@@ -60,5 +71,10 @@ for (let turn = 0; turn < frames * 4; turn++) {
   await tv.waitForFunction(() => { const g = window.kaleido.bowl; return g.state !== 'result'; }, null, { timeout: 10000, polling: 100 }).catch(() => null);
 }
 await tv.screenshot({ path: `${out}/bowl-${world}-card.png` });
+if (toEnd) {
+  await tv.waitForFunction(() => document.querySelector('.results'), null, { timeout: 30000, polling: 200 }).catch(() => logs.push('no results screen'));
+  await tv.waitForTimeout(800);
+  await tv.screenshot({ path: `${out}/bowl-${world}-results.png` });
+}
 console.log(logs.join('\n') || 'no errors');
 await browser.close();

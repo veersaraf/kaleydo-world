@@ -1030,6 +1030,8 @@ export class Flow {
         break;
       case 'over':
         this.bowlRoll.on = false;
+        hud?.setPins(null);
+        hud?.hideTurn();
         a?.sfx.roll(0);
         a?.sfx.cheer(1);
         window.setTimeout(() => {
@@ -1065,14 +1067,19 @@ export class Flow {
       { el: menu, onSelect: () => this.quitToMenu() },
     ]);
     const winner = ranking[0];
-    const rows = ranking.map((b, i) =>
-      h('div', { class: 'brank', style: `--c:${b.color}` }, h('b', null, `${i + 1}`), h('i'), h('span', null, b.name), h('em', null, String(b.score.total()))),
+    const top = winner.score.total();
+    const tied = ranking.filter((b) => b.score.total() === top);
+    // equal scores share a place (1, 1, 3)
+    const place = (b: import('./bowling/game').Bowler) => 1 + ranking.filter((q) => q.score.total() > b.score.total()).length;
+    const rows = ranking.map((b) =>
+      h('div', { class: 'brank', style: `--c:${b.color}` }, h('b', null, `${place(b)}`), h('i'), h('span', null, b.name), h('em', null, String(b.score.total()))),
     );
+    const title = ranking.length === 1 ? `${top} points!` : tied.length === ranking.length ? "It's a tie!" : tied.length > 1 ? `${tied.map((b) => b.name).join(' & ')} tie for first!` : `${winner.name} wins!`;
     const strikes = (b: import('./bowling/game').Bowler) => b.score.frames().reduce((n, f) => n + f.rolls.filter((r) => r === 'X').length, 0);
     const sheet = h(
       'div',
       { class: 'sheet panel results' },
-      h('h2', null, ranking.length > 1 ? `${winner.name} wins!` : `${winner.score.total()} points!`),
+      h('h2', null, title),
       h('div', { class: 'hintline' }, ranking.length > 1 ? 'Final scores' : `${strikes(winner)} strike${strikes(winner) === 1 ? '' : 's'} this game`),
       ...rows,
       h('div', { class: 'menu' }, again, other, menu),
