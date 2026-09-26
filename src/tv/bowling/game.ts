@@ -72,6 +72,8 @@ export class BowlingGame {
   private resultAt = 0;
   private rng = new Rng();
   lastThrow: BallThrow | null = null;
+  /** a release that came before the bowler reached the line: hurry there, then let go */
+  private pending: { speed: number; angle: number; spin: number } | null = null;
 
   constructor(
     public bowlers: Bowler[],
@@ -112,9 +114,17 @@ export class BowlingGame {
   release(slot: number, r: { speed: number; angle: number; spin: number }) {
     const b = this.bowler;
     if (b.slot !== slot) return;
-    if (this.state === 'ready') this.setState('approach'); // a release with no grip first (swipe)
+    if (this.state === 'ready') {
+      // a release with no grip first (a swipe): walk up from the stance
+      this.setState('approach');
+      this.body.phase = 'approach';
+      this.body.t = 0;
+    }
     if (this.state !== 'approach') return;
-    this.throwBall(r.speed, r.angle, r.spin);
+    // the ball leaves the hand at the foul line: if the bowler isn't there yet,
+    // they hurry through the last steps and let go on arrival
+    if (this.body.step >= 0.9) this.throwBall(r.speed, r.angle, r.spin);
+    else this.pending = { ...r };
   }
 
   /** live arm angle from the phone while the grip is held */
@@ -163,12 +173,20 @@ export class BowlingGame {
         break;
       }
       case 'approach': {
+        // a waiting release fast-forwards the steps (about 0.3 s to the line)
+        if (this.pending) this.stateT0 -= dt * 2.4;
         const u = clamp((t - this.stateT0) / APPROACH_T);
         this.body.step = u;
         this.body.z = STANCE_Z + (SLIDE_Z - STANCE_Z) * (1 - Math.pow(1 - u, 1.4));
         // the arm: the phone's live swing, or our own pendulum (keyboard, swipe, CPU)
-        const live = this.armLive !== null && t - this.armLiveT < 0.4;
-        this.body.arm = live ? this.armLive! : this.autoArm(u);
+        const live = this.armLive !== null && t - this.armLiveT < 0.4 && !this.pending;
+        this.body.arm = live ? this.armLive! : this.pending ? Math.min(0.2, this.body.arm + dt * 7) : this.autoArm(u);
+        if (this.pending && u >= 0.97) {
+          const r = this.pending;
+          this.pending = null;
+          this.throwBall(r.speed, r.angle, r.spin);
+          break;
+        }
         if (b.cpu !== null && t >= this.cpuReleaseAt) this.cpuThrow(b);
         // a phone that let go without a release message (lost packet): throw anyway
         if (!this.gripping && b.cpu === null && t - this.stateT0 > APPROACH_T + 2.5) this.throwBall(5, 0, 0);
@@ -289,6 +307,7 @@ export class BowlingGame {
     this.setState('ready');
     this.gripping = false;
     this.armLive = null;
+    this.pending = null;
     this.moveDir = 0;
     this.turnDir = 0;
     this.body = { x: b.x, z: STANCE_Z, yaw: 0, handed: b.handed, phase: 'ready', t: 0, arm: 0.9, step: 0, holding: true, spin: 0 };
