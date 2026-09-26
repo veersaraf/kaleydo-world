@@ -1668,3 +1668,67 @@ kbd {
   font-size: calc(var(--u) * 2.2);
   letter-spacing: 0.08em;
 }
+
+/* ------------------------------------------------------------ name tags + server badge */
+
+.ptags .ptag {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  padding: calc(var(--u) * 0.35) calc(var(--u) * 1.1);
+  border-radius: 99px;
+  background: var(--c);
+  color: #fff;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: calc(var(--u) * 1.7);
+  white-space: nowrap;
+  box-shadow: 0 calc(var(--u) * 0.3) calc(var(--u) * 1) rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
+
+.ptags .ptag::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--u) * -0.7);
+  transform: translateX(-50%);
+  border: calc(var(--u) * 0.45) solid transparent;
+  border-top-color: var(--c);
+}
+
+.ptags .sbadge {
+  position: absolute;
+  transform: translate(0, -50%);
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 0.8);
+  padding: calc(var(--u) * 0.45) calc(var(--u) * 1.3);
+  border-radius: 99px;
+  background: #fff;
+  color: #1b1a33;
+  border: calc(var(--u) * 0.35) solid var(--c);
+  font-family: var(--display);
+  font-size: calc(var(--u) * 1.8);
+  white-space: nowrap;
+  box-shadow: 0 calc(var(--u) * 0.4) calc(var(--u) * 1.2) rgba(0, 0, 0, 0.3);
+  animation: badge-bob 1.2s ease-in-out infinite;
+}
+
+.ptags .sbadge b {
+  font-weight: 700;
+}
+
+.ptags .sbadge span {
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+.ptags .sbadge span:empty {
+  display: none;
+}
+
+@keyframes badge-bob {
+  50% {
+    transform: translate(0, -62%);
+  }
+}

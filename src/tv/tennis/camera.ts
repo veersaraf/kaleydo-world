@@ -76,11 +76,14 @@ export class CameraRig {
   private playTarget(m: Match | null, pos: THREE.Vector3, look: THREE.Vector3) {
     let px = 0;
     let bx = 0;
+    // how far behind the usual spot the player stands: the camera backs up with them
+    let deep = 0;
     const s = this.side === 1 ? -1 : 1;
     if (m) {
       const near = m.team(this.side);
       const hp = near.find((p) => p.human) ?? near[0];
       px = hp ? hp.x : 0;
+      deep = hp ? clamp(Math.abs(hp.z) - (COURT.halfL + 1.6), 0, 5) : 0;
       const b = m.ballView(m.t, { x: 0, y: 0, z: 0 });
       bx = m.ball.holder ? m.ball.holder.x : b.x;
     }
@@ -95,8 +98,8 @@ export class CameraRig {
     // Switch Sports-style framing: higher and steeper, so your whole player stands in
     // the bottom of the frame (feet at ~88% height) and the far baseline sits a
     // third of the way down — more court to read, your own swing always in view
-    pos.set(clamp(px * 0.38, -3, 3), 6.2, s * (COURT.halfL + 10.1));
-    look.set(clamp(px * 0.18 + bx * 0.12, -2, 2), 0, s * 3.7);
+    pos.set(clamp(px * 0.38, -3, 3), 6.2, s * (COURT.halfL + 10.1 + deep));
+    look.set(clamp(px * 0.18 + bx * 0.12, -2, 2), 0, s * (3.7 + deep));
     return 44;
   }
 

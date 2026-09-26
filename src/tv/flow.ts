@@ -1119,6 +1119,14 @@ export class Flow {
       case 'bounce':
         if (e.impact > 0.8) a?.sfx.bounce(e.impact, pan(e.pos.x));
         break;
+      case 'athletic':
+        if (e.move !== 'lunge') a?.sfx.swish(e.move === 'dive' ? 1 : 0.55, pan(e.p.x));
+        if (real && e.move === 'dive' && e.p.human) this.hud?.float('DIVE!', { x: e.p.x, y: 2.2, z: e.p.z }, 'soft', e.p.team);
+        break;
+      case 'land':
+        a?.sfx.thud(pan(e.pos.x));
+        if (real) a?.sfx.ooh();
+        break;
       case 'net':
         a?.sfx.net(e.cord, pan(e.pos.x));
         if (real && e.cord && e.over) a?.sfx.ooh();
@@ -1325,15 +1333,18 @@ export class Flow {
       if (this.versusEnd) {
         // champion is talking: keep the screen clear
       } else if ((m.state === 'serve' || m.state === 'intro') && srv?.human) {
-        const seat = this.app.input.seats[srv.slot];
-        const how = seat && !seat.local ? 'tap your phone to toss, then swing' : 'press Space (or click) to toss, then swing';
-        if (m.state === 'serve') this.hud.setHint(`<b>P${srv.slot + 1} serve</b> — ${how}`, seat?.color);
+        // the "Server" badge by the player says what to do; keep the bottom of the screen clear
+        this.hud.setHint('');
       } else if (m.state === 'toss' && srv?.human) {
         // SWING! set on toss
       } else if (m.state !== 'intro' || this.settings.seenTutorial) {
         if (!(m.state === 'play' && !this.settings.seenTutorial)) this.hud.setHint('');
       }
       if (this.audio) this.audio.sfx.setCrowd(m.excitement);
+      if (!this.versusEnd) {
+        const seat = srv?.human ? this.app.input.seats[srv.slot] : null;
+        this.hud.track(m, dt, !seat ? '' : seat.local ? 'Space to toss' : 'tap to toss');
+      }
       if (m.state === 'serve' && !this.tossHintShown) this.tossHintShown = true;
     }
     // attract mode showcases the worlds

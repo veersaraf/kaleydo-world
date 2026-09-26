@@ -3,7 +3,7 @@
 import { COURT, netHeightAt, sideOf, inCourt, serviceBox, inBox, serveSideSign, fwdOf } from './court';
 import { type Seg, segPos, segVel, segTimeDown, segTimeAtZ, bounceSeg, predictPath, type PathSample } from './ball';
 import { buildShot, humanShot, serveShot, type Stroke, type SwingInput } from './shot';
-import { TPlayer, type Ctrl, type HitPlan } from './player';
+import { TPlayer, type Ctrl, type HitPlan, type AthleticMove } from './player';
 import { aiShot, recoveryPos, AI_LEVELS } from './ai';
 import { Score } from './score';
 import type { Look } from '../chars/look';
@@ -68,6 +68,10 @@ export type MatchEvent =
     }
   | { type: 'whiff'; p: TPlayer; tau: number; dtMs?: number; why?: 'early' | 'late' | 'reach' | 'noball' }
   | { type: 'toss'; p: TPlayer }
+  /** a lunge, flying dive or jump for a ball at the edge of reach */
+  | { type: 'athletic'; p: TPlayer; move: AthleticMove }
+  /** a diving player hits the court */
+  | { type: 'land'; p: TPlayer; pos: V3 }
   | { type: 'catch'; p: TPlayer }
   | { type: 'bounce'; pos: V3; impact: number; live: boolean; out: boolean; first: boolean }
   | { type: 'net'; pos: V3; cord: boolean; over: boolean }
@@ -205,6 +209,7 @@ export class Match {
       this.score.server = 1;
       this.score.points = [0, 0];
     }
+    for (const p of this.players) p.athletic = null;
     const S = this.score.server;
     const R = (1 - S) as 0 | 1;
     const deuce = this.score.deuceCourt;
@@ -752,7 +757,35 @@ export class Match {
         p.tx = p.plan.sx;
         p.tz = p.plan.sz;
       }
-      if (t < p.lockUntil) {
+      // a ball you can't quite run down gets a lunge or a flying dive; a high
+      // groundstroke gets a jump (the swing is still yours to time)
+      if (!p.athletic && p.plan && !p.swing && this.state === 'play' && this.ball.live && t >= p.lockUntil) this.maybeAthletic(p, t);
+      const ath = p.athletic;
+      if (ath) {
+        const recover = ath.move === 'dive' ? 0.85 : ath.move === 'lunge' ? 0.32 : 0.22;
+        if (t <= ath.tc) {
+          const u = clamp((t - ath.t0) / Math.max(0.05, ath.tc - ath.t0));
+          const e = ath.move === 'dive' ? 1 - Math.pow(1 - u, 1.7) : smooth(u);
+          p.x = lerp(ath.x0, ath.x1, e);
+          p.z = lerp(ath.z0, ath.z1, e);
+        } else if (t < ath.tc + recover) {
+          if (ath.move === 'dive') {
+            if (!ath.landed) {
+              ath.landed = true;
+              this.onEvent({ type: 'land', p, pos: { x: p.x, y: 0, z: p.z } });
+            }
+            // skid a little along the court
+            const dx = ath.x1 - ath.x0,
+              dz = ath.z1 - ath.z0;
+            const l = Math.hypot(dx, dz) || 1;
+            const slide = Math.max(0, 0.18 - (t - ath.tc)) * 2.4 * dt;
+            p.x += (dx / l) * slide;
+            p.z += (dz / l) * slide;
+          }
+        } else p.athletic = null;
+        p.vx = 0;
+        p.vz = 0;
+      } else if (t < p.lockUntil) {
         // follow-through: plant and decelerate before recovering
         const k = Math.exp(-10 * dt);
         p.vx *= k;
@@ -778,6 +811,39 @@ export class Match {
       p.yaw += (want - p.yaw) * (1 - Math.exp(-8 * dt));
       p.focus = p.plan ? Math.min(1, p.focus + dt * 3) : Math.max(0, p.focus - dt * 2);
     }
+  }
+
+  /**
+   * Launch a lunge, dive or jump if the ball will beat the player to it by running
+   * alone. Decided ~0.3 s before contact, so the body is in the air when the swing
+   * (human or CPU) meets the ball; a dive that falls short is a missed dive.
+   */
+  private maybeAthletic(p: TPlayer, t: number) {
+    const plan = p.plan!;
+    const tl = plan.t - t;
+    if (tl <= 0.06 || tl > 0.34) return;
+    const standD = Math.hypot(plan.sx - p.x, plan.sz - p.z);
+    const runnable = p.maxSpeed * tl * 0.85;
+    const gap = standD - runnable;
+    let move: AthleticMove | null = null;
+    if (plan.stroke !== 'oh' && plan.by > 1.7 && gap < 1.2) move = 'jump';
+    else if (gap > 1.0 && gap < 2.8 && plan.by < 1.45) move = 'dive';
+    else if (gap > 0.3 && gap < 1.4) move = 'lunge';
+    if (!move) return;
+    const reach = move === 'dive' ? 2.3 : move === 'lunge' ? 0.8 : 0.3;
+    const cover = Math.min(standD, runnable + reach);
+    const k = standD > 1e-3 ? cover / standD : 0;
+    const c = Math.cos(p.yaw),
+      sn = Math.sin(p.yaw);
+    const side = c * (plan.bx - p.x) - sn * (plan.bz - p.z) >= 0 ? 1 : -1;
+    p.athletic = { move, t0: t, tc: plan.t, x0: p.x, z0: p.z, x1: p.x + (plan.sx - p.x) * k, z1: p.z + (plan.sz - p.z) * k, side, landed: false };
+    this.onEvent({ type: 'athletic', p, move });
+  }
+
+  /** how stretched a hit is: a dive 1, a lunge ½, a jump a little */
+  private stretchOf(p: TPlayer) {
+    const m = p.athletic?.move;
+    return m === 'dive' ? 1 : m === 'lunge' ? 0.5 : m === 'jump' ? 0.15 : 0;
   }
 
   // ------------------------------------------------------------ outcomes
@@ -822,6 +888,7 @@ export class Match {
       const plan = p.plan;
       const volley = plan ? plan.volley : false;
       if (p.human) {
+        sw.input.stretch = this.stretchOf(p);
         const res = humanShot(p.team, p.fhSign, sw.stroke, contact, volley, sw.input, this.rng, this.doubles);
         seg = buildShot(contact, res.spec, tc);
         shotSpin = res.spec.spin;
@@ -829,7 +896,7 @@ export class Match {
         kind = res.kind;
         this.lastShotTx = res.spec.tx;
       } else {
-        const stretch = plan ? clamp((Math.hypot(p.x - plan.sx, p.z - plan.sz) - 0.2) / 1.0) : 0.5;
+        const stretch = Math.max(plan ? clamp((Math.hypot(p.x - plan.sx, p.z - plan.sz) - 0.2) / 1.0) : 0.5, this.stretchOf(p));
         const pressure = this.score.matchPointFor(0) || this.score.matchPointFor(1) ? 1 : 0.2;
         const res = aiShot(
           p.ctrl.ai,

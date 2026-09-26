@@ -46,6 +46,25 @@ export interface SwingState {
   serve: boolean;
 }
 
+export type AthleticMove = 'lunge' | 'dive' | 'jump';
+
+/** A lunge, flying dive or jump for a ball the player couldn't quite run down. */
+export interface Athletic {
+  move: AthleticMove;
+  /** launch and contact times */
+  t0: number;
+  tc: number;
+  /** the body's travel from (x0,z0) at launch to (x1,z1) at contact */
+  x0: number;
+  z0: number;
+  x1: number;
+  z1: number;
+  /** which side the ball is on (+1 = the character's right) */
+  side: number;
+  /** the landing was announced (dust, thud) */
+  landed: boolean;
+}
+
 export type Emote = 'none' | 'celebrate' | 'sad' | 'wave' | 'cheer' | 'shrug';
 
 export const REACH = {
@@ -87,6 +106,8 @@ export class TPlayer {
   accel = 24;
   /** movement frozen during the follow-through */
   lockUntil = 0;
+  /** a lunge / dive / jump in progress */
+  athletic: Athletic | null = null;
   /** this player's natural "straight" swing path per stroke (degrees), learned */
   pathNeutral: Record<'fh' | 'bh' | 'oh', number> = { fh: 0, bh: 0, oh: 0 };
   hits = 0;

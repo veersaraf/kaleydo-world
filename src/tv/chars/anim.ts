@@ -2,7 +2,7 @@
 
 import { newPose, type Pose } from './pose';
 import { CHAR_SCALE, RACKET_SWEET } from './rig';
-import type { TPlayer, SwingState } from '../tennis/player';
+import type { TPlayer, SwingState, Athletic } from '../tennis/player';
 import { clamp, lerp, smooth, easeOutCubic, easeInCubic, type V3, Rng, damp } from '../core/math';
 
 type Vec = [number, number, number];
@@ -205,6 +205,10 @@ export class Animator {
       norm(out.dir);
     }
 
+    // lunges, dives and jumps for balls at the edge of reach
+    let athleticFace = '';
+    if (p.athletic) athleticFace = this.athleticPose(t, p.athletic, P, out, !!sw);
+
     // emotes override
     const em = p.emote;
     if (em !== 'none' && t >= p.emoteT0 && !sw) {
@@ -284,6 +288,11 @@ export class Animator {
       P.eyes = 'sad';
       P.mouth = 'frown';
       P.brow = -1;
+    } else if (athleticFace) {
+      P.eyes = athleticFace === 'oof' ? 'closed' : 'wide';
+      P.mouth = athleticFace === 'oof' ? 'flat' : 'open';
+      P.brow = 0.9;
+      P.blink = 0;
     } else if (effort) {
       P.eyes = sw && sw.input.power > 0.8 ? 'closed' : 'focus';
       P.mouth = 'open';
@@ -301,6 +310,86 @@ export class Animator {
     if (effort && sw && t >= sw.tc && t < sw.tc + 0.05) this.squashV += 0.8;
     P.squash = this.squash;
     return P;
+  }
+
+  /**
+   * Lunge: lead foot out wide, body low and leaning in. Jump: a quick hop with
+   * the feet tucked. Dive: crouch, fly with the body tipping horizontal and the
+   * racket at full stretch, land on your side, then get back up.
+   * Returns a face hint ('fly' in the air, 'oof' on landing).
+   */
+  private athleticPose(t: number, a: Athletic, P: Pose, out: Key, swinging: boolean): string {
+    const side = a.side;
+    const span = Math.max(0.05, a.tc - a.t0);
+    const u = clamp((t - a.t0) / span);
+    if (a.move === 'jump') {
+      const f = clamp((t - a.t0) / (span + 0.22));
+      const h = Math.sin(f * Math.PI);
+      P.hop = Math.max(P.hop, h * 0.42);
+      for (const ft of P.feet) ft.y += h * 0.16;
+      P.footPitch[0] = P.footPitch[1] = -0.5 * h;
+      P.bodyPitch -= 0.12 * h;
+      return h > 0.2 ? 'fly' : '';
+    }
+    if (a.move === 'lunge') {
+      const k = t <= a.tc ? smooth(u) : 1 - smooth(clamp((t - a.tc - 0.12) / 0.2));
+      const lead = side > 0 ? 1 : 0;
+      const back = 1 - lead;
+      P.feet[lead].x = lerp(P.feet[lead].x, side * 0.58, k);
+      P.feet[lead].z = lerp(P.feet[lead].z, -0.28, k);
+      P.feet[lead].y *= 1 - k;
+      P.feet[back].x = lerp(P.feet[back].x, -side * 0.12, k);
+      P.feet[back].z = lerp(P.feet[back].z, 0.16, k);
+      P.body.x = side * 0.14 * k;
+      P.body.y -= 0.13 * k;
+      P.bodyRoll = lerp(P.bodyRoll, -side * 0.3, k);
+      P.bodyPitch += 0.22 * k;
+      if (!swinging) {
+        lerpV(out.hand, out.hand, V(side * 0.78, 0.55, -0.22), k);
+        lerpV(out.dir, out.dir, V(side * 0.8, 0.35, -0.45), k);
+        norm(out.dir);
+      }
+      return '';
+    }
+    // dive
+    const flight = clamp((u - 0.18) / 0.82);
+    let lie = 0; // 0 upright … 1 flat on your side
+    let crouch = 0;
+    let face = '';
+    if (t <= a.tc) {
+      crouch = 1 - smooth(clamp(u / 0.2));
+      lie = easeOutCubic(flight) * 0.92;
+      // takeoff arc, coming down near the ground at contact
+      P.hop = Math.sin(flight * Math.PI * 0.82) * 0.46 + flight * 0.08;
+      face = 'fly';
+    } else {
+      const since = t - a.tc;
+      const rise = smooth(clamp((since - 0.42) / 0.4));
+      lie = 1 - rise;
+      P.hop = 0;
+      if (since < 0.08) this.squashV -= 1.2;
+      face = since < 0.4 ? 'oof' : '';
+    }
+    P.body.y = lerp(P.body.y - 0.12 * crouch, 0.27, lie);
+    P.body.x = side * 0.2 * lie;
+    P.bodyRoll = -side * 1.42 * lie;
+    P.bodyPitch = lerp(P.bodyPitch, 0.1, lie);
+    // legs trail behind the dive, low to the court
+    for (let i = 0; i < 2; i++) {
+      const f = P.feet[i];
+      f.x = lerp(f.x, -side * (0.3 + i * 0.1), lie);
+      f.y = lerp(f.y, 0.14 + (t <= a.tc ? 0.1 : 0), lie);
+      f.z = lerp(f.z, 0.05 + (i === 0 ? -0.1 : 0.1), lie);
+      P.footPitch[i] = lerp(P.footPitch[i], 0.9, lie);
+    }
+    if (!swinging || t > a.tc) {
+      // both arms reaching for the ball
+      lerpV(out.hand, out.hand, V(side * 1.08, 0.36, -0.2), lie);
+      lerpV(out.dir, out.dir, V(side, 0.15, -0.3), lie);
+      norm(out.dir);
+      lerpV(out.off, out.off, V(side * 0.7, 0.24, -0.34), lie);
+    }
+    return face;
   }
 
   private readyOff(k: Key) {

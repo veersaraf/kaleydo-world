@@ -538,8 +538,14 @@ export abstract class World {
     pos.needsUpdate = true;
   }
 
+  /** colour of the dust a diving player kicks up */
+  protected dustColor = new THREE.Color('#e6dccb');
+
   onEvent(e: MatchEvent) {
     if (e.type === 'hit') this.tintTrail(e);
+    if (e.type === 'land') {
+      this.particles.burst({ x: e.pos.x, y: 0.08, z: e.pos.z, count: 14, speed: [0.6, 2.2], dir: [0, 1, 0], spread: 0.95, life: [0.4, 0.9], size: [0.18, 0.4], shrink: 1.8, colors: [this.dustColor], shape: 'soft', alpha: 0.55, drag: 3.5, gravity: -0.4 });
+    }
     if (e.type === 'toss') {
       this.trail.tint(null);
       (this.ballHalo.material as THREE.ShaderMaterial).uniforms.uColor.value.copy(this.teamColors[e.p.team]);

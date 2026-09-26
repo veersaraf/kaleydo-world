@@ -65,6 +65,14 @@ export class Sfx {
     this.e.noise(this.e.now + 0.002, 0.18 + p * 0.06, { type: 'bandpass', f0: 450, f1: 2200 + p * 1600, q: 1.2, gain: 0.12 + p * 0.18, bus: this.e.sfx, pan, attack: 0.03 });
   }
 
+  /** a diving player hitting the court: a body thump and a skid */
+  thud(pan: number) {
+    const e = this.e;
+    const t = e.now + 0.002;
+    e.tone(t, 95, 0.16, { gain: 0.5, to: 55, bus: e.sfx, pan });
+    e.noise(t + 0.01, 0.28, { type: 'bandpass', f0: 700, f1: 300, q: 0.9, gain: 0.22, bus: e.sfx, pan, attack: 0.02 });
+  }
+
   bounce(impact: number, pan: number) {
     const e = this.e;
     const t = e.now + 0.002;

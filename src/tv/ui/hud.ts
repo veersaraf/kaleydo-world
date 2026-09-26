@@ -25,6 +25,12 @@ export class Hud {
   private views: { rig: CameraRig; x: number; w: number; team: number }[] | null = null;
   private divider: HTMLElement;
   private tags: HTMLElement[];
+  // name tags over the players and the "Server" badge (Switch Sports-style)
+  private tagLayer: HTMLElement;
+  private nameEls: HTMLElement[][] = [];
+  private badgeEls: HTMLElement[] = [];
+  private tagShow = 0;
+  private badgeText = '';
   private calloutQueue: { text: string; sub?: string; cls?: string; at: number }[] = [];
   private calloutUntil = 0;
   private time = 0;
@@ -50,7 +56,56 @@ export class Hud {
     this.floats = h('div', { class: 'layer' });
     this.divider = h('div', { class: 'split-divider' });
     this.tags = [0, 1].map((i) => h('div', { class: `split-tag t${i}`, style: `--c:${teams[i].color}` }, teams[i].name));
-    this.el = h('div', { class: 'hud' }, this.divider, ...this.tags, this.bug, this.floats, this.callout, this.banner, this.hint, this.rally, this.speed);
+    this.tagLayer = h('div', { class: 'layer ptags' });
+    this.el = h('div', { class: 'hud' }, this.divider, ...this.tags, this.tagLayer, this.bug, this.floats, this.callout, this.banner, this.hint, this.rally, this.speed);
+  }
+
+  /**
+   * Every frame of a match: names over everyone while a point is set up, and a
+   * badge by the server's feet saying what to do (fades once the rally starts).
+   */
+  track(m: Match, dt: number, serveHint: string) {
+    const setup = m.state === 'serve' || m.state === 'intro' || m.state === 'reset';
+    this.tagShow += ((setup ? 1 : 0) - this.tagShow) * Math.min(1, dt * (setup ? 8 : 5));
+    const views = this.views ?? [{ rig: this.rig, x: 0, w: 1, team: -1 }];
+    for (let vi = 0; vi < views.length; vi++) {
+      const v = views[vi];
+      const els = (this.nameEls[vi] ??= []);
+      m.players.forEach((p, i) => {
+        let el = els[i];
+        if (!el) {
+          el = els[i] = h('div', { class: 'ptag', style: `--c:${this.teams[p.team].color}` }, p.name);
+          this.tagLayer.append(el);
+        }
+        const pr = v.rig.project({ x: p.x, y: 1.95 * (p.look.height || 1), z: p.z });
+        const on = this.tagShow > 0.02 && !pr.behind && pr.x > 0.02 && pr.x < 0.98 && pr.y > 0.02;
+        el.style.display = on ? '' : 'none';
+        if (on) {
+          el.style.left = `${((v.x + pr.x * v.w) * 100).toFixed(2)}%`;
+          el.style.top = `${(pr.y * 100).toFixed(2)}%`;
+          el.style.opacity = this.tagShow.toFixed(2);
+        }
+      });
+      let badge = this.badgeEls[vi];
+      if (!badge) {
+        badge = this.badgeEls[vi] = h('div', { class: 'sbadge' }, h('b', null, 'Server'), h('span'));
+        this.tagLayer.append(badge);
+      }
+      const srv = m.server;
+      const bp = srv ? v.rig.project({ x: srv.x + 0.55, y: 0.25, z: srv.z }) : null;
+      const bon = !!srv && !!bp && m.state === 'serve' && !bp.behind && bp.x > 0.02 && bp.x < 0.98;
+      badge.style.display = bon ? '' : 'none';
+      if (bon && bp) {
+        badge.style.left = `${((v.x + bp.x * v.w) * 100).toFixed(2)}%`;
+        badge.style.top = `${(bp.y * 100).toFixed(2)}%`;
+        badge.style.setProperty('--c', this.teams[srv.team].color);
+        const hint = srv.human ? serveHint : '';
+        if (hint !== this.badgeText) {
+          this.badgeText = hint;
+          for (const b of this.badgeEls) (b.lastChild as HTMLElement).textContent = hint;
+        }
+      }
+    }
   }
 
   /** Switch between one full-screen view and two side-by-side ones. */

@@ -76,6 +76,8 @@ export interface SwingInput {
   crossed?: boolean;
   /** ms early (−) or late (+) versus the ideal moment (human swings) */
   dtMs?: number;
+  /** 0..1: hit at full stretch (a lunge ~0.5, a dive 1) — weaker, loftier, less accurate */
+  stretch?: number;
 }
 
 export interface ShotResult {
@@ -152,6 +154,15 @@ export function humanShot(
     depth = lerp(6.6, 10.5, Math.pow(power, 0.85)) + 0.6 * Math.max(0, spin);
   }
 
+  // At full stretch (a lunge, a dive) you can only get it back: slower, loftier,
+  // less precise — a pop-up the other side can attack.
+  const st = clamp(sw.stretch ?? 0);
+  if (st > 0 && kind !== 'smash') {
+    speed *= 1 - 0.32 * st;
+    clear += 1.1 * st;
+    depth = lerp(depth, 6.5, 0.35 * st);
+  }
+
   // Timing errors scatter the ball; big mistimed swings can fly out.
   const err = Math.abs(tau);
   let sx = 0.18 + 1.1 * err * err;
@@ -160,6 +171,8 @@ export function humanShot(
     sx = 0.05;
     sz = 0.1;
   }
+  sx *= 1 + 1.2 * st;
+  sz *= 1 + 0.6 * st;
   if (err > 0.95 && rng.chance(0.35)) {
     kind = 'shank';
     power *= 0.4;
