@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "kaleido-dev",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server/server.mjs", "--dev"],
+      "port": 3000
+    }
+  ]
+}

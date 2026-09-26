@@ -1,0 +1,1380 @@
+// Game flow: screens, menus, match lifecycle, pads, audio cues.
+
+import { h, clear, replay, setVars } from './ui/dom';
+import { Nav } from './ui/menu';
+import { Hud, type TeamInfo } from './ui/hud';
+import { JoinPanel } from './ui/join';
+import type { App } from './app';
+import type { Btn } from './core/input';
+import type { MatchConfig, MatchEvent, PlayerSpec } from './tennis/match';
+import { AI_LEVELS } from './tennis/ai';
+import { randomLook } from './chars/look';
+import { WORLDS, worldDef } from './worlds';
+import type { WorldDef } from './worlds/base';
+import { GameAudio } from './audio';
+import type { Timbre } from './audio/sfx';
+import { Rng } from './core/math';
+import { Color } from 'three';
+import { COURT } from './tennis/court';
+import { TOUR, loadTour, saveTour, type Champion } from './tour';
+import type { PadMode } from '../shared/protocol';
+
+type Level = 'rookie' | 'club' | 'pro' | 'ace';
+
+export interface Settings {
+  level: Level;
+  games: number;
+  doubles: boolean;
+  teamPreset: number;
+  voice: boolean;
+  music: number;
+  sfx: number;
+  mouse: boolean;
+  relaxed: boolean;
+  /** local versus: each side gets its own half of the screen */
+  split: boolean;
+  world: string;
+  seenTutorial: boolean;
+}
+
+const DEFAULTS: Settings = {
+  level: 'club',
+  games: 2,
+  doubles: false,
+  teamPreset: 0,
+  voice: true,
+  music: 0.7,
+  sfx: 0.9,
+  mouse: true,
+  relaxed: false,
+  split: true,
+  world: 'plaza',
+  seenTutorial: false,
+};
+
+const LEVELS: { id: Level; label: string; stars: string }[] = [
+  { id: 'rookie', label: 'Rookie', stars: '★' },
+  { id: 'club', label: 'Club', stars: '★★' },
+  { id: 'pro', label: 'Pro', stars: '★★★' },
+  { id: 'ace', label: 'Ace', stars: '★★★★' },
+];
+
+const TIMBRE: Record<string, Timbre> = { plaza: 'hard', ink: 'wood', neon: 'synth', pixel: 'chip', paper: 'paper', clay: 'clay', water: 'soft', cosmic: 'glass' };
+
+interface Screen {
+  name: string;
+  el: HTMLElement;
+  input(slot: number, b: Btn): void;
+  update?(dt: number): void;
+  leave?(): void;
+  pad?: { title?: string; hint?: string };
+}
+
+interface TeamPreset {
+  label: string;
+  t0: number[];
+  t1: number[];
+}
+
+interface Stats {
+  points: [number, number];
+  aces: [number, number];
+  winners: [number, number];
+  errors: [number, number];
+  fastest: [number, number];
+  perfects: [number, number];
+  longest: number;
+}
+
+export class Flow {
+  root: HTMLElement;
+  private screenLayer: HTMLElement;
+  private hudLayer: HTMLElement;
+  private toastEl: HTMLElement;
+  private screen: Screen | null = null;
+  settings: Settings;
+  audio: GameAudio | null = null;
+  hud: Hud | null = null;
+  join: JoinPanel;
+  private mode: 'quick' | 'kaleido' = 'quick';
+  private tourIdx = -1;
+  private lab = false;
+  private lastSwing: { side?: string; power: number; spin: number; attack?: number; path?: number | null; source: string } | null = null;
+  private hitTimes: number[] = [];
+  private lastHit: { kind: string; kph: number; perfect: boolean } = { kind: '', kph: 0, perfect: false };
+  private pointsSinceReplay = 99;
+  private versusEnd: (() => void) | null = null;
+  private kaleidoOrder: string[] = [];
+  private kaleidoIdx = 0;
+  private pointsSinceShift = 0;
+  private shiftedThisRally = false;
+  private stats: Stats = this.freshStats();
+  private padModes = new Map<string, string>();
+  private attractShiftAt = 14;
+  private time = 0;
+  private teams: [TeamInfo, TeamInfo] = [
+    { name: '', color: '' },
+    { name: '', color: '' },
+  ];
+  private rng = new Rng();
+  private lastCfg: { cfg: MatchConfig; world: string } | null = null;
+  private tossHintShown = false;
+  private resultsShown = false;
+
+  constructor(private app: App) {
+    this.root = document.getElementById('ui')!;
+    this.settings = { ...DEFAULTS, ...this.load() };
+    this.screenLayer = h('div', { class: 'layer' });
+    this.hudLayer = h('div', { class: 'layer' });
+    this.toastEl = h('div', { class: 'toast' });
+    this.root.append(this.hudLayer, this.screenLayer, this.toastEl);
+    this.join = new JoinPanel(app.link, app.input);
+    this.applyTheme(worldDef('plaza'));
+
+    app.input.onButton = (slot, b, down) => {
+      if (down) this.button(slot, b);
+    };
+    const prevSwing = app.input.onSwing;
+    app.input.onSwing = (e) => {
+      if (this.screen?.name === 'title') {
+        this.startFromTitle();
+        return;
+      }
+      if (this.screen) return; // menus: ignore swings
+      this.lastSwing = { side: e.side, power: e.power, spin: e.spin, attack: e.attack, path: e.path, source: e.source };
+      prevSwing(e);
+      this.audio?.sfx.swish(e.power, 0);
+    };
+    app.input.onSeatsChanged = () => {
+      this.join.refresh();
+      this.syncPads(true);
+    };
+    const prevStatus = app.link.onStatus;
+    app.link.onStatus = (on) => {
+      prevStatus(on);
+      this.join.refresh();
+    };
+    const prevMsg = app.link.onMessage;
+    app.link.onMessage = (m) => {
+      const before = app.input.padCount;
+      prevMsg(m);
+      if (m.type === 'hello' || m.type === 'net') this.join.refresh();
+      if (m.type === 'pad-join') {
+        const seat = app.input.seatOfPid(m.pid);
+        if (seat) this.toast(`P${seat.slot + 1} ${seat.name} joined`, seat.color);
+        if (app.input.padCount > before) this.audio?.sfx.ui('join');
+        this.syncPads(true);
+      }
+      if (m.type === 'pad-leave') {
+        const seat = app.input.seatOfPid(m.pid);
+        if (seat) {
+          this.toast(`P${seat.slot + 1}'s remote disconnected`, seat.color);
+          if (!this.screen && this.app.match && !this.app.attract && this.app.match.players.some((p) => p.slot === seat.slot)) this.pause();
+        }
+      }
+    };
+    app.onMatchEvent = (e) => this.matchEvent(e);
+    app.onReplayEvent = (e) => {
+      const a = this.audio;
+      const pan = (x: number) => Math.max(-1, Math.min(1, x / 8));
+      if (e.type === 'hit') a?.sfx.hit(e.power, e.perfect, pan(e.pos.x), e.kind === 'smash');
+      if (e.type === 'bounce' && e.impact > 0.8) a?.sfx.bounce(e.impact, pan(e.pos.x));
+      if (e.type === 'net') a?.sfx.net(e.cord, pan(e.pos.x));
+      if (e.type === 'hit' || e.type === 'bounce') for (const w of [app.stage.current, app.stage.next]) w?.onEvent(e);
+    };
+    app.onReplayEnd = () => {
+      this.hud?.setReplay(false);
+      this.syncPads(true);
+    };
+    app.onFrame = (dt) => this.frame(dt);
+    app.input.mouseSwings = this.settings.mouse;
+    app.splitPref = this.settings.split;
+    app.onSplit = (on) => this.hud?.setSplit(on ? app.rig2 : null);
+    app.stage.onSwap = (w) => {
+      COURT.gravity = 9.81 * (w.def.gravity ?? 1);
+      this.applyTheme(w.def);
+      this.audio?.setTimbre(TIMBRE[w.def.id] ?? 'hard');
+      if (this.audio && (this.screen || !this.app.attract)) this.audio.playSong(w.def.song);
+      this.syncScoreboard();
+    };
+
+    const unlock = () => this.unlockAudio();
+    window.addEventListener('pointerdown', unlock);
+    window.addEventListener('keydown', unlock);
+
+    this.go(this.titleScreen());
+    void this.boot();
+  }
+
+  /**
+   * Build every world, compile its shaders and upload its data behind a short
+   * loading screen, so no world ever hitches the first time it appears (the
+   * attract loop, Kaleido shifts and world picks would otherwise stall 50–200 ms).
+   */
+  private async boot() {
+    const letters = ['K', 'A', 'L', 'E', 'I', 'D', 'O'];
+    const cls = ['lk', 'la', 'll', 'le', 'li', 'ld', 'lo'];
+    const bar = h('i');
+    const el = h(
+      'div',
+      { class: 'boot' },
+      h('div', { class: 'logo' }, ...letters.map((c, i) => h('span', { class: `L ${cls[i]}`, style: `--i:${i}` }, c))),
+      h('div', { class: 'boot-bar' }, bar),
+      h('div', { class: 'boot-txt' }, 'Polishing the worlds…'),
+    );
+    this.root.append(el);
+    // priming stalls frames on purpose: don't let the quality governor react to it
+    this.app.quality.hold(Infinity);
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      el.classList.add('done');
+      window.setTimeout(() => el.remove(), 700);
+      this.app.quality.hold(performance.now() + 1500);
+    };
+    // never let the loader hold the game hostage (a background tab throttles
+    // everything): whatever isn't primed by then carries on behind the title
+    window.setTimeout(finish, 7000);
+    const ids = WORLDS.map((w) => w.id);
+    for (let i = 0; i < ids.length; i++) {
+      await this.app.stage.prime(ids[i], this.app.rig.cam);
+      bar.style.width = `${((i + 1) / ids.length) * 100}%`;
+      // let a frame through so the page stays responsive (hidden tabs get no frames)
+      await new Promise((r) => (document.hidden ? window.setTimeout(r, 0) : requestAnimationFrame(() => r(null))));
+    }
+    finish();
+  }
+
+  // ---------------------------------------------------------------- persistence
+
+  private load(): Partial<Settings> {
+    try {
+      return JSON.parse(localStorage.getItem('kaleido.settings') || '{}');
+    } catch {
+      return {};
+    }
+  }
+
+  save() {
+    try {
+      localStorage.setItem('kaleido.settings', JSON.stringify(this.settings));
+    } catch {}
+  }
+
+  // ---------------------------------------------------------------- audio
+
+  unlockAudio() {
+    if (!this.audio) {
+      try {
+        this.audio = new GameAudio();
+      } catch {
+        return;
+      }
+      this.audio.voiceOn = this.settings.voice;
+      this.audio.setTimbre(TIMBRE[this.app.worldId] ?? 'hard');
+    }
+    this.audio.unlock();
+    const au = this.audio;
+    this.app.beat = () => au.music.beat();
+    this.audio.setVolumes(this.settings.music, this.settings.sfx);
+    if (!this.audio.music.song) this.audio.playSong(this.app.stage.current?.def.song ?? 'plaza');
+  }
+
+  // ---------------------------------------------------------------- screens
+
+  go(s: Screen | null) {
+    const old = this.screen;
+    if (old) {
+      old.leave?.();
+      old.el.classList.add('leaving');
+      setTimeout(() => old.el.remove(), 260);
+    }
+    this.screen = s;
+    if (s) this.screenLayer.append(s.el);
+    this.syncPads(true);
+  }
+
+  private button(slot: number, b: Btn) {
+    if (this.screen) {
+      this.screen.input(slot, b);
+      return;
+    }
+    // in a match
+    if (this.app.replay) {
+      this.app.endReplay();
+      return;
+    }
+    if (b === 'home' || b === 'plus' || b === 'b') this.pause();
+    if (b === 'a') {
+      if (this.versusEnd) this.versusEnd();
+      else this.app.match?.startNow();
+    }
+  }
+
+  private sound(kind: 'move' | 'select' | 'back' | 'error') {
+    this.audio?.sfx.ui(kind);
+  }
+
+  private navScreen(name: string, el: HTMLElement, nav: Nav, onBack?: () => void, pad?: Screen['pad']): Screen {
+    nav.onMove = () => this.sound('move');
+    return {
+      name,
+      el,
+      pad,
+      input: (_slot, b) => {
+        if (b === 'b' && onBack) {
+          this.sound('back');
+          onBack();
+          return;
+        }
+        if (b === 'a') this.sound('select');
+        nav.input(b);
+      },
+    };
+  }
+
+  private titleScreen(): Screen {
+    const letters = [
+      ['K', 'lk'],
+      ['A', 'la'],
+      ['L', 'll'],
+      ['E', 'le'],
+      ['I', 'li'],
+      ['D', 'ld'],
+      ['O', 'lo'],
+    ];
+    const logo = h('div', { class: 'logo' }, ...letters.map(([c, cls], i) => h('span', { class: `L ${cls}`, style: `--i:${i}` }, c)));
+    const el = h(
+      'div',
+      { class: 'screen title' },
+      logo,
+      h('div', { class: 'subtitle' }, 'WORLD TENNIS'),
+      h('div', { class: 'press' }, 'Click or press any key — or swing a remote'),
+      this.join.el,
+    );
+    el.addEventListener('click', () => this.startFromTitle());
+    return {
+      name: 'title',
+      el,
+      pad: { title: 'Welcome!', hint: 'Press A or swing to start' },
+      input: (_s, b) => {
+        if (b === 'a' || b === 'plus' || b === 'home') this.startFromTitle();
+      },
+    };
+  }
+
+  private startFromTitle() {
+    if (this.screen?.name !== 'title') return;
+    this.sound('select');
+    this.audio?.music.jingle('start');
+    this.go(this.mainMenu());
+  }
+
+  private mainMenu(): Screen {
+    const item = (ico: string, color: string, label: string, sub: string) =>
+      h('div', { class: 'item' }, h('div', { class: 'ico', style: `background:${color}` }, ico), h('div', { class: 'txt' }, h('span', null, label), h('span', { class: 'sub' }, sub)));
+    const quick = item('🎾', '#3aa8ff', 'Quick Match', 'Pick a world and play');
+    const kal = item('◆', 'linear-gradient(135deg,#ff5a8a,#ffb13d,#4be3a2,#52a7ff)', 'Kaleido Rally', 'The world shatters as you play');
+    const tb = loadTour().beaten;
+    const tour = item('🏆', '#ffb13d', 'World Tour', tb >= TOUR.length ? 'The Prism is whole — play again' : `${Math.min(tb, 8)} of 8 shards restored`);
+    const help = item('?', '#35d49a', 'How to Play', 'Swinging, timing & spin');
+    const set = item('⚙', '#8a7dff', 'Settings', 'Sound, voice, controls');
+    const labItem = item('🎯', '#ff5a8a', 'Swing Lab', 'Ball machine + a read-out of every swing');
+    const nav = new Nav([
+      { el: quick, onSelect: () => this.go(this.setupScreen('quick')) },
+      { el: tour, onSelect: () => this.go(this.tourScreen()) },
+      { el: kal, onSelect: () => this.go(this.setupScreen('kaleido')) },
+      { el: labItem, onSelect: () => this.beginSwingLab() },
+      { el: help, onSelect: () => this.go(this.helpScreen()) },
+      { el: set, onSelect: () => this.go(this.settingsScreen()) },
+    ]);
+    const el = h(
+      'div',
+      { class: 'screen mainmenu' },
+      h('div', { class: 'col' }, h('div', { class: 'mini-logo' }, h('span', null, 'KALEIDO')), h('div', { class: 'menu' }, quick, tour, kal, labItem, help, set)),
+      this.join.el,
+    );
+    this.join.refresh();
+    return this.navScreen('menu', el, nav, () => this.go(this.titleScreen()), { title: 'Main menu', hint: 'Use the pad · A to choose' });
+  }
+
+  // team presets from the humans present
+  private presets(): TeamPreset[] {
+    const humans = this.app.input.activeSeats.map((s) => s.slot).sort();
+    const n = humans.length;
+    const P = (i: number) => humans[i];
+    const nm = (s: number) => `P${s + 1}`;
+    if (n <= 1) return [{ label: `${nm(P(0) ?? 0)} vs CPU`, t0: [P(0) ?? 0], t1: [] }];
+    if (n === 2)
+      return [
+        { label: `${nm(P(0))} vs ${nm(P(1))}`, t0: [P(0)], t1: [P(1)] },
+        { label: `${nm(P(0))} & ${nm(P(1))} vs CPU`, t0: [P(0), P(1)], t1: [] },
+        { label: `${nm(P(0))} vs CPU`, t0: [P(0)], t1: [] },
+      ];
+    if (n === 3)
+      return [
+        { label: `${nm(P(0))} & ${nm(P(1))} vs ${nm(P(2))}`, t0: [P(0), P(1)], t1: [P(2)] },
+        { label: `${nm(P(0))} vs ${nm(P(1))} & ${nm(P(2))}`, t0: [P(0)], t1: [P(1), P(2)] },
+        { label: `${nm(P(0))} & ${nm(P(2))} vs ${nm(P(1))}`, t0: [P(0), P(2)], t1: [P(1)] },
+      ];
+    return [
+      { label: `${nm(P(0))} & ${nm(P(1))} vs ${nm(P(2))} & ${nm(P(3))}`, t0: [P(0), P(1)], t1: [P(2), P(3)] },
+      { label: `${nm(P(0))} & ${nm(P(2))} vs ${nm(P(1))} & ${nm(P(3))}`, t0: [P(0), P(2)], t1: [P(1), P(3)] },
+      { label: `${nm(P(0))} & ${nm(P(3))} vs ${nm(P(1))} & ${nm(P(2))}`, t0: [P(0), P(3)], t1: [P(1), P(2)] },
+    ];
+  }
+
+  private setupScreen(mode: 'quick' | 'kaleido'): Screen {
+    this.mode = mode;
+    const S = this.settings;
+    const sheet = h('div', { class: 'sheet panel' });
+    const title = h('h2', null, mode === 'kaleido' ? 'Kaleido Rally' : 'Quick Match');
+    const desc = h(
+      'div',
+      { class: 'hintline' },
+      mode === 'kaleido' ? 'Every couple of points — or any PERFECT shot in a long rally — shatters the court into the next world.' : 'Choose your match, then pick a world.',
+    );
+    const teamsView = h('div', { class: 'teams' });
+    const row = (k: string) => {
+      const v = h('span');
+      const r = h('div', { class: 'row' }, h('span', { class: 'k' }, k), h('span', { class: 'v' }, h('span', { class: 'arrow' }, '◀'), v, h('span', { class: 'arrow' }, '▶')));
+      return { r, v };
+    };
+    const rTeams = row('Players');
+    const rFormat = row('Format');
+    const rLevel = row('CPU level');
+    const rLen = row('Match');
+    const go = h('div', { class: 'row go' }, mode === 'kaleido' ? 'Start the rally ▶' : 'Choose a world ▶');
+    const refresh = () => {
+      const ps = this.presets();
+      S.teamPreset = Math.min(S.teamPreset, ps.length - 1);
+      const p = ps[S.teamPreset];
+      rTeams.v.textContent = p.label;
+      const formatLocked = p.t0.length > 1 || p.t1.length > 1;
+      if (formatLocked) S.doubles = true;
+      rFormat.v.textContent = S.doubles ? 'Doubles (2 v 2)' : 'Singles (1 v 1)';
+      rFormat.r.classList.toggle('disabled', formatLocked);
+      const lv = LEVELS.find((l) => l.id === S.level)!;
+      rLevel.v.textContent = `${lv.label} ${lv.stars}`;
+      const cpu = p.t0.length === 0 || p.t1.length === 0;
+      rLevel.r.classList.toggle('disabled', !cpu);
+      if (navRef) {
+        navRef.items[1].disabled = formatLocked;
+        navRef.items[2].disabled = !cpu;
+      }
+      rLen.v.textContent = S.games === 1 ? '1 game' : S.games === 2 ? 'Best of 3 games' : 'Best of 5 games';
+      clear(teamsView);
+      teamsView.append(this.teamChips(p.t0, S.doubles), h('span', { class: 'vs' }, 'vs'), this.teamChips(p.t1, S.doubles));
+      this.save();
+    };
+    const cyc = <T>(arr: T[], cur: T, d: number) => arr[(arr.indexOf(cur) + d + arr.length) % arr.length];
+    let navRef: Nav | null = null;
+    const nav = new Nav([
+      {
+        el: rTeams.r,
+        onLeft: () => {
+          S.teamPreset = (S.teamPreset - 1 + this.presets().length) % this.presets().length;
+          refresh();
+        },
+        onRight: () => {
+          S.teamPreset = (S.teamPreset + 1) % this.presets().length;
+          refresh();
+        },
+        onSelect: () => {
+          S.teamPreset = (S.teamPreset + 1) % this.presets().length;
+          refresh();
+        },
+      },
+      { el: rFormat.r, onLeft: () => ((S.doubles = !S.doubles), refresh()), onRight: () => ((S.doubles = !S.doubles), refresh()), onSelect: () => ((S.doubles = !S.doubles), refresh()) },
+      {
+        el: rLevel.r,
+        onLeft: () => ((S.level = cyc(LEVELS.map((l) => l.id), S.level, -1)), refresh()),
+        onRight: () => ((S.level = cyc(LEVELS.map((l) => l.id), S.level, 1)), refresh()),
+        onSelect: () => ((S.level = cyc(LEVELS.map((l) => l.id), S.level, 1)), refresh()),
+      },
+      {
+        el: rLen.r,
+        onLeft: () => ((S.games = cyc([1, 2, 3], S.games, -1)), refresh()),
+        onRight: () => ((S.games = cyc([1, 2, 3], S.games, 1)), refresh()),
+        onSelect: () => ((S.games = cyc([1, 2, 3], S.games, 1)), refresh()),
+      },
+      {
+        el: go,
+        onSelect: () => {
+          if (mode === 'kaleido') this.beginMatch(this.shuffledWorlds()[0]);
+          else this.go(this.worldScreen());
+        },
+      },
+    ]);
+    navRef = nav;
+    nav.focus(4);
+    sheet.append(title, desc, teamsView, rTeams.r, rFormat.r, rLevel.r, rLen.r, go, h('div', { class: 'hintline' }, '◀ ▶ change · A select · B back'));
+    const el = h('div', { class: 'screen center' }, sheet);
+    refresh();
+    const scr = this.navScreen('setup', el, nav, () => this.go(this.mainMenu()), { title: mode === 'kaleido' ? 'Kaleido Rally' : 'Quick Match', hint: '◀ ▶ to change' });
+    const baseInput = scr.input;
+    scr.input = (s, b) => {
+      baseInput(s, b);
+    };
+    this.app.input.onSeatsChanged = () => {
+      this.join.refresh();
+      this.syncPads(true);
+      if (this.screen === scr) refresh();
+    };
+    return scr;
+  }
+
+  private teamChips(slots: number[], doubles: boolean) {
+    const t = h('div', { class: 'team' });
+    if (!slots.length) {
+      t.append(h('span', { class: 'chip', style: '--c:#6c6a84' }, doubles ? 'CPU & CPU' : 'CPU'));
+      return t;
+    }
+    for (const s of slots) {
+      const seat = this.app.input.seats[s];
+      t.append(h('span', { class: 'chip', style: `--c:${seat?.color ?? '#999'}` }, `P${s + 1} ${seat?.local ? '' : seat?.name ?? ''}`.trim()));
+    }
+    if (doubles && slots.length === 1) t.append(h('span', { class: 'chip', style: `--c:${this.app.input.seats[slots[0]]?.color ?? '#999'};opacity:.75` }, '×2'));
+    return t;
+  }
+
+  private worldScreen(): Screen {
+    const cards = WORLDS.map((w) =>
+      h(
+        'div',
+        { class: 'wcard' },
+        h('div', { class: 'sw', style: `background:linear-gradient(90deg, ${w.ui.accent}, ${w.ui.accent2})` }),
+        h('div', { class: 'wn', style: `font-family:${w.ui.display}` }, w.name),
+        h('div', { class: 'wt' }, w.tagline),
+      ),
+    );
+    const big = h('div', { class: 'wbig' });
+    const setBig = (w: WorldDef) => {
+      clear(big);
+      big.append(h('div', { class: 'wn', style: `font-family:${w.ui.display}` }, w.name), h('div', { class: 'wt' }, w.tagline), h('div', { class: 'wb' }, w.blurb));
+      replay(big, 'show');
+    };
+    const nav = new Nav(
+      WORLDS.map((w) => ({ el: cards[WORLDS.indexOf(w)], onSelect: () => this.beginMatch(w.id) })),
+      true,
+    );
+    const start = Math.max(0, WORLDS.findIndex((w) => w.id === this.settings.world));
+    nav.onChange = (i) => {
+      const w = WORLDS[i];
+      setBig(w);
+      this.settings.world = w.id;
+      this.save();
+      this.app.stage.setWorld(w.id, { transition: true, origin: { x: (i + 0.5) / WORLDS.length, y: 0.8 } });
+      this.audio?.sfx.ui('shift');
+    };
+    nav.focus(start);
+    setBig(WORLDS[start]);
+    if (this.app.stage.current?.def.id !== WORLDS[start].id) this.app.stage.setWorld(WORLDS[start].id, { transition: true });
+    const el = h('div', { class: 'screen worlds' }, h('div', { class: 'headline' }, 'CHOOSE A WORLD'), big, h('div', { class: 'wsel' }, ...cards));
+    return this.navScreen('worlds', el, nav, () => this.go(this.setupScreen(this.mode)), { title: 'Choose a world', hint: '◀ ▶ browse · A play' });
+  }
+
+  private helpScreen(): Screen {
+    const tip = (art: string, t: string, d: string) => h('div', { class: 'tip' }, h('div', { class: 'art' }, art), h('b', null, t), h('span', null, d));
+    const back = h('div', { class: 'row go' }, 'Got it');
+    const nav = new Nav([{ el: back, onSelect: () => this.go(this.mainMenu()) }]);
+    const sheet = h(
+      'div',
+      { class: 'sheet panel' },
+      h('h2', null, 'How to play'),
+      h(
+        'div',
+        { class: 'help-grid' },
+        tip('📱', 'Swing your phone', 'Hold it like a racket handle and swing when the ball arrives. Your player runs to the ball for you.'),
+        tip('⏱️', 'Timing aims', 'Swing early to pull the ball cross-court. Swing late to push it down the line. Nail the moment for a PERFECT.'),
+        tip('💨', 'Speed = power', 'A fast swing hits hard and deep. A gentle swing floats it softly.'),
+        tip('🌀', 'Spin', 'Brush upward for topspin (dips and kicks). Chop downward for slice. A soft upward swing lobs; a soft chop drops it short.'),
+        tip('🎾', 'Serving', 'Tap your phone (or swing) to toss, then swing as the ball peaks. Perfect timing = a rocket serve.'),
+        tip('◆', 'Kaleido Rally', 'Long rallies build the music. Hit PERFECT shots and the whole world shatters into the next one.'),
+      ),
+      h(
+        'div',
+        { class: 'keys' },
+        'No phone? Flick the mouse to swing (up = topspin, down = slice) · ',
+        h('kbd', null, 'Space'),
+        ' toss & swing · ',
+        h('kbd', null, 'J'),
+        ' ',
+        h('kbd', null, 'K'),
+        ' ',
+        h('kbd', null, 'L'),
+        ' flat / topspin / slice · ',
+        h('kbd', null, 'Esc'),
+        ' pause',
+      ),
+      back,
+    );
+    return this.navScreen('help', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'How to play', hint: 'A to go back' });
+  }
+
+  private settingsScreen(): Screen {
+    const S = this.settings;
+    const row = (k: string, get: () => string) => {
+      const v = h('span');
+      const r = h('div', { class: 'row' }, h('span', { class: 'k' }, k), h('span', { class: 'v' }, h('span', { class: 'arrow' }, '◀'), v, h('span', { class: 'arrow' }, '▶')));
+      return { r, v, get };
+    };
+    const pct = (x: number) => `${Math.round(x * 10) * 10}%`;
+    const rows = [
+      row('Music volume', () => pct(S.music)),
+      row('Effects volume', () => pct(S.sfx)),
+      row('Umpire voice', () => (S.voice ? 'On' : 'Off')),
+      row('Mouse flick swings', () => (S.mouse ? 'On' : 'Off')),
+      row('Swing timing', () => (S.relaxed ? 'Relaxed (easier)' : 'Normal')),
+      row('Split screen (2 players)', () => (S.split ? 'On' : 'Off')),
+    ];
+    const done = h('div', { class: 'row go' }, 'Done');
+    const refresh = () => {
+      rows.forEach((r) => (r.v.textContent = r.get()));
+      this.audio?.setVolumes(S.music, S.sfx);
+      if (this.audio) this.audio.voiceOn = S.voice;
+      this.app.input.mouseSwings = S.mouse;
+      this.app.splitPref = S.split;
+      this.save();
+    };
+    const step = (k: 'music' | 'sfx', d: number) => {
+      S[k] = Math.max(0, Math.min(1, Math.round((S[k] + d) * 10) / 10));
+      refresh();
+    };
+    const nav = new Nav([
+      { el: rows[0].r, onLeft: () => step('music', -0.1), onRight: () => step('music', 0.1), onSelect: () => step('music', 0.1) },
+      { el: rows[1].r, onLeft: () => step('sfx', -0.1), onRight: () => step('sfx', 0.1), onSelect: () => step('sfx', 0.1) },
+      { el: rows[2].r, onLeft: () => ((S.voice = !S.voice), refresh()), onRight: () => ((S.voice = !S.voice), refresh()), onSelect: () => ((S.voice = !S.voice), refresh(), this.audio?.say('Fifteen love')) },
+      { el: rows[3].r, onLeft: () => ((S.mouse = !S.mouse), refresh()), onRight: () => ((S.mouse = !S.mouse), refresh()), onSelect: () => ((S.mouse = !S.mouse), refresh()) },
+      { el: rows[4].r, onLeft: () => ((S.relaxed = !S.relaxed), refresh()), onRight: () => ((S.relaxed = !S.relaxed), refresh()), onSelect: () => ((S.relaxed = !S.relaxed), refresh()) },
+      { el: rows[5].r, onLeft: () => ((S.split = !S.split), refresh()), onRight: () => ((S.split = !S.split), refresh()), onSelect: () => ((S.split = !S.split), refresh()) },
+      { el: done, onSelect: () => this.go(this.mainMenu()) },
+    ]);
+    refresh();
+    const sheet = h('div', { class: 'sheet panel' }, h('h2', null, 'Settings'), ...rows.map((r) => r.r), done);
+    return this.navScreen('settings', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Settings', hint: '◀ ▶ to change' });
+  }
+
+  private pauseScreen(): Screen {
+    const item = (label: string) => h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, label)));
+    const resume = item('Resume');
+    const restart = item('Restart match');
+    const quit = item('Quit to menu');
+    const nav = new Nav([
+      { el: resume, onSelect: () => this.resume() },
+      { el: restart, onSelect: () => this.lastCfg && this.beginMatch(this.lastCfg.world, true) },
+      { el: quit, onSelect: () => this.quitToMenu() },
+    ]);
+    const sheet = h('div', { class: 'sheet panel', style: 'width:auto;min-width:calc(var(--u)*56)' }, h('h2', null, 'Paused'), h('div', { class: 'menu' }, resume, restart, quit));
+    return this.navScreen('pause', h('div', { class: 'screen center' }, sheet), nav, () => this.resume(), { title: 'Paused', hint: 'A to choose · B resume' });
+  }
+
+  private resultsScreen(): Screen {
+    if (this.tourIdx >= 0) return this.tourResults();
+    const m = this.app.match!;
+    const w = m.score.winner as 0 | 1;
+    const winTeam = this.teams[w];
+    const humansWon = m.team(w).some((p) => p.human);
+    const anyHuman = m.players.some((p) => p.human);
+    const headline = anyHuman ? (humansWon ? `${winTeam.name} wins!` : 'CPU wins!') : `${winTeam.name} wins!`;
+    const st = this.stats;
+    const statRow = (k: string, a: number | string, b: number | string) => [h('span', null, k), h('b', null, String(a)), h('b', null, String(b))];
+    const again = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Rematch')));
+    const other = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, this.mode === 'kaleido' ? 'New Kaleido Rally' : 'Another world')));
+    const menu = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Main menu')));
+    const nav = new Nav([
+      { el: again, onSelect: () => this.lastCfg && this.beginMatch(this.lastCfg.world, true) },
+      { el: other, onSelect: () => (this.mode === 'kaleido' ? this.beginMatch(this.shuffledWorlds()[0]) : this.go(this.worldScreen())) },
+      { el: menu, onSelect: () => this.quitToMenu() },
+    ]);
+    const sheet = h(
+      'div',
+      { class: 'sheet panel', style: `--c:${winTeam.color}` },
+      h('div', { class: 'winner' }, headline),
+      h('div', { class: 'final' }, `${m.score.games[0]} – ${m.score.games[1]}`),
+      h(
+        'div',
+        { class: 'stats' },
+        h('span', { class: 'h' }, ''),
+        h('b', { class: 'h' }, this.teams[0].name),
+        h('b', { class: 'h' }, this.teams[1].name),
+        ...statRow('Points won', st.points[0], st.points[1]),
+        ...statRow('Aces', st.aces[0], st.aces[1]),
+        ...statRow('Winners', st.winners[0], st.winners[1]),
+        ...statRow('Errors', st.errors[0], st.errors[1]),
+        ...statRow('Perfect hits', st.perfects[0], st.perfects[1]),
+        ...statRow('Fastest shot', `${Math.round(st.fastest[0])} km/h`, `${Math.round(st.fastest[1])} km/h`),
+      ),
+      h('div', { class: 'hintline' }, `Longest rally: ${st.longest} shots`),
+      h('div', { class: 'menu' }, again, other, menu),
+    );
+    return this.navScreen('results', h('div', { class: 'screen center results' }, sheet), nav, () => this.quitToMenu(), { title: humansWon ? 'You won!' : 'Match over', hint: 'A to choose' });
+  }
+
+  // ---------------------------------------------------------------- match lifecycle
+
+  private shuffledWorlds() {
+    const ids = WORLDS.map((w) => w.id);
+    for (let i = ids.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+    }
+    return ids;
+  }
+
+  private buildConfig(): MatchConfig {
+    const S = this.settings;
+    const p = this.presets()[Math.min(S.teamPreset, this.presets().length - 1)];
+    const doubles = S.doubles || p.t0.length > 1 || p.t1.length > 1;
+    const ai = AI_LEVELS[S.level];
+    const players: PlayerSpec[] = [];
+    const teamNames: [string, string] = ['', ''];
+    const colors: [string, string] = ['', ''];
+    for (const team of [0, 1] as const) {
+      const slots = team === 0 ? p.t0 : p.t1;
+      const count = doubles ? 2 : 1;
+      const names: string[] = [];
+      for (let i = 0; i < count; i++) {
+        if (slots.length) {
+          const slot = slots[Math.min(i, slots.length - 1)];
+          const spec = this.app.humanSpec(slot, team);
+          if (slots.length === 1 && i === 1) {
+            // same human controls both players; partner gets a twin look
+            spec.look = { ...spec.look, hair: this.rng.pick(['cap', 'band', 'bun', 'spiky'] as const), shorts: '#f7f6fb' };
+          }
+          players.push(spec);
+          if (i < slots.length) names.push(spec.name);
+          if (!colors[team]) colors[team] = this.app.input.seats[slot]?.color ?? '#3aa8ff';
+        } else {
+          const look = randomLook(this.rng, team === 1 ? this.rng.pick(['#6c6a84', '#4b4f73', '#8a5a9a', '#3d6b6b']) : undefined);
+          players.push({ team, name: 'CPU', look, handed: this.rng.chance(0.2) ? -1 : 1, ctrl: { kind: 'cpu', ai } });
+          if (i === 0) names.push('CPU');
+          if (!colors[team]) colors[team] = '#6c6a84';
+        }
+      }
+      teamNames[team] = names.join(' & ');
+    }
+    this.teams = [
+      { name: teamNames[0], color: colors[0] },
+      { name: teamNames[1], color: colors[1] },
+    ];
+    return { doubles, gamesToWin: S.games, players, teamNames, firstServer: this.rng.chance(0.5) ? 0 : 1 };
+  }
+
+  private beginMatch(world: string, reuse = false, cfgIn?: MatchConfig, versus?: Champion) {
+    if (!cfgIn && !reuse) this.tourIdx = -1;
+    if (!cfgIn?.practice && !reuse) this.lab = false;
+    const cfg = cfgIn ?? (reuse && this.lastCfg ? { ...this.lastCfg.cfg, firstServer: (this.rng.chance(0.5) ? 0 : 1) as 0 | 1 } : this.buildConfig());
+    if (reuse && this.lastCfg) this.teams = [...this.teams] as [TeamInfo, TeamInfo];
+    this.lastCfg = { cfg, world };
+    this.go(null);
+    this.stats = this.freshStats();
+    this.pointsSinceShift = 0;
+    this.resultsShown = false;
+    this.tossHintShown = false;
+    if (this.mode === 'kaleido') {
+      this.kaleidoOrder = [world, ...this.shuffledWorlds().filter((w) => w !== world)];
+      this.kaleidoIdx = 0;
+      this.warmSoon(this.kaleidoOrder[1], 1500);
+    }
+    this.app.paused = false;
+    cfg.timingScale = this.settings.relaxed ? 1.45 : 1;
+    this.app.startMatch(cfg, world);
+    // the ball's halo shows who hit it: players' own colours, and a bright contrast for CPU teams
+    const hasHuman = (t: 0 | 1) => cfg.players.some((p) => p.team === t && p.ctrl.kind === 'human');
+    const warm = (c: string) => {
+      const col = new Color(c);
+      return col.r > col.b;
+    };
+    const c0 = hasHuman(0) ? this.teams[0].color : warm(this.teams[1].color) ? '#3aa8ff' : '#ff5a8c';
+    const c1 = hasHuman(1) ? this.teams[1].color : warm(c0) ? '#3aa8ff' : '#ff5a8c';
+    this.app.stage.setTeamColors(c0, c1);
+    this.hud?.el.remove();
+    this.hud = new Hud(this.teams, this.app.rig);
+    this.hud.setSplit(this.app.splitOn ? this.app.rig2 : null);
+    this.hudLayer.append(this.hud.el);
+    const def = worldDef(world);
+    this.versusEnd = null;
+    if (versus) this.versusIntro(versus, def);
+    else this.hud.showBanner(def, `${this.teams[0].name}  vs  ${this.teams[1].name}`);
+    this.hud.setScore(this.app.match!);
+    if (!this.settings.seenTutorial && !versus) {
+      this.hud.setHint('Swing your phone like a racket when the ball comes to you');
+    }
+    this.syncScoreboard();
+    if (this.audio) {
+      this.audio.playSong(def.song);
+      this.audio.music.setIntensity(2);
+      this.audio.sfx.cheer(0.5);
+    }
+    this.syncPads(true);
+  }
+
+  private pause() {
+    if (!this.app.match || this.app.attract || this.screen) return;
+    this.app.paused = true;
+    this.go(this.pauseScreen());
+    this.sound('select');
+  }
+
+  private resume() {
+    this.app.paused = false;
+    this.go(null);
+  }
+
+  private quitToMenu() {
+    this.tourIdx = -1;
+    this.lab = false;
+    this.versusEnd = null;
+    this.app.paused = false;
+    this.hud?.el.remove();
+    this.hud = null;
+    this.app.startAttract(this.app.stage.current?.def.id ?? 'plaza');
+    this.app.stage.setTeamColors('#3aa8ff', '#ff5a8c');
+    this.app.input.prune();
+    this.go(this.mainMenu());
+    this.audio?.music.setIntensity(3);
+  }
+
+  // ---------------------------------------------------------------- swing lab
+
+  private beginSwingLab() {
+    const seat = this.app.input.activeSeats[0];
+    const slot = seat ? seat.slot : 0;
+    const me = this.app.humanSpec(slot, 0);
+    const machine = { ...randomLook(this.rng), hair: 'none' as const, skin: '#b9bccb', shirt: '#4b4f73', eyes: 'wide' as const, cheeks: false, brows: false, racket: '#ffc53d' };
+    const cfg: MatchConfig = {
+      doubles: false,
+      gamesToWin: 99,
+      practice: true,
+      players: [me, { team: 1, name: 'Ball machine', look: machine, handed: 1, ctrl: { kind: 'cpu', ai: AI_LEVELS.feeder } }],
+      teamNames: [me.name, 'Ball machine'],
+      firstServer: 1,
+      introTime: 1.5,
+    };
+    this.teams = [
+      { name: me.name, color: this.app.input.seats[slot]?.color ?? '#ff5a6e' },
+      { name: 'Ball machine', color: '#4b4f73' },
+    ];
+    this.tourIdx = -1;
+    this.mode = 'quick';
+    this.lab = true;
+    this.beginMatch(this.app.stage.current?.def.id ?? 'plaza', false, cfg);
+    this.hud?.setLab('SWING LAB', [['Stroke', '—'], ['Timing', '—'], ['Power', '—'], ['Spin', '—'], ['Aim', '—']], 'Swing at the balls the machine feeds you. Every swing is read out here. Pause (Home) to leave.');
+  }
+
+  private labReadout(e: { kind: 'hit' | 'whiff'; stroke?: string; dtMs?: number; kph?: number; crossed?: boolean; perfect?: boolean; why?: string }) {
+    const s = this.lastSwing;
+    if (!s) return;
+    const sideName: Record<string, string> = { fh: 'Forehand', bh: 'Backhand', oh: 'Overhead' };
+    const stroke = s.side ? sideName[s.side] : e.stroke ? sideName[e.stroke] ?? e.stroke : '—';
+    const dt = e.dtMs;
+    const timing = dt === undefined ? '—' : Math.abs(dt) <= 25 ? `Perfect (${dt >= 0 ? '+' : ''}${dt} ms)` : dt < 0 ? `${-dt} ms early` : `${dt} ms late`;
+    const att = s.attack ?? Math.round(Math.asin(Math.max(-1, Math.min(1, s.spin * 0.3))) * 57);
+    const spin = s.spin > 0.25 ? `Topspin ${att}°` : s.spin < -0.25 ? `Slice ${att}°` : `Flat (${att}°)`;
+    const aim = s.path === null || s.path === undefined ? (s.source === 'pad' ? 'recenter aim on the phone' : 'timing only') : `${Math.round(s.path)}° ${Math.abs(s.path) < 6 ? 'straight' : s.path < 0 ? 'left' : 'right'}`;
+    const rows: [string, string, number?][] = [
+      ['Stroke', e.crossed ? `${stroke} (reached across)` : stroke],
+      ['Timing', timing],
+      ['Power', `${Math.round(s.power * 100)}%`, s.power],
+      ['Spin', spin],
+      ['Aim', aim],
+    ];
+    if (e.kind === 'hit' && e.kph) rows.push(['Ball', `${Math.round(e.kph)} km/h${e.perfect ? ' · PERFECT' : ''}`]);
+    else if (e.kind === 'whiff') rows.push(['Result', e.why === 'noball' ? 'No ball in play' : e.why === 'reach' ? 'Missed · out of reach' : e.why === 'early' ? 'Missed · too early' : e.why === 'late' ? 'Missed · too late' : 'Missed']);
+    this.hud?.setLab('SWING LAB', rows);
+  }
+
+  // ---------------------------------------------------------------- world tour
+
+  private tourScreen(): Screen {
+    const T = loadTour();
+    const cards = TOUR.map((c, i) => {
+      const def = worldDef(c.world);
+      const locked = i > T.beaten;
+      const done = i < T.beaten;
+      const final = i === TOUR.length - 1;
+      return h(
+        'div',
+        { class: `shard ${locked ? 'locked' : ''} ${done ? 'done' : ''} ${final ? 'final' : ''}` },
+        h('div', { class: 'st' }, done ? '★' : locked ? '🔒' : '▶'),
+        h('div', { class: 'num' }, final ? 'FINAL' : `WORLD ${i + 1}`),
+        h('div', { class: 'wn', style: `font-family:${final ? "'Fredoka'" : def.ui.display}` }, final ? 'The Prism' : def.name),
+        h('div', { class: 'cn' }, locked ? '???' : c.name),
+      );
+    });
+    const big = h('div', { class: 'tbig' });
+    const setBig = (i: number) => {
+      const c = TOUR[i];
+      const def = worldDef(c.world);
+      clear(big);
+      if (i > T.beaten) {
+        big.append(h('div', { class: 'cn', style: `font-family:${def.ui.display}` }, '???'), h('div', { class: 'ct' }, 'Restore the previous shard to unlock'));
+      } else {
+        big.append(h('div', { class: 'cn', style: `font-family:${def.ui.display}` }, c.name), h('div', { class: 'ct' }, c.title), h('div', { class: 'cq' }, `“${c.quote}”`));
+      }
+    };
+    const nav = new Nav(
+      TOUR.map((c, i) => ({
+        el: cards[i],
+        onSelect: () => {
+          if (i > T.beaten) {
+            this.sound('error');
+            return;
+          }
+          this.beginTour(i);
+        },
+      })),
+      true,
+    );
+    const start = Math.min(T.beaten, TOUR.length - 1);
+    nav.onChange = (i) => {
+      setBig(i);
+      const w = TOUR[i].world;
+      if (this.app.stage.current?.def.id !== w) {
+        this.app.stage.setWorld(w, { transition: true, origin: { x: (i + 0.5) / TOUR.length, y: 0.8 } });
+        this.audio?.sfx.ui('shift');
+      }
+    };
+    nav.focus(start);
+    setBig(start);
+    if (this.app.stage.current?.def.id !== TOUR[start].world) this.app.stage.setWorld(TOUR[start].world, { transition: true });
+    const restored = Math.min(T.beaten, 8);
+    const el = h(
+      'div',
+      { class: 'screen tour' },
+      h('div', { class: 'headline' }, h('b', null, 'WORLD TOUR'), h('span', null, `The Great Prism shattered into eight worlds. ${restored} of 8 shards restored.`)),
+      big,
+      h('div', { class: 'shards' }, ...cards),
+    );
+    return this.navScreen('tour', el, nav, () => this.go(this.mainMenu()), { title: 'World Tour', hint: '◀ ▶ choose · A play' });
+  }
+
+  private beginTour(i: number) {
+    const c = TOUR[i];
+    const seat = this.app.input.activeSeats[0];
+    const slot = seat ? seat.slot : 0;
+    const me = this.app.humanSpec(slot, 0);
+    const cfg: MatchConfig = {
+      doubles: false,
+      gamesToWin: c.games,
+      players: [me, { team: 1, name: c.name, look: c.look, handed: c.handed, ctrl: { kind: 'cpu', ai: c.ai } }],
+      teamNames: [me.name, c.name],
+      firstServer: 0,
+      introTime: 7.2,
+    };
+    this.teams = [
+      { name: me.name, color: this.app.input.seats[slot]?.color ?? '#ff5a6e' },
+      { name: c.name, color: c.look.shirt },
+    ];
+    this.tourIdx = i;
+    this.mode = c.kaleido ? 'kaleido' : 'quick';
+    this.beginMatch(c.world, false, cfg, c);
+  }
+
+  private versusIntro(c: Champion, def: WorldDef) {
+    const m = this.app.match!;
+    const champ = m.players.find((p) => p.team === 1)!;
+    this.app.rig.versus = champ;
+    this.app.rig.setMode('versus');
+    champ.emote = 'wave';
+    champ.emoteT0 = 0;
+    const voice = 260 + ((TOUR.indexOf(c) * 97) % 420);
+    this.hud?.setHint('');
+    this.hud?.showQuote(c.name, c.title, c.quote, c.look.shirt, (ch) => this.audio?.sfx.blip(ch, voice));
+    let done = false;
+    const end = () => {
+      if (done || this.app.match !== m) return;
+      done = true;
+      this.versusEnd = null;
+      this.hud?.hideQuote();
+      champ.emote = 'none';
+      this.app.rig.setMode('intro');
+      this.hud?.showBanner(def, `${this.teams[0].name}  vs  ${this.teams[1].name}`);
+      // shorten the remaining intro so the fly-in lands right on the first serve
+      m.cfg.introTime = Math.min(m.cfg.introTime ?? 7, m.t + 3.2);
+    };
+    this.versusEnd = end;
+    window.setTimeout(end, Math.min(6500, 1400 + c.quote.length * 45));
+  }
+
+  private tourResults(): Screen {
+    const m = this.app.match!;
+    const i = this.tourIdx;
+    const c = TOUR[i];
+    const won = m.score.winner === 0;
+    const T = loadTour();
+    if (won && T.beaten <= i) {
+      T.beaten = i + 1;
+      saveTour(T);
+    }
+    if (won && i === TOUR.length - 1) return this.endingScreen();
+    const cont = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, won ? 'Continue the tour' : 'Try again')));
+    const map = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Tour map')));
+    const menu = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Main menu')));
+    const nav = new Nav([
+      { el: cont, onSelect: () => (won ? this.go(this.tourScreen()) : this.beginTour(i)) },
+      { el: map, onSelect: () => this.go(this.tourScreen()) },
+      { el: menu, onSelect: () => this.quitToMenu() },
+    ]);
+    const def = worldDef(c.world);
+    const sheet = h(
+      'div',
+      { class: 'sheet panel', style: `--c:${won ? this.teams[0].color : c.look.shirt}` },
+      h('div', { class: 'winner', style: `font-family:${def.ui.display}` }, won ? 'Shard restored!' : `${c.name} wins`),
+      h('div', { class: 'final' }, `${m.score.games[0]} – ${m.score.games[1]}`),
+      h('div', { class: 'hintline', style: 'font-size:calc(var(--u)*2.6);opacity:.85' }, won ? `“${c.beatLine}”` : 'So close. Every champion has a weakness — find it.'),
+      h('div', { class: 'hintline' }, won ? `${Math.min(8, i + 1)} of 8 shards restored` : `Longest rally: ${this.stats.longest} shots`),
+      h('div', { class: 'menu' }, cont, map, menu),
+    );
+    return this.navScreen('results', h('div', { class: 'screen center results' }, sheet), nav, () => this.go(this.tourScreen()), { title: won ? 'Shard restored!' : 'Try again', hint: 'A to choose' });
+  }
+
+  private endingScreen(): Screen {
+    const back = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Back to the menu')));
+    const nav = new Nav([{ el: back, onSelect: () => this.quitToMenu() }]);
+    this.audio?.music.jingle('match');
+    this.audio?.sfx.cheer(1);
+    let k = 0;
+    const cycle = window.setInterval(() => {
+      if (this.screen?.name !== 'ending') {
+        clearInterval(cycle);
+        return;
+      }
+      k = (k + 1) % WORLDS.length;
+      this.app.stage.setWorld(WORLDS[k].id, { transition: true, origin: { x: Math.random(), y: Math.random() * 0.6 + 0.2 } });
+      this.audio?.sfx.ui('shift');
+    }, 2600);
+    const el = h(
+      'div',
+      { class: 'screen ending' },
+      h('h1', null, 'The Prism is whole'),
+      h('p', null, 'Eight worlds, eight champions, one ball. The Kaleidoscope turns again — and every world remembers your rallies.'),
+      h('div', { class: 'credits' }, 'KALEIDO · World Tennis', h('br'), 'Designed & built by Claude for Veer', h('br'), 'Every model, shader, song and sound made from code'),
+      h('div', { class: 'menu' }, back),
+    );
+    return this.navScreen('ending', el, nav, () => this.quitToMenu(), { title: 'Champion!', hint: 'A to continue' });
+  }
+
+  private freshStats(): Stats {
+    return { points: [0, 0], aces: [0, 0], winners: [0, 0], errors: [0, 0], fastest: [0, 0], perfects: [0, 0], longest: 0 };
+  }
+
+  // ---------------------------------------------------------------- match events → HUD / audio / pads
+
+  private matchEvent(e: MatchEvent) {
+    const m = this.app.match!;
+    const a = this.audio;
+    const real = !this.app.attract;
+    const pan = (x: number) => Math.max(-1, Math.min(1, x / 8));
+    switch (e.type) {
+      case 'hit': {
+        if (this.lab && e.p.human) this.labReadout({ kind: 'hit', stroke: e.stroke, dtMs: e.dtMs, kph: e.kph, crossed: e.crossed, perfect: e.perfect });
+        this.hitTimes.push(m.t);
+        if (this.hitTimes.length > 8) this.hitTimes.shift();
+        this.lastHit = { kind: e.kind, kph: e.kph, perfect: e.perfect };
+        a?.sfx.hit(e.power, e.perfect, pan(e.pos.x), e.kind === 'smash');
+        if (real) {
+          a?.music.hitNote(e.rally + 1, e.power, pan(e.pos.x));
+          this.stats.fastest[e.p.team] = Math.max(this.stats.fastest[e.p.team], e.kph);
+          if (e.perfect) this.stats.perfects[e.p.team]++;
+          if (e.p.human) {
+            const seat = this.app.input.seats[e.p.slot];
+            const timing = e.perfect ? 'PERFECT' : e.tau < -0.55 ? 'EARLY' : e.tau > 0.55 ? 'LATE' : 'GOOD';
+            const strokeName = e.serve ? 'Serve' : e.kind === 'smash' ? 'Smash' : e.stroke === 'bh' ? 'Backhand' : e.stroke === 'oh' ? 'Overhead' : 'Forehand';
+            const spinName = e.kind === 'lob' ? ' lob' : e.kind === 'drop' ? ' drop shot' : e.spin > 0.3 ? ' topspin' : e.spin < -0.3 ? ' slice' : '';
+            const detail = `${strokeName}${spinName} · ${Math.round(e.kph)} km/h`;
+            if (seat?.pid) this.app.link.toPad(seat.pid, { type: 'fx', fx: e.perfect ? 'perfect' : 'hit', power: e.power, label: timing, detail });
+            const label = e.perfect ? 'PERFECT!' : e.tau < -0.55 ? 'EARLY' : e.tau > 0.55 ? 'LATE' : e.kind === 'lob' ? 'LOB' : e.kind === 'drop' ? 'DROP SHOT' : e.kind === 'smash' ? 'SMASH!' : e.serve ? '' : '';
+            const sub = e.serve ? '' : `${strokeName.toUpperCase()}${spinName.toUpperCase()}`;
+            if (label || sub) this.hud?.float(label ? `${label}${sub ? ' · ' + sub : ''}` : sub, { x: e.pos.x, y: e.pos.y + 0.9, z: e.pos.z }, e.perfect ? 'perfect' : label ? '' : 'soft', e.p.team);
+            if (!this.settings.seenTutorial && this.stats.fastest[e.p.team] > 0) {
+              this.settings.seenTutorial = true;
+              this.save();
+              this.hud?.setHint('');
+            }
+          }
+          if (e.kph > 105 && (e.serve || e.kind === 'smash' || e.perfect)) this.hud?.showSpeed(e.kph);
+          this.hud?.setRally(e.rally);
+          if (a) a.music.setIntensity(e.rally >= 9 ? 3 : e.rally >= 4 ? 2 : 1);
+          // Kaleido: a perfect shot deep in a rally shatters the world
+          // (once per rally: the next world gets prepared between points)
+          if (this.mode === 'kaleido' && e.perfect && e.rally >= 5 && e.p.human && !this.shiftedThisRally && !this.app.stage.transitioning) {
+            this.shiftedThisRally = true;
+            this.shiftWorld(e.pos);
+          }
+        }
+        break;
+      }
+      case 'whiff':
+        if (this.lab && e.p.human) this.labReadout({ kind: 'whiff', dtMs: e.dtMs, why: e.why });
+        if (real && e.p.human && e.why !== 'noball') {
+          const why = e.why === 'reach' ? 'OUT OF REACH' : e.tau < -1 ? 'TOO EARLY' : e.tau > 1 ? 'TOO LATE' : '';
+          this.hud?.float(why ? `MISS · ${why}` : 'MISS', { x: e.p.x, y: 2.1, z: e.p.z }, 'miss', e.p.team);
+          const seat = this.app.input.seats[e.p.slot];
+          if (seat?.pid && m.state === 'play') this.app.link.toPad(seat.pid, { type: 'fx', fx: 'whiff', label: why });
+        }
+        break;
+      case 'bounce':
+        if (e.impact > 0.8) a?.sfx.bounce(e.impact, pan(e.pos.x));
+        break;
+      case 'net':
+        a?.sfx.net(e.cord, pan(e.pos.x));
+        if (real && e.cord && e.over) a?.sfx.ooh();
+        break;
+      case 'close-call':
+        if (real) a?.sfx.ooh();
+        break;
+      case 'toss':
+        if (real && e.p.human) {
+          const seat = this.app.input.seats[e.p.slot];
+          if (seat?.pid) this.app.link.toPad(seat.pid, { type: 'fx', fx: 'toss' });
+          this.hud?.setHint('<b>SWING!</b>', seat?.color);
+        }
+        break;
+      case 'catch':
+        this.syncPads(true);
+        break;
+      case 'fault':
+        if (real) {
+          this.hud?.say(e.double ? 'DOUBLE FAULT' : 'FAULT', undefined, e.double ? 'bad small' : 'small quick');
+          a?.say(e.double ? 'Double fault' : 'Fault');
+          if (!e.double) a?.sfx.aww();
+        }
+        break;
+      case 'let':
+        if (real) {
+          this.hud?.say('LET', 'Replay the serve', 'small quick');
+          a?.say('Let');
+        }
+        break;
+      case 'point': {
+        this.pointsSinceShift++;
+        const w = e.winner;
+        this.stats.points[w]++;
+        this.stats.longest = Math.max(this.stats.longest, e.rally);
+        const loser = (1 - w) as 0 | 1;
+        if (e.reason === 'ace') this.stats.aces[w]++;
+        else if (e.reason === 'winner') this.stats.winners[w]++;
+        else this.stats.errors[loser]++;
+        if (!real) {
+          a?.sfx.applause(0.4 + Math.min(0.5, e.rally * 0.05));
+          break;
+        }
+        if (this.lab) {
+          // practice: no score, no umpire — just a little applause for long rallies
+          if (e.rally >= 4) a?.sfx.applause(0.3 + Math.min(0.4, e.rally * 0.04));
+          this.hud?.setRally(0);
+          break;
+        }
+        const reasonText: Record<string, string> = { ace: 'ACE!', winner: e.rally > 1 ? 'WINNER!' : 'NICE SHOT!', out: 'OUT!', long: 'OUT!', wide: 'WIDE!', net: 'NET!', double: '', unreturned: 'NICE SHOT!' };
+        const humanWon = m.team(w).some((p) => p.human);
+        const humanLost = m.team(loser).some((p) => p.human);
+        const good = humanWon || (!humanLost && true);
+        const txt = reasonText[e.reason];
+        const call = e.matchWon ? 'Game, set & match' : e.gameWon ? `Game ${this.teams[w].name}` : e.call;
+        if (txt) this.hud?.say(txt, call, good ? 'good' : 'bad');
+        else this.hud?.say(e.gameWon ? 'GAME' : call, e.gameWon ? call : undefined, 'small');
+        if (e.gameWon && !e.matchWon) this.hud?.say('GAME', `${this.teams[0].name} ${m.score.games[0]} – ${m.score.games[1]} ${this.teams[1].name}`, 'good', 0.2);
+        if (e.matchWon) this.hud?.say('GAME, SET', 'AND MATCH!', 'good', 0.2);
+        a?.sfx.cheer(Math.min(1, 0.45 + e.rally * 0.05 + (e.gameWon ? 0.3 : 0)));
+        a?.music.jingle(e.matchWon ? 'match' : e.gameWon ? 'game' : humanWon || !humanLost ? 'point' : 'lose');
+        window.setTimeout(() => a?.say(e.matchWon ? 'Game, set and match' : e.gameWon ? `Game, ${this.teams[w].name}` : e.call.replace('–', ' ')), 700);
+        a?.music.setIntensity(e.gameWon ? 3 : 1);
+        // pads
+        for (const p of m.players) {
+          if (!p.human) continue;
+          const seat = this.app.input.seats[p.slot];
+          if (seat?.pid) this.app.link.toPad(seat.pid, { type: 'fx', fx: e.matchWon ? (p.team === w ? 'win' : 'lose') : p.team === w ? 'point-won' : 'point-lost' });
+        }
+        this.hud?.setScore(m);
+        this.hud?.setRally(0);
+        this.syncScoreboard();
+        this.app.link.toAll({ type: 'score', line: `${m.score.pointText(0)}–${m.score.pointText(1)}  ·  ${m.score.games[0]}–${m.score.games[1]}` });
+        // instant replay for highlights
+        this.pointsSinceReplay++;
+        const lh = this.lastHit;
+        const highlight =
+          e.rally >= 8 ||
+          (e.reason === 'winner' && (lh.kind === 'smash' || lh.perfect || lh.kph > 118)) ||
+          (e.reason === 'ace' && lh.kph > 150) ||
+          ((e.gameWon || e.matchWon) && e.rally >= 3);
+        if (highlight && (this.pointsSinceReplay >= 3 || e.matchWon || e.rally >= 12)) {
+          const tPoint = m.t;
+          const from = Math.max(tPoint - 6.5, (this.hitTimes[this.hitTimes.length - 3] ?? tPoint - 4) - 0.5);
+          window.setTimeout(() => {
+            if (this.app.match !== m || this.screen || this.app.replay) return;
+            if (m.state !== 'dead' && m.state !== 'over') return;
+            if (this.app.startReplay(from, tPoint + 0.6)) {
+              this.pointsSinceReplay = 0;
+              this.hud?.clearCallouts();
+              this.hud?.setReplay(true);
+              this.syncPads(true);
+            }
+          }, 1250);
+        }
+        this.hitTimes.length = 0;
+        this.shiftedThisRally = false;
+        if (this.mode === 'kaleido' && this.pointsSinceShift >= 2 && !e.matchWon) {
+          window.setTimeout(() => {
+            if (this.app.match === m && !this.app.stage.transitioning) this.shiftWorld({ x: 0, y: 1, z: w === 0 ? 5 : -5 });
+          }, 1400);
+        }
+        break;
+      }
+      case 'state':
+        if (e.state === 'over' && real && !this.resultsShown) {
+          this.resultsShown = true;
+          window.setTimeout(() => {
+            if (this.app.match === m && m.state === 'over') this.go(this.resultsScreen());
+          }, 900);
+        }
+        if (e.state === 'serve' || e.state === 'reset') this.hud?.setScore(m);
+        this.syncPads();
+        break;
+      case 'serve-ready':
+        this.syncPads(true);
+        break;
+    }
+  }
+
+  /** Prepare a world shortly — at a moment when a hiccup can't interrupt a rally. */
+  private warmSoon(id: string | undefined, delay = 2500) {
+    if (!id) return;
+    const tryWarm = () => {
+      const m = this.app.match;
+      const busy = m && !this.app.attract && !this.app.paused && (m.state === 'play' || m.state === 'toss');
+      if (busy) window.setTimeout(tryWarm, 250);
+      else this.app.stage.warm(id, this.app.rig.cam);
+    };
+    window.setTimeout(tryWarm, delay);
+  }
+
+  private shiftWorld(at: { x: number; y: number; z: number }) {
+    if (WORLDS.length < 2) return;
+    this.pointsSinceShift = 0;
+    this.kaleidoIdx = (this.kaleidoIdx + 1) % this.kaleidoOrder.length;
+    const next = this.kaleidoOrder[this.kaleidoIdx];
+    this.warmSoon(this.kaleidoOrder[(this.kaleidoIdx + 1) % this.kaleidoOrder.length], 3000);
+    const p = this.app.rig.project(at);
+    this.app.stage.setWorld(next, { transition: true, origin: { x: p.x, y: p.y } });
+    this.audio?.sfx.ui('shift');
+    this.app.rig.kick(0.4);
+    const def = worldDef(next);
+    this.hud?.showBanner(def, '');
+  }
+
+  private syncScoreboard() {
+    const m = this.app.match;
+    const w = this.app.stage.current as unknown as { setScoreboard?: (n: [string, string], g: [string, string], p: [string, string]) => void };
+    if (!w?.setScoreboard) return;
+    if (!m || this.app.attract) {
+      w.setScoreboard(['KALEIDO', 'WORLD TENNIS'], ['', ''], ['', '']);
+      return;
+    }
+    w.setScoreboard([this.teams[0].name, this.teams[1].name], [String(m.score.games[0]), String(m.score.games[1])], [m.score.pointText(0), m.score.pointText(1)]);
+  }
+
+  // ---------------------------------------------------------------- pads
+
+  syncPads(force = false) {
+    const m = this.app.match;
+    for (const seat of this.app.input.seats) {
+      if (!seat || !seat.pid || !seat.connected) continue;
+      let mode: PadMode = 'menu';
+      let title = this.screen?.pad?.title;
+      let hint = this.screen?.pad?.hint;
+      if (!this.screen && this.app.replay) {
+        mode = 'skip';
+        title = 'SKIP';
+        hint = 'replay';
+      } else if (!this.screen && m && !this.app.attract) {
+        const mine = m.players.filter((p) => p.slot === seat.slot);
+        if (!mine.length) {
+          mode = 'watch';
+          title = 'Watching';
+          hint = 'Enjoy the match';
+        } else if (m.isServerSlot(seat.slot)) {
+          mode = 'serve';
+          title = m.second ? 'SECOND SERVE' : 'TAP TO TOSS';
+          hint = 'then swing to serve';
+        } else {
+          mode = 'play';
+          title = m.state === 'intro' ? 'Get ready!' : 'Rally!';
+          hint = 'Swing like a racket';
+        }
+      }
+      const key = `${mode}|${title}|${hint}`;
+      if (!force && this.padModes.get(seat.pid) === key) continue;
+      this.padModes.set(seat.pid, key);
+      this.app.link.toPad(seat.pid, { type: 'mode', mode, title, hint });
+    }
+  }
+
+  // ---------------------------------------------------------------- per frame
+
+  private frame(dt: number) {
+    this.time += dt;
+    this.screen?.update?.(dt);
+    this.hud?.update(dt);
+    const m = this.app.match;
+    if (m && !this.app.attract && this.hud) {
+      // serve hint
+      const srv = m.server;
+      if (this.versusEnd) {
+        // champion is talking: keep the screen clear
+      } else if ((m.state === 'serve' || m.state === 'intro') && srv?.human) {
+        const seat = this.app.input.seats[srv.slot];
+        const how = seat && !seat.local ? 'tap your phone to toss, then swing' : 'press Space (or click) to toss, then swing';
+        if (m.state === 'serve') this.hud.setHint(`<b>P${srv.slot + 1} serve</b> — ${how}`, seat?.color);
+      } else if (m.state === 'toss' && srv?.human) {
+        // SWING! set on toss
+      } else if (m.state !== 'intro' || this.settings.seenTutorial) {
+        if (!(m.state === 'play' && !this.settings.seenTutorial)) this.hud.setHint('');
+      }
+      if (this.audio) this.audio.sfx.setCrowd(m.excitement);
+      if (m.state === 'serve' && !this.tossHintShown) this.tossHintShown = true;
+    }
+    // attract mode showcases the worlds
+    if (this.app.attract && this.screen && (this.screen.name === 'title' || this.screen.name === 'menu') && WORLDS.length > 1) {
+      if (this.time > this.attractShiftAt) {
+        this.attractShiftAt = this.time + 14;
+        const i = WORLDS.findIndex((w) => w.id === this.app.stage.current?.def.id);
+        const next = WORLDS[(i + 1) % WORLDS.length];
+        this.app.stage.setWorld(next.id, { transition: true, origin: { x: 0.5, y: 0.45 } });
+        this.audio?.sfx.ui('shift');
+        this.warmSoon(WORLDS[(i + 2) % WORLDS.length].id, 4000);
+      }
+    }
+    if ((this.screen?.name === 'title' || this.screen?.name === 'menu') && this.time >= this.joinRefreshAt) {
+      this.joinRefreshAt = this.time + 3;
+      this.join.refresh();
+    }
+  }
+
+  // ---------------------------------------------------------------- misc
+
+  private toastTimer = 0;
+  private joinRefreshAt = 0;
+  toast(text: string, color = '#3aa8ff') {
+    clear(this.toastEl);
+    this.toastEl.append(h('i', { style: `--c:${color}` }), text);
+    this.toastEl.style.setProperty('--c', color);
+    this.toastEl.classList.add('show');
+    clearTimeout(this.toastTimer);
+    this.toastTimer = window.setTimeout(() => this.toastEl.classList.remove('show'), 2600);
+  }
+
+  private applyTheme(def: WorldDef) {
+    setVars(this.root, {
+      '--accent': def.ui.accent,
+      '--accent2': def.ui.accent2,
+      '--ink': def.ui.ink,
+      '--paper': def.ui.paper,
+      '--font': def.ui.font,
+      '--display': def.ui.display,
+      '--panel': def.ui.panel,
+    });
+  }
+}

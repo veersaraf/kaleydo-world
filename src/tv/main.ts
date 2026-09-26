@@ -1,0 +1,24 @@
+import '@fontsource/fredoka/latin-400.css';
+import '@fontsource/fredoka/latin-600.css';
+import '@fontsource/fredoka/latin-700.css';
+import '@fontsource/kaushan-script/latin-400.css';
+import '@fontsource/monoton/latin-400.css';
+import '@fontsource/press-start-2p/latin-400.css';
+import '@fontsource/gaegu/latin-700.css';
+import '@fontsource/chewy/latin-400.css';
+import '@fontsource/caveat/latin-700.css';
+import '@fontsource/orbitron/latin-700.css';
+import '@fontsource/orbitron/latin-900.css';
+import '@fontsource/silkscreen/latin-400.css';
+import './ui/base.css';
+import './ui/ui.css';
+import { App } from './app';
+import { Flow } from './flow';
+
+const canvas = document.getElementById('gl') as HTMLCanvasElement;
+const app = new App(canvas);
+const flow = new Flow(app);
+(window as unknown as { kaleido: App; flow: Flow }).kaleido = app;
+(window as unknown as { flow: Flow }).flow = flow;
+app.startAttract('plaza');
+app.start();

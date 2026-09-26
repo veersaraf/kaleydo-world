@@ -1,0 +1,229 @@
+// A tennis player on court: position, movement, intercept planning and swing
+// state. Both humans and CPUs move automatically (Wii-style); humans only
+// decide *when* and *how* to swing.
+
+import { COURT, fwdOf } from './court';
+import type { PathSample } from './ball';
+import type { Stroke, SwingInput } from './shot';
+import type { Look } from '../chars/look';
+import type { AIProfile } from './ai';
+import { clamp } from '../core/math';
+
+export type Ctrl = { kind: 'cpu'; ai: AIProfile } | { kind: 'human'; slot: number; ai: AIProfile };
+
+export interface HitPlan {
+  t: number;
+  bx: number;
+  by: number;
+  bz: number;
+  stroke: Stroke;
+  volley: boolean;
+  /** where the body should stand to meet the ball */
+  sx: number;
+  sz: number;
+  reachable: boolean;
+  cost: number;
+  /** horizontal ball speed at contact, m/s */
+  speed: number;
+}
+
+export interface SwingState {
+  stroke: Stroke;
+  /** time the swing (forward motion) began */
+  t0: number;
+  /** racket-ball contact time (or the would-be contact for whiffs) */
+  tc: number;
+  /** swing finished */
+  te: number;
+  /** contact point in world space */
+  cx: number;
+  cy: number;
+  cz: number;
+  hit: boolean;
+  resolved: boolean;
+  input: SwingInput;
+  /** ball position when the swing began (for the magnet warp) */
+  serve: boolean;
+}
+
+export type Emote = 'none' | 'celebrate' | 'sad' | 'wave' | 'cheer' | 'shrug';
+
+export const REACH = {
+  fhSide: 0.8,
+  fhFwd: 0.42,
+  bhSide: 0.72,
+  bhFwd: 0.38,
+  ohSide: 0.28,
+  ohFwd: 0.3,
+  idealH: 0.9,
+};
+
+export class TPlayer {
+  x = 0;
+  z = 0;
+  vx = 0;
+  vz = 0;
+  yaw = 0;
+  tx = 0;
+  tz = 0;
+  plan: HitPlan | null = null;
+  /** contact time of the last ball this player let go by (to judge swings that arrive after it) */
+  missedT = -1;
+  swing: SwingState | null = null;
+  nextSwingOK = 0;
+  emote: Emote = 'none';
+  emoteT0 = 0;
+  /** anticipation: time until the player starts chasing */
+  reactUntil = 0;
+  /** true while holding the ball before serving */
+  holding = false;
+  tossT = -1;
+  /** 0..1, how "on edge" the character looks (focus face) */
+  focus = 0;
+  lastStroke: Stroke = 'fh';
+  /** doubles formation role */
+  role: 'back' | 'net' = 'back';
+  maxSpeed = 6.2;
+  accel = 24;
+  /** movement frozen during the follow-through */
+  lockUntil = 0;
+  /** this player's natural "straight" swing path per stroke (degrees), learned */
+  pathNeutral: Record<'fh' | 'bh' | 'oh', number> = { fh: 0, bh: 0, oh: 0 };
+  hits = 0;
+
+  constructor(
+    public id: number,
+    public team: 0 | 1,
+    public ctrl: Ctrl,
+    public name: string,
+    public look: Look,
+    public handed: 1 | -1,
+  ) {
+    this.yaw = team === 0 ? 0 : Math.PI;
+    const ai = ctrl.ai;
+    this.maxSpeed = ai.speed;
+  }
+
+  get human() {
+    return this.ctrl.kind === 'human';
+  }
+  get slot() {
+    return this.ctrl.kind === 'human' ? this.ctrl.slot : -1;
+  }
+  get fwd() {
+    return fwdOf(this.team);
+  }
+  /** World x sign of this player's forehand side. */
+  get fhSign() {
+    return this.handed * (this.team === 0 ? 1 : -1);
+  }
+
+  place(x: number, z: number) {
+    this.x = this.tx = x;
+    this.z = this.tz = z;
+    this.vx = this.vz = 0;
+    this.yaw = this.team === 0 ? 0 : Math.PI;
+  }
+
+  /** Time needed to run distance d from standing (trapezoid speed profile). */
+  timeToCover(d: number) {
+    const v = this.maxSpeed;
+    const a = this.accel;
+    const dAcc = (v * v) / a; // accelerate + brake
+    if (d < dAcc) return 2 * Math.sqrt(d / a);
+    return d / v + v / a;
+  }
+
+  step(dt: number) {
+    const dx = this.tx - this.x;
+    const dz = this.tz - this.z;
+    const dist = Math.hypot(dx, dz);
+    let dvx = 0,
+      dvz = 0;
+    if (dist > 0.01) {
+      // arrive: speed tapers as we approach the target
+      const want = Math.min(this.maxSpeed, Math.sqrt(2 * this.accel * 0.8 * dist));
+      dvx = (dx / dist) * want;
+      dvz = (dz / dist) * want;
+    }
+    const ax = dvx - this.vx;
+    const az = dvz - this.vz;
+    const al = Math.hypot(ax, az);
+    const maxDv = this.accel * dt;
+    if (al > maxDv) {
+      this.vx += (ax / al) * maxDv;
+      this.vz += (az / al) * maxDv;
+    } else {
+      this.vx = dvx;
+      this.vz = dvz;
+    }
+    this.x += this.vx * dt;
+    this.z += this.vz * dt;
+    // stay on your own side of the net
+    if (this.team === 0) this.z = Math.max(0.9, this.z);
+    else this.z = Math.min(-0.9, this.z);
+    this.x = clamp(this.x, -COURT.doublesHalfW - 3.5, COURT.doublesHalfW + 3.5);
+  }
+
+  speed() {
+    return Math.hypot(this.vx, this.vz);
+  }
+
+  /**
+   * Choose where and when to meet the ball along a predicted path.
+   * `mustBounce` for serve returns; `allowVolley` for players near the net.
+   */
+  planFrom(path: PathSample[], now: number, react: number, opts: { mustBounce: boolean; doubles: boolean; prefer?: Stroke }): HitPlan | null {
+    const fwd = this.fwd;
+    const myHalf = (z: number) => (this.team === 0 ? z > 0.4 : z < -0.4);
+    let best: HitPlan | null = null;
+    let fallback: HitPlan | null = null;
+    const nearNet = Math.abs(this.z) < 6.5;
+    for (let i = 0; i < path.length; i++) {
+      const s = path[i];
+      if (s.bounces >= 2) break;
+      if (!myHalf(s.z)) continue;
+      if (s.t < now + 0.08) continue;
+      if (opts.mustBounce && s.bounces === 0) continue;
+      if (s.y < 0.22 || s.y > 3.0) continue;
+      const volley = s.bounces === 0;
+      const overhead = s.y > 1.95;
+
+      // candidate stands for forehand / backhand / overhead
+      const fs = this.fhSign;
+      const cands: [Stroke, number, number][] = overhead
+        ? [['oh', s.x - fs * REACH.ohSide, s.z - fwd * REACH.ohFwd]]
+        : [
+            ['fh', s.x - fs * REACH.fhSide, s.z - fwd * REACH.fhFwd],
+            ['bh', s.x + fs * REACH.bhSide, s.z - fwd * REACH.bhFwd],
+          ];
+      for (const [stroke, sx, sz] of cands) {
+        const d = Math.hypot(sx - this.x, sz - this.z);
+        const avail = s.t - now - react;
+        const need = this.timeToCover(d);
+        const reachable = need <= avail + 0.02;
+        const hIdeal = overhead ? 2.35 : REACH.idealH;
+        let cost = 1.7 * Math.abs(s.y - hIdeal);
+        cost += 0.45 * clamp(need / Math.max(0.05, avail), 0, 2);
+        cost += opts.prefer ? (stroke === opts.prefer ? -0.8 : 0.8) : stroke === 'bh' ? 0.14 : 0;
+        cost += overhead ? -0.15 : 0;
+        // don't retreat miles behind the baseline
+        cost += 0.5 * Math.max(0, Math.abs(s.z) - (COURT.halfL + 2.2));
+        if (volley && !overhead) cost += nearNet ? -0.25 : 0.9;
+        if (volley && overhead) cost += nearNet ? -0.4 : 0.3;
+        // prefer taking it earlier (on the rise) rather than drifting back
+        cost += 0.22 * (s.t - now);
+        const speed = i > 0 ? Math.hypot(s.x - path[i - 1].x, s.z - path[i - 1].z) / (s.t - path[i - 1].t) : 15;
+        const plan: HitPlan = { t: s.t, bx: s.x, by: s.y, bz: s.z, stroke, volley, sx, sz, reachable, cost, speed };
+        if (reachable) {
+          if (!best || cost < best.cost) best = plan;
+        } else {
+          const miss = need - avail;
+          const fcost = miss * 3 + cost;
+          if (!fallback || fcost < fallback.cost) fallback = { ...plan, cost: fcost };
+        }
+      }
+    }
+    return best ?? fallback;
+  }
+}
