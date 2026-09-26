@@ -1,13 +1,16 @@
-# KALEIDO — World Tennis
+# KALEIDO — World Sports
 
-A motion-controlled tennis game in the spirit of Wii Sports, played across
-eight worlds that each look like a different medium: a cel-shaded plaza, a
-sumi-e ink painting, a synthwave night drive, an 8-bit castle, a paper pop-up
-book, a stop-motion clay set, a watercolour garden and a court adrift in space.
+Motion-controlled **tennis** and **bowling** in the spirit of Wii Sports,
+played across nine worlds that each look like a different medium: a Switch
+Sports-style park, a cel-shaded plaza, a sumi-e ink painting, a synthwave
+night drive, an 8-bit castle, a paper pop-up book, a stop-motion clay set, a
+watercolour garden and a court adrift in space.
 
-**Your iPhone is the remote. Your Mac is the TV.** Swing your phone like a
-racket; timing aims the shot, swing speed sets the power, and brushing up or
-chopping down adds topspin or slice. Up to four phones can join.
+**Your iPhone is the remote. Your Mac is the TV.** In tennis, swing your phone
+like a racket: timing aims the shot, swing speed sets the power, and brushing
+up or chopping down adds topspin or slice. In bowling, hold the ball on the
+screen, swing your arm and let go — twist your wrist to hook it. Up to four
+phones can join.
 
 Everything — characters, courts, shaders, music, sound effects — is generated
 in code. There are no image, model or audio files.
@@ -42,7 +45,7 @@ like the Wii Remote did.
 *"Optional: remove the security warning"* and follow the three steps to trust
 the KALEIDO certificate. This lets the remote use WebSockets (lower latency).
 
-### Controls
+### Tennis controls
 
 | | Phone | Mac |
 |---|---|---|
@@ -61,10 +64,26 @@ opponent corner to corner and they tire: slower, sweating, and floating weak
 "wobbly" returns — swing hard at those for a **SMASH**. Local versus gives
 each side its own half of the screen.
 
+### Bowling controls
+
+| | Phone | Mac |
+|---|---|---|
+| Bowl | **hold** the ball on the screen, swing your arm back and through, **let go** at the bottom | hold <kbd>Space</kbd> (or the mouse button), let go — or flick the mouse up |
+| Speed | how fast you swing | flick speed |
+| Hook | twist your wrist as you let go (turn it left to hook left) | <kbd>J</kbd> straight · <kbd>K</kbd> hook left · <kbd>L</kbd> hook right |
+| Move / aim | ◀ ▶ step, ↺ ↻ turn the aim line — one board per tap | arrow keys |
+
+You start where a straight ball meets the pocket. A hook curves late, so to
+hook into the pocket move right (left-handers: left) and aim out a little.
+The ball takes only a little of your swing's sideways drift — keep it
+straight and it goes where the line points.
+
 ## Modes
 
 - **Quick Match** — singles or doubles, vs CPU or friends (up to 4 phones),
   1 / 3 / 5 games, four CPU levels, any world.
+- **Bowling** — ten frames for up to four players, with an optional CPU
+  (Rookie, Pro or Ace), in any world. Pins are real rigid-body physics.
 - **World Tour** — the Great Prism shattered into eight worlds. Beat each
   world's champion to restore its shard, then face the Prism King.
 - **Kaleido Rally** — every couple of points, or any PERFECT shot deep in a
@@ -107,13 +126,20 @@ npm run dev        # dev server with hot reload (no auto-open)
 npm run typecheck
 npx tsx scripts/sim.ts        # headless CPU-vs-CPU matches (rules/physics check)
 npx tsx scripts/sim-human.ts  # simulated human vs each CPU level
+npx tsx scripts/bowl-sim.ts   # bowling physics: strike % by line, splits, spares
+npx tsx scripts/bowl-cpu-sim.ts  # headless bowling games per CPU level
+npx tsx scripts/bowl-score-test.ts && npx tsx scripts/bowl-pad-test.ts
 ```
 
 - `server/` — Node server: HTTP on localhost for the TV, HTTPS on the LAN for
   phones (with a locally generated certificate authority), and a hub that
   relays remote input over WebSockets or HTTPS+Server-Sent Events.
-- `src/pad/` — the phone remote: swing detection, transport, sounds, UI.
+- `src/pad/` — the phone remote: swing and bowling-release detection,
+  transport, sounds, UI.
 - `src/tv/tennis/` — closed-form ball physics, shot solver, rules, AI, camera.
+- `src/tv/bowling/` — lane model + Rapier pins, scoring, the referee and CPU
+  bowlers, camera, the alley (built in each world's style) and the bowler's
+  animation.
 - `src/tv/chars/` — procedural characters and animation.
 - `src/tv/worlds/` — one file per world: scenery, materials and its own
   post-processing pipeline.
