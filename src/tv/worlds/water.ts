@@ -132,7 +132,9 @@ class WaterWorld extends World {
     this.buildGarden();
     this.buildStands();
 
-    this.half = makeRT(1, 1);
+    // the scene is drawn here: it needs a depth buffer (without one, whatever is drawn
+    // last wins — the bowling lanes, built after the players, covered them)
+    this.half = makeRT(1, 1, { depth: true });
     this.kuw = makeRT(1, 1);
     this.kPass = new Pass(KUWAHARA, { tSrc: { value: null }, uTexel: { value: new THREE.Vector2(1, 1) } });
     this.wPass = new Pass(WATER, { tPaint: { value: null }, uRes: { value: new THREE.Vector2(1, 1) }, uTime: { value: 0 }, uFlash: { value: 0 }, uPaper: { value: new THREE.Vector3(0.99, 0.97, 0.93) } });
