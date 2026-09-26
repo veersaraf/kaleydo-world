@@ -852,8 +852,8 @@ class AimGuide {
   private shown = 0;
   private geos: THREE.BufferGeometry[] = [];
   private mats: THREE.Material[] = [];
-  /** dots from the foul line to well past the arrows: long enough to show past the bowler from behind */
-  private static N = 20;
+  /** dots from the foul line nearly to the head pin: you can see which pin the line meets */
+  private static N = 22;
   private static STEP = 0.75;
 
   constructor() {
@@ -921,8 +921,9 @@ class AimGuide {
       const d = start + i * step + phase;
       // grow in at the start; bigger further out, so perspective doesn't shrink them to specks
       const u = (d - start) / span;
-      const s = this.shown * Math.min(1, (d - start) / 0.5) * (0.9 + 0.8 * u);
-      tmpM.compose(tmpV.set(a.x + dx * d, 0.006, FOUL_Z + dz * d), tmpQ.identity(), tmpS.set(s, 1, s));
+      const s = this.shown * Math.min(1, (d - start) / 0.5) * (0.9 + 1.3 * u);
+      // stretched along the lane: seen from behind at a low angle they still read as round
+      tmpM.compose(tmpV.set(a.x + dx * d, 0.006, FOUL_Z + dz * d), tmpQ.identity(), tmpS.set(s, 1, s * (1 + 3 * u)));
       this.dots.setMatrixAt(i, tmpM);
       this.rims.setMatrixAt(i, tmpM);
     }
