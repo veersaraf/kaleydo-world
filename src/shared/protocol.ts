@@ -52,10 +52,18 @@ export type PadMsg =
   /** a backswing: the player is setting up on this side */
   | { type: 'prep'; side: 'fh' | 'bh'; lat: number }
   /** live racket orientation in the player's frame (x right, y towards screen, z up):
-   *  s = shaft (phone top), n = face (screen normal) */
-  | { type: 'ori'; s: [number, number, number]; n: [number, number, number] };
+   *  s = shaft (phone top), n = face (screen normal); while bowling with the grip
+   *  held, `arm` = the arm's pendulum angle since the grip (radians, + forward) */
+  | { type: 'ori'; s: [number, number, number]; n: [number, number, number]; arm?: number }
+  /** bowling: the grip (hold the ball) went down / was let go */
+  | { type: 'grip'; down: boolean; lat: number }
+  /** bowling: the ball was released — measured from the swing.
+   *  speed m/s; angle radians from straight at the screen (+ right); spin −1..1 (+ hooks left) */
+  | { type: 'bowl'; speed: number; angle: number; spin: number; lat: number; touch?: boolean };
 
-export type PadMode = 'menu' | 'play' | 'serve' | 'wait' | 'watch' | 'skip';
+/** bowl = your turn to bowl: the grip pad plus move (◀ ▶ = btn left/right) and
+ *  aim (↺ ↻ = btn minus/plus) buttons */
+export type PadMode = 'menu' | 'play' | 'serve' | 'wait' | 'watch' | 'skip' | 'bowl';
 
 export type PadFx =
   | 'hit'
