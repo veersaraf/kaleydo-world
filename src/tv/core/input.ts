@@ -4,6 +4,7 @@
 import type { PadButton, PadMsg, Handed, LookPrefs } from '../../shared/protocol';
 import { PLAYER_COLORS } from '../../shared/protocol';
 import type { TVLink } from './link';
+import type { SlashInput } from '../duel/types';
 
 export interface Seat {
   slot: number;
@@ -50,6 +51,15 @@ export class Input {
   onArm: (slot: number, arm: number) => void = () => {};
   /** set by the app while bowling: Space/mouse bowl instead of swinging */
   bowlMode = false;
+  /** sword duel: guard held / let go, and an attack (slash or thrust) */
+  onGuard: (slot: number, down: boolean) => void = () => {};
+  onSlash: (slot: number, a: SlashInput) => void = () => {};
+  /** set by the app while duelling: Space guards, X thrusts, mouse drags slash */
+  duelMode = false;
+  /** the local player's guard angle from the mouse (radians across their view, 0 = level,
+   *  π/2 = upright), or null to let the game pick one */
+  localGuardAngle: number | null = null;
+  private duelCool = 0;
   private bowlSpin = 0;
   private bowlDrag: { y: number; t: number; hist: { x: number; y: number; t: number }[] } | null = null;
   /** live racket orientation per slot (player frame: x right, y towards screen, z up) */
@@ -66,6 +76,13 @@ export class Input {
     window.addEventListener('pointermove', (e) => this.pointer(e));
     // a click on the game (not on a menu) tosses the ball when serving
     window.addEventListener('pointerdown', (e) => {
+      if (this.duelMode && e.button === 2 && !(e.target as HTMLElement)?.closest?.('.screen')) {
+        // duelling with the mouse: hold the right button to guard, the blade pointing at the cursor
+        this.lastLocalInput = performance.now();
+        this.localGuardAngle = this.mouseAngle(e);
+        this.onGuard(0, true);
+        return;
+      }
       if (e.button !== 0 || (e.target as HTMLElement)?.closest?.('.screen')) return;
       if (this.bowlMode) {
         // bowling with the mouse: press to grip, flick up and let go to bowl
@@ -78,7 +95,14 @@ export class Input {
       this.lastLocalInput = performance.now();
       this.onToss(0);
     });
+    window.addEventListener('contextmenu', (e) => {
+      if (this.duelMode) e.preventDefault();
+    });
     window.addEventListener('pointerup', (e) => {
+      if (this.duelMode && e.button === 2) {
+        this.onGuard(0, false);
+        return;
+      }
       const d = this.bowlDrag;
       if (!this.bowlMode || !d) return;
       this.bowlDrag = null;
@@ -218,6 +242,12 @@ export class Input {
       case 'bowl':
         this.onBowl(seat.slot, { speed: m.speed, angle: m.angle, spin: m.spin });
         break;
+      case 'guard':
+        this.onGuard(seat.slot, m.down);
+        break;
+      case 'slash':
+        this.onSlash(seat.slot, { kind: m.kind, dir: m.dir, power: m.power });
+        break;
     }
   }
 
@@ -263,6 +293,22 @@ export class Input {
       if (down && (k === 'j' || k === 'k' || k === 'l')) this.bowlSpin = k === 'k' ? 0.7 : k === 'l' ? -0.7 : 0;
       if (down && (k === 'j' || k === 'k' || k === 'l')) return;
     }
+    if (this.duelMode) {
+      // Space: hold to guard (the game angles it for you); X: thrust. The arrows
+      // slash (the flow turns them into strikes)
+      const k = e.key.toLowerCase();
+      if (k === ' ') {
+        e.preventDefault();
+        if (e.repeat) return;
+        this.localGuardAngle = null;
+        this.onGuard(0, down);
+        return;
+      }
+      if (k === 'x') {
+        if (down && !e.repeat) this.onSlash(0, { kind: 'thrust', dir: 0, power: e.shiftKey ? 1 : 0.8 });
+        return;
+      }
+    }
     if (!down || e.repeat) return;
     const k = e.key.toLowerCase();
     if (k === 'f') {
@@ -283,6 +329,11 @@ export class Input {
     }
   }
 
+  /** the blade's angle for a guard pointing from the middle of the screen at the cursor */
+  private mouseAngle(e: PointerEvent) {
+    return Math.atan2(window.innerHeight / 2 - e.clientY, e.clientX - window.innerWidth / 2);
+  }
+
   private pointer(e: PointerEvent) {
     const now = performance.now();
     if (this.bowlDrag) {
@@ -292,6 +343,24 @@ export class Input {
     const m = this.mouse;
     m.hist.push({ x: e.clientX, y: e.clientY, t: now });
     while (m.hist.length && now - m.hist[0].t > 90) m.hist.shift();
+    if (this.duelMode) {
+      if (e.buttons & 2) this.localGuardAngle = this.mouseAngle(e);
+      // a quick drag with the left button held is a slash that way
+      if (!(e.buttons & 1) || now < this.duelCool || m.hist.length < 3) return;
+      const a = m.hist[0];
+      const dt = (now - a.t) / 1000;
+      if (dt < 0.02) return;
+      const dx = e.clientX - a.x;
+      const dy = e.clientY - a.y;
+      const sp = Math.hypot(dx, dy) / dt / Math.max(600, window.innerHeight);
+      if (sp > 2.2) {
+        this.duelCool = now + 320;
+        this.lastLocalInput = now;
+        this.onSlash(0, { kind: 'slash', dir: Math.atan2(-dy, dx), power: Math.min(1, 0.3 + (sp - 2.2) / 7) });
+        m.hist.length = 0;
+      }
+      return;
+    }
     if (!this.mouseSwings || now < m.cool || m.hist.length < 3) return;
     const a = m.hist[0];
     const dt = (now - a.t) / 1000;

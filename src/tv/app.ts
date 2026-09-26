@@ -11,6 +11,13 @@ import { BowlAnimator } from './bowling/anim';
 import { BowlScore } from './bowling/score';
 import { FOUL_Z } from './bowling/lane';
 import type { BowlerState } from './bowling/types';
+import { DuelGame } from './duel/game';
+import { DuelCamera } from './duel/camera';
+import { DuelVenue } from './duel/venue';
+import { DuelAnimator } from './duel/anim';
+import { makeSword, equipSword, unequipSword } from './duel/sword';
+import { aimFromPhone, type Duelist, type DuelEvent, type SwordAim } from './duel/types';
+import type { Rig } from './chars/rig';
 import { CHAR_SCALE } from './chars/rig';
 import { newPose, copyPose } from './chars/pose';
 import { WORLDS } from './worlds';
@@ -54,12 +61,19 @@ export class App {
   beat: () => number = () => 0;
   worldId = 'plaza';
   // ---- bowling
-  sport: 'tennis' | 'bowling' = 'tennis';
+  sport: 'tennis' | 'bowling' | 'duel' = 'tennis';
   bowl: BowlingGame | null = null;
   bowlCam = new BowlCamera();
   private bowlAnims: BowlAnimator[] = [];
   private phys: BowlPhysics | null = null;
   onBowlEvent: (e: BowlEvent) => void = () => {};
+  // ---- sword duel
+  duel: DuelGame | null = null;
+  duelCam = new DuelCamera();
+  private duelAnims: DuelAnimator[] = [];
+  /** rigs holding a sword (they're rebuilt when the players change) */
+  private swordRigs = new WeakSet<Rig>();
+  onDuelEvent: (e: DuelEvent) => void = () => {};
 
   /** player preference: give each side its own view in local versus */
   splitPref = true;
@@ -122,6 +136,8 @@ export class App {
     this.stage.setViews(this.splitOn ? 2 : 1);
     const a = this.stage.vw / this.stage.h;
     this.bowlCam.aspect = this.stage.w / this.stage.h;
+    this.duelCam.aspect = a;
+    this.duelCam.split = this.splitOn;
     this.rig.aspect = a;
     this.rig2.aspect = a;
     this.rig.split = this.splitOn;
@@ -154,6 +170,8 @@ export class App {
   }
 
   private begin(cfg: MatchConfig, worldId: string) {
+    this.stopBowling();
+    this.stopDuel();
     this.replay = null;
     for (const f of this.rec) this.recPool.push(f);
     this.rec.length = 0;
@@ -310,6 +328,14 @@ export class App {
       }
       return;
     }
+    if (this.sport === 'duel') {
+      if (!this.duel || !this.stage.current) return;
+      this.quality.beginFrame();
+      this.duelFrame(realDt);
+      this.quality.endFrame();
+      if (!document.hidden && this.quality.update(now, gapMs, this.paused || this.duel.state !== 'fight') !== null) this.applyQuality();
+      return;
+    }
     const m = this.match;
     if (!m || !this.stage.current) return;
     const wid = this.stage.current.def.id;
@@ -326,11 +352,134 @@ export class App {
     }
   }
 
+  // ---------------------------------------------------------------- sword duel
+
+  /** Turn the current world's court into a duel arena and start a match. Two
+   *  people on the same screen get half each. */
+  startDuel(duelists: [Duelist, Duelist], worldId: string) {
+    this.stopBowling();
+    this.stopDuel();
+    this.match = null;
+    this.replay = null;
+    this.attract = false;
+    this.paused = false;
+    this.bowl = null;
+    this.sport = 'duel';
+    this.input.bowlMode = false;
+    this.input.duelMode = true;
+    this.worldId = worldId;
+    this.stage.setWorld(worldId);
+    this.duel = new DuelGame(duelists);
+    this.duel.onEvent = (e) => {
+      if (e.type === 'hit') this.duelCam.kick(0.25 + e.strength * 0.45);
+      else if (e.type === 'block' || e.type === 'clash') this.duelCam.kick(0.2);
+      else if (e.type === 'splash') this.duelCam.kick(0.35);
+      this.onDuelEvent(e);
+    };
+    this.duelAnims = duelists.map((d) => new DuelAnimator(d.handed, d.look));
+    this.stage.setPlayers(duelists.map((d) => d.look));
+    this.split = this.splitPref && duelists[0].cpu === null && duelists[1].cpu === null;
+    this.splitOn = this.split;
+    this.applyViews();
+    this.duelCam.snap();
+    this.prepareDuelWorld();
+  }
+
+  /** The world on screen shows the arena; its characters hold swords. */
+  private prepareDuelWorld() {
+    const w = this.stage.current;
+    if (!w || !this.duel) return;
+    if (w.sport !== 'duel') w.setSport('duel', (kit) => new DuelVenue(kit, { particles: w.particles }));
+    w.rigs.forEach((r, i) => {
+      if (this.swordRigs.has(r)) return;
+      const d = this.duel!.duelists[i];
+      if (!d) return;
+      equipSword(r, makeSword(w.kit, d.color));
+      this.swordRigs.add(r);
+    });
+  }
+
+  stopDuel() {
+    if (this.sport !== 'duel') return;
+    this.sport = 'tennis';
+    this.input.duelMode = false;
+    this.duel = null;
+    this.split = false;
+    if (this.splitOn) {
+      this.splitOn = false;
+      this.applyViews();
+    }
+    this.stage.forEachWorld((w) => {
+      if (w.sport === 'duel') w.setSport('tennis');
+      for (const r of w.rigs) {
+        if (!this.swordRigs.has(r)) continue;
+        unequipSword(r);
+        this.swordRigs.delete(r);
+      }
+    });
+  }
+
+  /** the sword a keyboard/mouse player holds: up and forward, or across the body to guard */
+  private localAim(g: DuelGame, slot: number): SwordAim {
+    const i = g.duelists.findIndex((d) => d.slot === slot);
+    const me = g.fighters[i];
+    let a = this.input.localGuardAngle;
+    if (me?.phase === 'guard' && a === null) {
+      // Space guards across whatever the opponent is winding up (or upright)
+      const them = g.fighters[1 - i];
+      a = them?.attack && them.attack.kind === 'slash' ? Math.PI - them.attack.dir + Math.PI / 2 : Math.PI / 2;
+    }
+    if (me?.phase !== 'guard' || a === null) return { blade: [0.25, 0.75, 0.6], edge: [0, 0.6, -0.8] };
+    const c = Math.cos(a),
+      s = Math.sin(a);
+    return { blade: [c * 0.95, s * 0.95, 0.3], edge: [0, 0, -1] };
+  }
+
+  private duelFrame(realDt: number) {
+    const g = this.duel!;
+    const w = this.stage.current!;
+    this.prepareDuelWorld();
+    const dt = this.paused ? 0 : Math.min(0.05, realDt);
+    // the swords follow the phones (keyboard and mouse players get a held pose)
+    const wall = performance.now();
+    for (const d of g.duelists) {
+      if (d.cpu !== null) continue;
+      const r = this.input.racket[d.slot];
+      const seat = this.input.seats[d.slot];
+      if (r && wall - r.t < 400 && seat && !seat.local) g.aim(d.slot, aimFromPhone(r.s, r.n));
+      else g.aim(d.slot, this.localAim(g, d.slot));
+    }
+    if (dt > 0) g.step(dt);
+    this.duelCam.update(g, realDt, this.realT);
+    const poses = g.fighters.map((f, i) => this.duelAnims[i].update(g.t, Math.max(1e-4, dt), f));
+    const view: FrameView = {
+      t: g.t,
+      dt,
+      realT: this.realT,
+      realDt,
+      ball: { x: 0, y: -10, z: 0 },
+      ballSpeed: 0,
+      ballVisible: false,
+      holder: -1,
+      poses,
+      excitement: g.state === 'fight' ? 0.55 : g.state === 'fall' || g.state === 'over' ? 1 : 0.3,
+      state: 'play',
+      cam: this.duelCam.cams[0],
+      beat: this.beat(),
+      duel: g.view(),
+    };
+    this.stage.update(view);
+    this.stage.render(this.splitOn ? this.duelCam.cams : this.duelCam.cams[0]);
+    this.onFrame(realDt);
+    void w;
+  }
+
   // ---------------------------------------------------------------- bowling
 
   /** Turn the current world's court into lanes and start a game. */
   async startBowling(specs: Omit<Bowler, 'score' | 'x' | 'aim'>[], worldId: string) {
     this.phys ??= await BowlPhysics.load();
+    this.stopDuel();
     this.match = null;
     this.replay = null;
     this.attract = false;

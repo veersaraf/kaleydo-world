@@ -198,6 +198,69 @@ export class Sfx {
     e.noise(t, 0.3, { type: 'lowpass', f0: 500, gain: 0.25, bus: e.sfx, pan });
   }
 
+  // ---------------------------------------------------------------- sword duel
+
+  /** a sword cutting the air: sharper and quicker than a racket swish */
+  slash(power: number, pan: number) {
+    const e = this.e;
+    const p = Math.max(0.15, Math.min(1, power));
+    const t = e.now + 0.002;
+    e.noise(t, 0.13 + p * 0.05, { type: 'bandpass', f0: 900, f1: 3800 + p * 2400, q: 2.2, gain: 0.16 + p * 0.22, bus: e.sfx, pan, attack: 0.015 });
+    e.noise(t + 0.03, 0.08, { type: 'highpass', f0: 5000, gain: 0.05 + p * 0.06, bus: e.sfx, pan });
+  }
+
+  /** blade on blade: a guard stopping a strike (clash = both swinging, bigger and longer) */
+  clank(strength: number, pan: number, clash = false) {
+    const e = this.e;
+    const t = e.now + 0.002;
+    const g = 0.4 + 0.6 * Math.max(0, Math.min(1, strength));
+    if (this.timbre === 'chip') {
+      e.tone(t, 1760, 0.09, { type: 'square', gain: 0.16 * g, to: 1320, bus: e.sfx, pan });
+      e.tone(t + 0.05, 2637, 0.12, { type: 'square', gain: 0.1 * g, bus: e.sfx, pan });
+      return;
+    }
+    // inharmonic partials ring like struck metal; soft worlds dull them
+    const soft = this.timbre === 'paper' || this.timbre === 'clay' || this.timbre === 'soft';
+    const ring = clash ? 0.9 : 0.55;
+    for (const [f, a] of [
+      [1180, 0.2],
+      [1873, 0.13],
+      [2960, 0.08],
+    ] as const)
+      e.tone(t, soft ? f * 0.5 : f, soft ? ring * 0.4 : ring, { gain: a * g, bus: e.sfx, pan, rev: 0.45 });
+    e.noise(t, 0.06, { type: 'highpass', f0: soft ? 1500 : 3500, gain: 0.45 * g, bus: e.sfx, pan });
+    if (clash) e.tone(t, 220, 0.25, { gain: 0.3, to: 140, bus: e.sfx, pan });
+  }
+
+  /** a clean hit on a fighter: a padded thwack */
+  thwack(strength: number, pan: number) {
+    const e = this.e;
+    const t = e.now + 0.002;
+    const g = 0.35 + 0.65 * Math.max(0, Math.min(1, strength));
+    e.tone(t, 170, 0.14, { gain: 0.6 * g, to: 70, bus: e.sfx, pan });
+    e.noise(t, 0.09, { type: 'bandpass', f0: 1800, f1: 600, q: 1.1, gain: 0.55 * g, bus: e.sfx, pan });
+    if (strength > 0.7) e.noise(t, 0.35, { type: 'lowpass', f0: 1800, f1: 200, gain: 0.3, bus: e.sfx, pan, rev: 0.35 });
+  }
+
+  /** a fighter hitting the water (a void swallows them with a low whoomph instead) */
+  splash(pan: number, void_ = false) {
+    const e = this.e;
+    const t = e.now + 0.002;
+    if (void_) {
+      e.tone(t, 160, 0.9, { gain: 0.35, to: 40, bus: e.sfx, pan, rev: 0.6 });
+      e.noise(t, 0.8, { type: 'lowpass', f0: 900, f1: 120, gain: 0.3, bus: e.sfx, pan, rev: 0.5, attack: 0.05 });
+      return;
+    }
+    e.noise(t, 0.12, { type: 'lowpass', f0: 1200, gain: 0.7, bus: e.sfx, pan });
+    e.noise(t + 0.02, 0.9, { type: 'bandpass', f0: 2600, f1: 700, q: 0.7, gain: 0.4, bus: e.sfx, pan, rev: 0.3, attack: 0.03 });
+    e.tone(t, 90, 0.3, { gain: 0.45, to: 50, bus: e.sfx, pan });
+    // bubbles and drips
+    for (let i = 0; i < 7; i++) {
+      const f = 500 + Math.random() * 900;
+      e.tone(t + 0.25 + Math.random() * 0.7, f, 0.06, { type: 'sine', gain: 0.06, to: f * 1.6, bus: e.sfx, pan });
+    }
+  }
+
   /** the pinsetter sweeping and re-racking */
   pinsetter() {
     const e = this.e;

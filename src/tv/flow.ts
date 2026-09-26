@@ -18,6 +18,8 @@ import { Color } from 'three';
 import { COURT } from './tennis/court';
 import { TOUR, loadTour, saveTour, type Champion } from './tour';
 import { BowlHud } from './ui/bowlhud';
+import { DuelHud } from './ui/duelhud';
+import type { DuelEvent, Duelist } from './duel/types';
 import type { BowlEvent } from './bowling/game';
 import type { PadMode } from '../shared/protocol';
 
@@ -135,8 +137,16 @@ export class Flow {
 
     app.input.onButton = (slot, b, down) => {
       if (this.app.sport === 'bowling' && !this.screen && this.bowlButton(slot, b, down)) return;
+      if (this.app.sport === 'duel' && !this.screen && this.duelButton(slot, b, down)) return;
       if (down) this.button(slot, b);
     };
+    app.input.onGuard = (slot, down) => {
+      if (!this.screen || !down) this.app.duel?.guard(slot, down);
+    };
+    app.input.onSlash = (slot, a) => {
+      if (!this.screen) this.app.duel?.slash(slot, a);
+    };
+    app.onDuelEvent = (e) => this.duelEvent(e);
     app.input.onGrip = (slot, down) => {
       if (!this.screen) this.app.bowl?.grip(slot, down);
     };
@@ -393,9 +403,11 @@ export class Flow {
     const set = item('⚙', '#8a7dff', 'Settings', 'Sound, voice, controls');
     const labItem = item('🎯', '#ff5a8a', 'Swing Lab', 'Ball machine + a read-out of every swing');
     const bowlItem = item('🎳', '#ff8a3d', 'Bowling', 'Grip, swing, let go — ten frames');
+    const duelItem = item('⚔', '#ff5a6e', 'Sword Duel', 'Swing to strike, hold to guard — knock them off');
     const nav = new Nav([
       { el: quick, onSelect: () => this.go(this.setupScreen('quick')) },
       { el: bowlItem, onSelect: () => this.go(this.bowlSetup()) },
+      { el: duelItem, onSelect: () => this.go(this.duelSetup()) },
       { el: tour, onSelect: () => this.go(this.tourScreen()) },
       { el: kal, onSelect: () => this.go(this.setupScreen('kaleido')) },
       { el: labItem, onSelect: () => this.beginSwingLab() },
@@ -405,7 +417,7 @@ export class Flow {
     const el = h(
       'div',
       { class: 'screen mainmenu' },
-      h('div', { class: 'col' }, h('div', { class: 'mini-logo' }, h('span', null, 'KALEIDO')), h('div', { class: 'menu' }, quick, bowlItem, tour, kal, labItem, help, set)),
+      h('div', { class: 'col' }, h('div', { class: 'mini-logo' }, h('span', null, 'KALEIDO')), h('div', { class: 'menu' }, quick, bowlItem, duelItem, tour, kal, labItem, help, set)),
       this.join.el,
     );
     this.join.refresh();
@@ -676,7 +688,15 @@ export class Flow {
     const quit = item('Quit to menu');
     const nav = new Nav([
       { el: resume, onSelect: () => this.resume() },
-      { el: restart, onSelect: () => (this.app.sport === 'bowling' ? this.bowlCfg && void this.beginBowling(this.bowlCfg.world, this.bowlCfg.cpu) : this.lastCfg && this.beginMatch(this.lastCfg.world, true)) },
+      {
+        el: restart,
+        onSelect: () =>
+          this.app.sport === 'bowling'
+            ? this.bowlCfg && void this.beginBowling(this.bowlCfg.world, this.bowlCfg.cpu)
+            : this.app.sport === 'duel'
+              ? this.duelCfg && this.beginDuel(this.duelCfg.world, this.duelCfg.cpu)
+              : this.lastCfg && this.beginMatch(this.lastCfg.world, true),
+      },
       { el: quit, onSelect: () => this.quitToMenu() },
     ]);
     const sheet = h('div', { class: 'sheet panel', style: 'width:auto;min-width:calc(var(--u)*56)' }, h('h2', null, 'Paused'), h('div', { class: 'menu' }, resume, restart, quit));
@@ -825,7 +845,7 @@ export class Flow {
   }
 
   private pause() {
-    if ((!this.app.match && !this.app.bowl) || this.app.attract || this.screen) return;
+    if ((!this.app.match && !this.app.bowl && !this.app.duel) || this.app.attract || this.screen) return;
     this.app.paused = true;
     this.go(this.pauseScreen());
     this.sound('select');
@@ -845,13 +865,241 @@ export class Flow {
     this.hud = null;
     this.bowlHud?.el.remove();
     this.bowlHud = null;
+    this.duelHud?.el.remove();
+    this.duelHud = null;
     this.audio?.sfx.roll(0);
     this.app.stopBowling();
+    this.app.stopDuel();
     this.app.startAttract(this.app.stage.current?.def.id ?? 'plaza');
     this.app.stage.setTeamColors('#3aa8ff', '#ff5a8c');
     this.app.input.prune();
     this.go(this.mainMenu());
     this.audio?.music.setIntensity(3);
+  }
+
+  // ---------------------------------------------------------------- sword duel
+
+  private duelHud: DuelHud | null = null;
+  private duelCfg: { world: string; cpu: number } | null = null;
+
+  /** Who you fight (a CPU, or a friend on a second phone) and where. */
+  private duelSetup(): Screen {
+    const S = this.settings;
+    const seats = this.app.input.activeSeats;
+    const opp = [
+      { label: 'CPU · Rookie', skill: 0.3 },
+      { label: 'CPU · Pro', skill: 0.65 },
+      { label: 'CPU · Ace', skill: 0.9 },
+    ];
+    if (seats.length > 1) opp.unshift({ label: `${seats[1].name} (split screen)`, skill: -1 });
+    let oi = this.duelCfg ? Math.max(0, opp.findIndex((o) => o.skill === this.duelCfg!.cpu)) : seats.length > 1 ? 0 : 1;
+    let wi = Math.max(0, WORLDS.findIndex((w) => w.id === (this.duelCfg?.world ?? S.world)));
+    const row = (k: string) => {
+      const v = h('span');
+      const r = h('div', { class: 'row' }, h('span', { class: 'k' }, k), h('span', { class: 'v' }, h('span', { class: 'arrow' }, '◀'), v, h('span', { class: 'arrow' }, '▶')));
+      return { r, v };
+    };
+    const oppRow = row('Opponent');
+    const worldRow = row('World');
+    const go = h('div', { class: 'row go' }, 'Fight!');
+    const refresh = () => {
+      oppRow.v.textContent = opp[oi].label;
+      worldRow.v.textContent = WORLDS[wi].name;
+    };
+    const cycle = (d: number) => {
+      wi = (wi + d + WORLDS.length) % WORLDS.length;
+      this.app.stage.setWorld(WORLDS[wi].id, { transition: true });
+      refresh();
+    };
+    const n = opp.length;
+    const nav = new Nav([
+      { el: oppRow.r, onLeft: () => ((oi = (oi + n - 1) % n), refresh()), onRight: () => ((oi = (oi + 1) % n), refresh()), onSelect: () => ((oi = (oi + 1) % n), refresh()) },
+      { el: worldRow.r, onLeft: () => cycle(-1), onRight: () => cycle(1), onSelect: () => cycle(1) },
+      { el: go, onSelect: () => this.beginDuel(WORLDS[wi].id, opp[oi].skill) },
+    ]);
+    refresh();
+    const sheet = h(
+      'div',
+      { class: 'sheet panel' },
+      h('h2', null, 'Sword Duel'),
+      h('div', { class: 'hintline' }, 'Your phone is the sword. Swing to strike; hold GUARD and hold the sword across their swing to block — a blocked attacker is stunned. Knock them off the end!'),
+      oppRow.r,
+      worldRow.r,
+      go,
+    );
+    return this.navScreen('duelsetup', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Sword Duel', hint: '◀ ▶ to change · A to fight' });
+  }
+
+  beginDuel(world: string, cpu: number) {
+    this.duelCfg = { world, cpu };
+    this.go(null);
+    this.hud?.el.remove();
+    this.hud = null;
+    this.bowlHud?.el.remove();
+    this.bowlHud = null;
+    this.duelHud?.el.remove();
+    this.duelHud = null;
+    const seats = this.app.input.activeSeats.length ? this.app.input.activeSeats : [this.app.input.seats[0]!];
+    const person = (st: (typeof seats)[number]): Duelist => {
+      const sp = this.app.humanSpec(st.slot, 0);
+      return { name: sp.name, color: st.color, look: sp.look, handed: sp.handed, slot: st.slot, cpu: null };
+    };
+    const rival: Duelist =
+      cpu < 0 && seats.length > 1
+        ? person(seats[1])
+        : { name: 'CPU', color: '#6c6a84', look: randomLook(this.rng), handed: this.rng.chance(0.15) ? -1 : 1, slot: -1, cpu: Math.max(0, cpu) || 0.65 };
+    const duelists: [Duelist, Duelist] = [person(seats[0]), rival];
+    this.app.startDuel(duelists, world);
+    const g = this.app.duel!;
+    this.duelHud = new DuelHud(duelists, g.toWin);
+    this.hudLayer.append(this.duelHud.el);
+    this.duelHud.setHint(this.duelHint());
+    this.app.stage.setTeamColors(duelists[0].color, duelists[1].color);
+    const def = worldDef(world);
+    if (this.audio) {
+      this.audio.playSong(def.song);
+      this.audio.music.setIntensity(1);
+      this.audio.sfx.cheer(0.4);
+    }
+    this.syncPads(true);
+  }
+
+  private duelHint() {
+    const d = this.app.duel?.duelists.find((q) => q.cpu === null);
+    if (!d) return '';
+    const seat = this.app.input.seats[d.slot];
+    return seat && !seat.local
+      ? '<b>Swing</b> to strike · hold <b>GUARD</b> and hold your sword <b>across</b> their swing to block · <b>push</b> to thrust'
+      : '<b>Arrows</b> or drag the mouse to slash · hold <b>Space</b> (or the right button) to guard · <b>X</b> thrust';
+  }
+
+  /** The arrows slash that way (the tip travels in the arrow's direction); A skips the walk-on. */
+  private duelButton(slot: number, b: Btn, down: boolean) {
+    const g = this.app.duel;
+    if (!g) return false;
+    const dirs: Partial<Record<Btn, number>> = { right: 0, up: Math.PI / 2, left: Math.PI, down: -Math.PI / 2 };
+    const d = dirs[b];
+    if (d !== undefined) {
+      if (down) g.slash(slot, { kind: 'slash', dir: d, power: 0.8 });
+      return true;
+    }
+    if (b === 'a' && down) {
+      g.skip();
+      return true;
+    }
+    return false;
+  }
+
+  private duelEvent(e: DuelEvent) {
+    const a = this.audio;
+    const hud = this.duelHud;
+    const g = this.app.duel;
+    if (!g) return;
+    const name = (i: number) => g.duelists[i].name;
+    // sounds sit left or right as the near fighter sees it
+    const pan = (x: number) => Math.max(-1, Math.min(1, x / 3));
+    const pad = (i: number, fx: import('../shared/protocol').PadFx, label: string, detail = '') => {
+      const d = g.duelists[i];
+      const pid = d && d.slot >= 0 && d.cpu === null ? this.app.input.seats[d.slot]?.pid : undefined;
+      if (pid) this.app.link.toPad(pid, { type: 'fx', fx, label, detail });
+    };
+    switch (e.type) {
+      case 'round':
+        hud?.setScore(g.score);
+        hud?.tag(0, '');
+        hud?.tag(1, '');
+        hud?.say(e.final ? 'FINAL ROUND' : `ROUND ${e.round}`, e.final ? 'on a shorter platform' : '');
+        if (e.round > 1) hud?.setHint('');
+        this.syncPads(true);
+        break;
+      case 'fight':
+        hud?.say('FIGHT!', '', 'good');
+        a?.sfx.cheer(0.5);
+        this.syncPads(true);
+        break;
+      case 'attack':
+        a?.sfx.slash(e.attack.power, pan(g.fighters[e.who].x));
+        break;
+      case 'hit':
+        a?.sfx.thwack(e.strength, pan(e.x));
+        if (e.strength > 0.65) a?.sfx.ooh();
+        pad(e.by, 'hit', 'HIT!', `${name(e.who)} knocked back`);
+        pad(e.who, 'ouch', 'OUCH!', 'guard across their swing');
+        break;
+      case 'block':
+        a?.sfx.clank(0.8, pan(e.x));
+        hud?.say('BLOCKED!', `${name(e.by)} is stunned`, 'small good');
+        pad(e.who, 'block', 'BLOCKED!', 'strike now — they’re stunned');
+        pad(e.by, 'whiff', 'BLOCKED', 'you’re stunned — watch out');
+        break;
+      case 'clash':
+        a?.sfx.clank(1, pan(e.x), true);
+        hud?.say('CLASH!', '', 'small');
+        break;
+      case 'edge':
+        a?.sfx.ooh();
+        break;
+      case 'fall':
+        a?.sfx.aww();
+        break;
+      case 'splash':
+        a?.sfx.splash(pan(e.x), this.app.stage.current?.def.id === 'cosmic');
+        a?.sfx.cheer(0.8);
+        break;
+      case 'round-end': {
+        hud?.setScore(e.score);
+        if (e.winner === null) hud?.say(e.timeout ? 'TIME!' : 'DRAW', 'nobody takes the round');
+        else hud?.say(`${name(e.winner)}`, e.timeout ? 'time! — takes the round' : 'takes the round', 'good');
+        if (e.winner !== null) {
+          pad(e.winner, 'point-won', 'ROUND WON', `${e.score[0]} – ${e.score[1]}`);
+          pad(1 - e.winner, 'point-lost', 'ROUND LOST', `${e.score[0]} – ${e.score[1]}`);
+        }
+        break;
+      }
+      case 'over': {
+        hud?.setScore(e.score);
+        hud?.say(`${name(e.winner)} WINS!`, `${e.score[e.winner]} – ${e.score[1 - e.winner]}`, 'good');
+        a?.sfx.cheer(1);
+        a?.music.jingle('point');
+        pad(e.winner, 'win', 'YOU WIN!', `${e.score[e.winner]} – ${e.score[1 - e.winner]}`);
+        pad(1 - e.winner, 'lose', 'DEFEATED', `${e.score[1 - e.winner]} – ${e.score[e.winner]}`);
+        this.syncPads(true);
+        window.setTimeout(() => {
+          if (this.app.sport === 'duel' && this.app.duel === g) this.go(this.duelResults(e.winner));
+        }, 2600);
+        break;
+      }
+    }
+  }
+
+  /** Per frame while duelling: the clock, arm strength and the edge/stun tags. */
+  private duelFrame(_dt: number) {
+    const g = this.app.duel;
+    const hud = this.duelHud;
+    if (!g || !hud) return;
+    hud.update(g.state === 'fight' || g.state === 'ready' ? g.timeLeft : null, g.energy);
+    g.fighters.forEach((f, i) => {
+      const room = f.facing === 1 ? g.halfLength - f.z : f.z + g.halfLength;
+      hud.tag(i, f.phase === 'stunned' ? 'STUNNED' : f.phase === 'fall' ? '' : g.state === 'fight' && room < 0.9 ? 'EDGE!' : '');
+    });
+    this.audio?.sfx.setCrowd(g.state === 'fight' ? 0.45 : g.state === 'fall' ? 0.9 : 0.3);
+  }
+
+  private duelResults(winner: number): Screen {
+    const g = this.app.duel!;
+    const again = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Rematch')));
+    const other = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Another world')));
+    const menu = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Main menu')));
+    const nav = new Nav([
+      { el: again, onSelect: () => this.duelCfg && this.beginDuel(this.duelCfg.world, this.duelCfg.cpu) },
+      { el: other, onSelect: () => this.duelCfg && this.beginDuel(this.shuffledWorlds().find((w) => w !== this.duelCfg!.world) ?? 'park', this.duelCfg.cpu) },
+      { el: menu, onSelect: () => this.quitToMenu() },
+    ]);
+    const rows = [winner, 1 - winner].map((i, k) =>
+      h('div', { class: 'brank', style: `--c:${g.duelists[i].color}` }, h('b', null, `${k + 1}`), h('i'), h('span', null, g.duelists[i].name), h('em', null, `${g.score[i]} round${g.score[i] === 1 ? '' : 's'}`)),
+    );
+    const sheet = h('div', { class: 'sheet panel results' }, h('h2', null, `${g.duelists[winner].name} wins!`), h('div', { class: 'hintline' }, 'Final rounds'), ...rows, h('div', { class: 'menu' }, again, other, menu));
+    return this.navScreen('duelresults', h('div', { class: 'screen center results' }, sheet), nav, () => this.quitToMenu(), { title: 'Duel over', hint: 'A to choose' });
   }
 
   // ---------------------------------------------------------------- bowling
@@ -917,6 +1165,8 @@ export class Flow {
     this.hud = null;
     this.bowlHud?.el.remove();
     this.bowlHud = null;
+    this.duelHud?.el.remove();
+    this.duelHud = null;
     const seats = this.app.input.activeSeats.length ? this.app.input.activeSeats : [this.app.input.seats[0]!];
     const specs = seats.map((st) => {
       const sp = this.app.humanSpec(st.slot, 0);
@@ -1556,7 +1806,19 @@ export class Flow {
       let title = this.screen?.pad?.title;
       let hint = this.screen?.pad?.hint;
       const g = this.app.bowl;
-      if (!this.screen && this.app.sport === 'bowling' && g) {
+      const dg = this.app.duel;
+      if (!this.screen && this.app.sport === 'duel' && dg) {
+        const mine = dg.duelists.find((d) => d.slot === seat.slot && d.cpu === null);
+        if (mine && dg.state !== 'over') {
+          mode = 'sword';
+          title = dg.state === 'intro' || dg.state === 'ready' ? 'En garde!' : 'Fight!';
+          hint = `Round ${dg.round} · ${dg.score[0]} – ${dg.score[1]}`;
+        } else {
+          mode = 'watch';
+          title = mine ? 'Duel over' : 'Watching';
+          hint = mine ? 'look at the screen' : `${dg.duelists[0].name} vs ${dg.duelists[1].name}`;
+        }
+      } else if (!this.screen && this.app.sport === 'bowling' && g) {
         const up = g.bowler;
         const mine = up.slot === seat.slot;
         if (mine && (g.state === 'ready' || g.state === 'approach' || g.state === 'intro')) {
@@ -1602,6 +1864,7 @@ export class Flow {
     this.screen?.update?.(dt);
     this.hud?.update(dt);
     if (this.app.sport === 'bowling') this.bowlFrame(dt);
+    else if (this.app.sport === 'duel') this.duelFrame(dt);
     const m = this.app.match;
     if (m && !this.app.attract && this.hud) {
       // serve hint
