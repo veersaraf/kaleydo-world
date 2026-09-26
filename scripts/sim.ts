@@ -21,10 +21,14 @@ function run(levelA: string, levelB: string, seed: number, doubles = false) {
     if (e.type === 'let') lets++;
     if (e.type === 'net') nets++;
     if (e.type === 'whiff') whiffs++;
+    if (e.type === 'athletic') kinds['~' + e.move] = (kinds['~' + e.move] || 0) + 1;
+    if (e.type === 'tired') kinds['~tired'] = (kinds['~tired'] || 0) + 1;
   };
   const dt = 1 / 120;
   let steps = 0;
-  while (m.state !== 'over' && steps < 120 * 60 * 30) { m.step(dt); steps++; }
+  let minSt = 1;
+  while (m.state !== 'over' && steps < 120 * 60 * 30) { m.step(dt); steps++; for (const p of m.players) minSt = Math.min(minSt, p.stamina); }
+  kinds['~minStamina'] = +minSt.toFixed(2);
   const avg = rallies.reduce((a, b) => a + b, 0) / Math.max(1, rallies.length);
   console.log(`${levelA} vs ${levelB}${doubles ? ' (doubles)' : ''}: games ${m.score.games.join('-')} in ${(m.t / 60).toFixed(1)} min, points ${rallies.length}, avg rally ${avg.toFixed(1)}, max rally ${Math.max(...rallies)}`);
   console.log(`   reasons`, reasons, `faults ${faults} lets ${lets} nets ${nets} whiffs ${whiffs} maxKph ${maxKph.toFixed(0)} hits ${hits}`, kinds);

@@ -480,6 +480,15 @@ export abstract class World {
     this.fitBall(v.cam);
     this.trail.update(b.position, v.holder >= 0 ? 0 : v.ballSpeed, v.cam, v.realDt, v.realT);
     this.trail.mesh.visible = v.ballVisible;
+    // tired players drip sweat
+    this.sweatT -= v.realDt;
+    if (this.sweatT <= 0) {
+      this.sweatT = 0.32;
+      for (const pose of v.poses) {
+        if (pose.tired < 0.3) continue;
+        this.particles.burst({ x: pose.x + (Math.random() - 0.5) * 0.3, y: 1.75 + pose.hop, z: pose.z, count: 2 + (pose.tired > 0.7 ? 1 : 0), speed: [0.6, 1.5], dir: [0, 1, 0], spread: 0.8, life: [0.4, 0.65], size: [0.09, 0.14], colors: [this.sweatColor], shape: 'soft', alpha: 0.9, gravity: 7 });
+      }
+    }
     this.particles.update(v.realDt);
     this.crowd?.update(v.realT, v.realDt, v.excitement);
     this.updateNet(v.realDt);
@@ -516,7 +525,7 @@ export abstract class World {
   /** Colour the trail by the kind of shot (Mario Tennis-style: read the spin at a glance). */
   private tintTrail(e: Extract<MatchEvent, { type: 'hit' }>) {
     const key =
-      e.kind === 'smash' ? 'smash' : e.serve ? (e.perfect ? 'rocket' : 'serve') : e.kind === 'lob' ? 'lob' : e.kind === 'drop' ? 'drop' : e.shotSpin > 0.25 ? 'topspin' : e.shotSpin < -0.25 ? 'slice' : 'flat';
+      e.kind === 'smash' ? 'smash' : e.serve ? (e.perfect ? 'rocket' : 'serve') : e.kind === 'lob' || e.kind === 'wobbly' ? 'lob' : e.kind === 'drop' ? 'drop' : e.shotSpin > 0.25 ? 'topspin' : e.shotSpin < -0.25 ? 'slice' : 'flat';
     this.trail.tint(SHOT_TINT[key]);
     (this.ballHalo.material as THREE.ShaderMaterial).uniforms.uColor.value.copy(this.teamColors[e.p.team]);
   }
@@ -540,6 +549,8 @@ export abstract class World {
 
   /** colour of the dust a diving player kicks up */
   protected dustColor = new THREE.Color('#e6dccb');
+  protected sweatColor = new THREE.Color('#bfe8ff');
+  private sweatT = 0;
 
   onEvent(e: MatchEvent) {
     if (e.type === 'hit') this.tintTrail(e);

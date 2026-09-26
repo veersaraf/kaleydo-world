@@ -1127,6 +1127,12 @@ export class Flow {
         a?.sfx.thud(pan(e.pos.x));
         if (real) a?.sfx.ooh();
         break;
+      case 'tired':
+        if (real) this.hud?.float('Tired!', { x: e.p.x, y: 2.3, z: e.p.z }, 'soft');
+        break;
+      case 'smash-chance':
+        if (real) this.hud?.float('SMASH!', { x: e.p.x, y: 2.5, z: e.p.z }, 'perfect', e.p.team);
+        break;
       case 'net':
         a?.sfx.net(e.cord, pan(e.pos.x));
         if (real && e.cord && e.over) a?.sfx.ooh();

@@ -24,6 +24,8 @@ export interface Seg {
   spin: number;
   /** base gravity of the world this flight started in (spin-free) */
   g0?: number;
+  /** a floated, mishit ball wobbles in the air (display only, metres) */
+  wob?: number;
 }
 
 export const E = (k: number, tau: number) => (k > 1e-6 ? (1 - Math.exp(-k * tau)) / k : tau);

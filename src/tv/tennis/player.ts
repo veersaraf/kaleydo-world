@@ -108,6 +108,12 @@ export class TPlayer {
   lockUntil = 0;
   /** a lunge / dive / jump in progress */
   athletic: Athletic | null = null;
+  /** 1 fresh … 0 spent. Sprinting and diving drain it; it comes back between points. */
+  stamina = 1;
+  /** a "Tired!" callout was shown this point */
+  tiredShown = false;
+  /** the plan a "Smash!" prompt was shown for */
+  smashCalled: HitPlan | null = null;
   /** this player's natural "straight" swing path per stroke (degrees), learned */
   pathNeutral: Record<'fh' | 'bh' | 'oh', number> = { fh: 0, bh: 0, oh: 0 };
   hits = 0;
@@ -127,6 +133,16 @@ export class TPlayer {
 
   get human() {
     return this.ctrl.kind === 'human';
+  }
+
+  /** 0 fine … 1 exhausted (starts below 45% stamina) */
+  get tired() {
+    return clamp((0.45 - this.stamina) / 0.45, 0, 1);
+  }
+
+  /** running speed factor: a tired player loses up to a quarter of their pace */
+  get pace() {
+    return 1 - 0.24 * this.tired;
   }
   get slot() {
     return this.ctrl.kind === 'human' ? this.ctrl.slot : -1;
@@ -148,7 +164,7 @@ export class TPlayer {
 
   /** Time needed to run distance d from standing (trapezoid speed profile). */
   timeToCover(d: number) {
-    const v = this.maxSpeed;
+    const v = this.maxSpeed * this.pace;
     const a = this.accel;
     const dAcc = (v * v) / a; // accelerate + brake
     if (d < dAcc) return 2 * Math.sqrt(d / a);
@@ -163,7 +179,7 @@ export class TPlayer {
       dvz = 0;
     if (dist > 0.01) {
       // arrive: speed tapers as we approach the target
-      const want = Math.min(this.maxSpeed, Math.sqrt(2 * this.accel * 0.8 * dist));
+      const want = Math.min(this.maxSpeed * this.pace, Math.sqrt(2 * this.accel * 0.8 * dist));
       dvx = (dx / dist) * want;
       dvz = (dz / dist) * want;
     }

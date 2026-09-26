@@ -99,6 +99,7 @@ export class Animator {
     P.z = p.z;
     P.yaw = p.yaw;
     P.holdingBall = p.holding;
+    P.tired = p.tired;
 
     // ------------------------------------------------ locomotion
     const speed = p.speed();
@@ -232,6 +233,15 @@ export class Animator {
     }
     this.lastEmote = em;
 
+    // out of breath: shoulders heave, the racket droops
+    const tired = p.tired;
+    if (tired > 0.02 && !sw && !p.athletic) {
+      P.body.y += Math.sin(t * 13) * 0.014 * tired;
+      out.hand.y -= 0.1 * tired;
+      out.off.y -= 0.08 * tired;
+      P.bodyPitch += 0.12 * tired;
+    }
+
     // write hands & racket
     set(P.hands[0], out.hand.x, out.hand.y, out.hand.z);
     set(P.hands[1], out.off.x, out.off.y, out.off.z);
@@ -272,6 +282,7 @@ export class Animator {
     P.headYaw = this.headYaw;
     P.headPitch = -this.headPitch * 0.8 + (em === 'sad' && t > p.emoteT0 ? 0.45 : 0);
     P.headRoll = Math.sin(t * 1.3 + p.id) * 0.03;
+    P.headPitch += 0.14 * tired;
 
     // ------------------------------------------------ face
     this.blinkT -= dt;
@@ -288,6 +299,10 @@ export class Animator {
       P.eyes = 'sad';
       P.mouth = 'frown';
       P.brow = -1;
+    } else if (tired > 0.55 && !effort && !athleticFace) {
+      P.eyes = 'sad';
+      P.mouth = 'open';
+      P.brow = -0.4;
     } else if (athleticFace) {
       P.eyes = athleticFace === 'oof' ? 'closed' : 'wide';
       P.mouth = athleticFace === 'oof' ? 'flat' : 'open';

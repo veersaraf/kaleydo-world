@@ -53,12 +53,14 @@ export interface AIContext {
   pressure: number;
   /** shots so far in this rally */
   rally: number;
+  /** 0 fresh … 1 exhausted */
+  tired: number;
 }
 
 export interface AIShot {
   spec: ShotSpec;
   power: number;
-  kind: 'drive' | 'lob' | 'drop' | 'smash' | 'volley' | 'error';
+  kind: 'drive' | 'lob' | 'drop' | 'smash' | 'volley' | 'error' | 'wobbly';
 }
 
 let feedSide = 1;
@@ -131,6 +133,18 @@ export function aiShot(p: AIProfile, c: AIContext, rng: Rng): AIShot {
     clear = 0.12;
     spin = -0.3;
     tx = side * lerp(1.5, hw - 0.3, rng.next());
+  }
+
+  // exhausted, or at full stretch in a dive: all you can do is float it back —
+  // a wobbly sitter the other side can smash (Switch Sports-style)
+  const wob = clamp(c.tired * 0.85 + (c.stretch > 0.85 ? 0.3 : 0));
+  if (kind !== 'smash' && !c.volley && rng.chance(wob * 0.8)) {
+    kind = 'wobbly';
+    speed = rng.range(9, 11.5);
+    clear = 2.2 + rng.next() * 0.8;
+    depth = rng.range(4.5, 7.2);
+    spin = 0.15;
+    tx = rng.range(-hw * 0.55, hw * 0.55);
   }
 
   // errors: base rate, more when stretched or under pressure or facing pace

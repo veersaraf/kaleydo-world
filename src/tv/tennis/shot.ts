@@ -83,7 +83,7 @@ export interface SwingInput {
 export interface ShotResult {
   spec: ShotSpec;
   perfect: boolean;
-  kind: 'drive' | 'lob' | 'drop' | 'smash' | 'volley' | 'soft' | 'shank';
+  kind: 'drive' | 'lob' | 'drop' | 'smash' | 'volley' | 'soft' | 'shank' | 'wobbly';
 }
 
 /**
@@ -161,6 +161,7 @@ export function humanShot(
     speed *= 1 - 0.32 * st;
     clear += 1.1 * st;
     depth = lerp(depth, 6.5, 0.35 * st);
+    if (st > 0.55 && (kind === 'drive' || kind === 'volley' || kind === 'soft')) kind = 'wobbly';
   }
 
   // Timing errors scatter the ball; big mistimed swings can fly out.

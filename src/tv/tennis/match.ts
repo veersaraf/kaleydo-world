@@ -72,6 +72,10 @@ export type MatchEvent =
   | { type: 'athletic'; p: TPlayer; move: AthleticMove }
   /** a diving player hits the court */
   | { type: 'land'; p: TPlayer; pos: V3 }
+  /** a player has run out of legs (slower, wobbly returns) */
+  | { type: 'tired'; p: TPlayer }
+  /** a sitter is floating to a player: smash it! */
+  | { type: 'smash-chance'; p: TPlayer }
   | { type: 'catch'; p: TPlayer }
   | { type: 'bounce'; pos: V3; impact: number; live: boolean; out: boolean; first: boolean }
   | { type: 'net'; pos: V3; cord: boolean; over: boolean }
@@ -810,6 +814,21 @@ export class Match {
       const want = face + clamp(d, -0.6, 0.6) * 0.5;
       p.yaw += (want - p.yaw) * (1 - Math.exp(-8 * dt));
       p.focus = p.plan ? Math.min(1, p.focus + dt * 3) : Math.max(0, p.focus - dt * 2);
+
+      // stamina: sprints drain it; standing still (and the gaps between points) bring it back
+      const sp = Math.hypot(p.vx, p.vz);
+      if (this.state === 'play') p.stamina -= Math.max(0, sp - 2.2) * 0.05 * dt;
+      p.stamina = clamp(p.stamina + (this.state === 'play' ? (sp < 1.2 ? 0.045 : 0) : 0.45) * dt, 0, 1);
+      if (p.tired > 0 && !p.tiredShown && this.state === 'play') {
+        p.tiredShown = true;
+        this.onEvent({ type: 'tired', p });
+      }
+      if (p.stamina > 0.8) p.tiredShown = false;
+      // a floater coming a human's way: tell them to smash it
+      if (p.human && p.plan && p.plan !== p.smashCalled && p.plan.stroke === 'oh' && p.plan.by > 2 && this.state === 'play') {
+        p.smashCalled = p.plan;
+        this.onEvent({ type: 'smash-chance', p });
+      }
     }
   }
 
@@ -837,6 +856,7 @@ export class Match {
       sn = Math.sin(p.yaw);
     const side = c * (plan.bx - p.x) - sn * (plan.bz - p.z) >= 0 ? 1 : -1;
     p.athletic = { move, t0: t, tc: plan.t, x0: p.x, z0: p.z, x1: p.x + (plan.sx - p.x) * k, z1: p.z + (plan.sz - p.z) * k, side, landed: false };
+    p.stamina = Math.max(0, p.stamina - (move === 'dive' ? 0.16 : move === 'lunge' ? 0.06 : 0.04));
     this.onEvent({ type: 'athletic', p, move });
   }
 
@@ -888,7 +908,8 @@ export class Match {
       const plan = p.plan;
       const volley = plan ? plan.volley : false;
       if (p.human) {
-        sw.input.stretch = this.stretchOf(p);
+        // at full stretch or out of breath, all you can do is float it back
+        sw.input.stretch = Math.max(this.stretchOf(p), p.tired * 0.8);
         const res = humanShot(p.team, p.fhSign, sw.stroke, contact, volley, sw.input, this.rng, this.doubles);
         seg = buildShot(contact, res.spec, tc);
         shotSpin = res.spec.spin;
@@ -912,6 +933,7 @@ export class Match {
             doubles: this.doubles,
             pressure,
             rally: this.rally,
+            tired: p.tired,
           },
           this.rng,
         );
@@ -926,6 +948,7 @@ export class Match {
       this.rally++;
     }
 
+    if (kind === 'wobbly') seg.wob = 0.14;
     this.ball.live = true;
     this.ball.lastHitTeam = p.team;
     this.ball.lastHitter = p;
@@ -1047,6 +1070,13 @@ export class Match {
       out.x = p.x;
       out.y = Math.max(COURT.ballR, p.y);
       out.z = p.z;
+      // a floated mishit visibly wobbles on its way over
+      const w = b.seg.wob;
+      if (w) {
+        const u = t - b.seg.t0;
+        out.x += Math.sin(u * 15) * w * Math.min(1, u * 4);
+        out.y += Math.sin(u * 11 + 1.3) * w * 0.5 * Math.min(1, u * 4);
+      }
     }
     return out;
   }

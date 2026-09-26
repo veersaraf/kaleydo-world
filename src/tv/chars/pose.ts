@@ -31,6 +31,8 @@ export interface Pose {
   /** the off hand is holding the ball (serve) */
   holdingBall: boolean;
   handed: 1 | -1;
+  /** 0 fresh … 1 exhausted (panting, sweat) */
+  tired: number;
 }
 
 export function newPose(): Pose {
@@ -65,6 +67,7 @@ export function newPose(): Pose {
     blink: 0,
     holdingBall: false,
     handed: 1,
+    tired: 0,
   };
 }
 
@@ -103,5 +106,6 @@ export function copyPose(d: Pose, s: Pose): Pose {
   d.blink = s.blink;
   d.holdingBall = s.holdingBall;
   d.handed = s.handed;
+  d.tired = s.tired;
   return d;
 }
