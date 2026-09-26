@@ -367,6 +367,8 @@ class PlazaWorld extends World {
     chair.position.set(-7.4, 0, 0.4);
     chair.rotation.y = Math.PI / 2;
     chair.traverse((o) => (o.castShadow = true));
+    chair.userData.noBatch = true;
+    this.tennisOnly.push(chair);
     s.add(chair);
   }
 

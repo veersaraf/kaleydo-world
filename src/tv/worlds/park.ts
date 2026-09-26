@@ -146,6 +146,8 @@ class ParkWorld extends World {
       m.rotation.set(-Math.PI / 2, 0, sx * Math.PI / 2);
       m.position.set(sx * 8.4, 0.01, 0);
       m.renderOrder = 1;
+      m.userData.noBatch = true;
+      this.tennisOnly.push(m);
       this.scene.add(m);
     }
   }

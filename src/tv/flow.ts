@@ -1018,6 +1018,13 @@ export class Flow {
         if (pid) this.app.link.toPad(pid, { type: 'fx', fx: e.mark === 'strike' || e.mark === 'spare' ? 'perfect' : 'hit', label: text, detail: `Frame ${e.frame + 1} · ${e.bowler.score.total()} total` });
         break;
       }
+      case 'cancel': {
+        hud?.setHint(this.bowlHint());
+        const pid = padOf(e.bowler.slot);
+        if (pid) this.app.link.toPad(pid, { type: 'fx', fx: 'whiff', label: 'Swing to bowl', detail: 'back, then through — let go at the bottom' });
+        this.syncPads(true);
+        break;
+      }
       case 'sweep':
         a?.sfx.pinsetter();
         break;

@@ -128,6 +128,9 @@ export abstract class World {
   netMesh!: THREE.Mesh;
   courtGroup: THREE.Group | null = null;
   netGroup: THREE.Group | null = null;
+  /** scenery that only belongs to tennis (an umpire's chair, "TENNIS" painted on
+   *  the ground): hidden for other sports — mark it noBatch so it can be */
+  protected tennisOnly: THREE.Object3D[] = [];
   /** which sport this world is set up for */
   sport: 'tennis' | 'bowling' = 'tennis';
   /** the bowling lanes, pins and ball (built the first time bowling comes here) */
@@ -539,6 +542,7 @@ export abstract class World {
     if (this.courtGroup) this.courtGroup.visible = !bowling;
     if (this.netGroup) this.netGroup.visible = !bowling;
     if (this.netMesh) this.netMesh.visible = !bowling;
+    for (const o of this.tennisOnly) o.visible = !bowling;
   }
 
   /** Which view is about to render: 0 = the normal one, 1 = the far player's split-screen half. */

@@ -36,6 +36,8 @@ export type BowlEvent =
   /** physics pass-through (sounds, camera) */
   | { type: 'physics'; e: BowlPhysicsEvent }
   | { type: 'result'; bowler: Bowler; pins: number; standing: boolean[]; mark: BowlMark; frame: number; ball: number }
+  /** a grip let go without a swing (or never released): back to the stance */
+  | { type: 'cancel'; bowler: Bowler }
   /** the pinsetter clears the deck */
   | { type: 'sweep' }
   | { type: 'over'; ranking: Bowler[] };
@@ -47,6 +49,9 @@ const SLIDE_Z = FOUL_Z + 0.42;
 const APPROACH_T = 1.35;
 /** the ball sits this far to the bowling-hand side of the body */
 const HAND_X = 0.2;
+/** the phone measures the swing's real direction; the lane wants a fraction of it
+ *  (0.1 rad over 18 m is 1.8 m — a sure gutter — so a small pull stays a small miss) */
+const ANGLE_GAIN = 0.35;
 
 /** pins that touch each other in the rack (for splits) */
 const ADJ: number[][] = [[1, 2], [0, 2, 3, 4], [0, 1, 4, 5], [1, 4, 6, 7], [1, 2, 3, 5, 7, 8], [2, 4, 8, 9], [3, 7], [3, 4, 6, 8], [4, 5, 7, 9], [5, 8]];
@@ -65,6 +70,9 @@ export class BowlingGame {
   private armLive: number | null = null;
   private armLiveT = -1;
   private gripping = false;
+  /** when the grip went down, and when it came up with no release after it */
+  private gripT = 0;
+  private gripUpT = -1;
   private cpuAt = 0;
   private cpuReleaseAt = 0;
   private moveDir = 0;
@@ -101,12 +109,17 @@ export class BowlingGame {
     if (this.state === 'intro' && down) return this.startNow();
     if (down && this.state === 'ready') {
       this.gripping = true;
+      this.gripT = this.t;
+      this.gripUpT = -1;
       this.setState('approach');
       this.body.phase = 'approach';
       this.body.t = 0;
       this.onEvent({ type: 'grip', bowler: b });
-    } else if (!down) {
+    } else if (!down && this.gripping) {
+      // the release follows at once; if it doesn't (the phone left the bowling
+      // screen, a lost message), the bowler steps back to the stance
       this.gripping = false;
+      this.gripUpT = this.t;
     }
   }
 
@@ -120,11 +133,27 @@ export class BowlingGame {
       this.body.phase = 'approach';
       this.body.t = 0;
     }
-    if (this.state !== 'approach') return;
+    if (this.state !== 'approach' || this.pending) return;
+    this.gripUpT = -1;
+    // a tap with no swing behind it: not a throw (a thumb brushing the grip)
+    if (r.speed < 2.8 && this.t - this.gripT < 0.6) return this.cancel();
+    const angle = r.angle * ANGLE_GAIN;
     // the ball leaves the hand at the foul line: if the bowler isn't there yet,
     // they hurry through the last steps and let go on arrival
-    if (this.body.step >= 0.9) this.throwBall(r.speed, r.angle, r.spin);
-    else this.pending = { ...r };
+    if (this.body.step >= 0.9) this.throwBall(r.speed, angle, r.spin);
+    else this.pending = { speed: r.speed, angle, spin: r.spin };
+  }
+
+  /** back to the stance, ball in hand, as if the grip never happened */
+  private cancel() {
+    const b = this.bowler;
+    this.setState('ready');
+    this.gripping = false;
+    this.gripUpT = -1;
+    this.armLive = null;
+    this.pending = null;
+    this.body = { x: b.x, z: STANCE_Z, yaw: 0, handed: b.handed, phase: 'ready', t: 0, arm: 0.9, step: 0, holding: true, spin: 0 };
+    this.onEvent({ type: 'cancel', bowler: b });
   }
 
   /** live arm angle from the phone while the grip is held */
@@ -188,8 +217,8 @@ export class BowlingGame {
           break;
         }
         if (b.cpu !== null && t >= this.cpuReleaseAt) this.cpuThrow(b);
-        // a phone that let go without a release message (lost packet): throw anyway
-        if (!this.gripping && b.cpu === null && t - this.stateT0 > APPROACH_T + 2.5) this.throwBall(5, 0, 0);
+        // let go with no release after it (the phone left the bowling screen, a lost message)
+        else if (b.cpu === null && this.gripUpT >= 0 && t - this.gripUpT > 0.6) this.cancel();
         break;
       }
       case 'lane':
@@ -306,6 +335,7 @@ export class BowlingGame {
     const b = this.bowler;
     this.setState('ready');
     this.gripping = false;
+    this.gripUpT = -1;
     this.armLive = null;
     this.pending = null;
     this.moveDir = 0;
