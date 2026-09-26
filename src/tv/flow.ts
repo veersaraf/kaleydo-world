@@ -48,7 +48,7 @@ const DEFAULTS: Settings = {
   mouse: true,
   relaxed: false,
   split: true,
-  world: 'plaza',
+  world: 'park',
   seenTutorial: false,
 };
 
@@ -59,7 +59,7 @@ const LEVELS: { id: Level; label: string; stars: string }[] = [
   { id: 'ace', label: 'Ace', stars: '★★★★' },
 ];
 
-const TIMBRE: Record<string, Timbre> = { plaza: 'hard', ink: 'wood', neon: 'synth', pixel: 'chip', paper: 'paper', clay: 'clay', water: 'soft', cosmic: 'glass' };
+const TIMBRE: Record<string, Timbre> = { park: 'hard', plaza: 'hard', ink: 'wood', neon: 'synth', pixel: 'chip', paper: 'paper', clay: 'clay', water: 'soft', cosmic: 'glass' };
 
 interface Screen {
   name: string;

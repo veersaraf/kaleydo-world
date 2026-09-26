@@ -77,7 +77,7 @@ export class Hud {
           el = els[i] = h('div', { class: 'ptag', style: `--c:${this.teams[p.team].color}` }, p.name);
           this.tagLayer.append(el);
         }
-        const pr = v.rig.project({ x: p.x, y: 1.95 * (p.look.height || 1), z: p.z });
+        const pr = v.rig.project({ x: p.x, y: 2.2 * (p.look.height || 1), z: p.z });
         const on = this.tagShow > 0.02 && !pr.behind && pr.x > 0.02 && pr.x < 0.98 && pr.y > 0.02;
         el.style.display = on ? '' : 'none';
         if (on) {

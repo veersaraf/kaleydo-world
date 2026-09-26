@@ -8,6 +8,11 @@ import type { MaterialKit, CharRole } from '../worlds/types';
 import { outlineTree } from '../render/outline';
 
 export const CHAR_SCALE = 1.16;
+/** Sportsmate-ish proportions: a taller torso, longer legs, a smaller head */
+export const TORSO = 1.22;
+export const HEAD = 0.88;
+/** hip height (root units) — leg length */
+export const HIP = 0.34;
 export const RACKET_SWEET = 0.47;
 
 // ---------------------------------------------------------------- shared geometry
@@ -22,23 +27,24 @@ function lathe(profile: [number, number][], seg = 28) {
 const G = {
   body: lathe([
     [0.0, 0.0],
-    [0.12, 0.004],
-    [0.21, 0.04],
-    [0.265, 0.12],
-    [0.285, 0.24],
-    [0.275, 0.36],
-    [0.24, 0.47],
-    [0.17, 0.56],
-    [0.07, 0.61],
-    [0.0, 0.62],
+    [0.13, 0.004],
+    [0.215, 0.04],
+    [0.235, 0.12],
+    [0.228, 0.22],
+    [0.245, 0.34],
+    [0.268, 0.45],
+    [0.262, 0.52],
+    [0.21, 0.58],
+    [0.1, 0.615],
+    [0.0, 0.625],
   ]),
   shorts: lathe([
     [0.0, -0.005],
-    [0.13, -0.001],
-    [0.225, 0.04],
-    [0.278, 0.12],
-    [0.294, 0.2],
-    [0.29, 0.215],
+    [0.14, -0.001],
+    [0.222, 0.035],
+    [0.246, 0.1],
+    [0.244, 0.17],
+    [0.236, 0.2],
   ]),
   head: new THREE.SphereGeometry(0.3, 36, 26),
   sphere: new THREE.SphereGeometry(1, 20, 14),
@@ -53,6 +59,7 @@ const G = {
   capsule: new THREE.CapsuleGeometry(1, 1, 6, 12),
   leg: new THREE.CapsuleGeometry(0.055, 1, 4, 10),
   arm: new THREE.CapsuleGeometry(0.048, 1, 4, 10),
+  thigh: new THREE.CapsuleGeometry(0.085, 1, 4, 12),
   handle: new THREE.CylinderGeometry(0.019, 0.022, 0.24, 12),
   throat: new THREE.CylinderGeometry(0.011, 0.014, 0.16, 8),
   frame: new THREE.TorusGeometry(0.135, 0.014, 8, 40),
@@ -110,7 +117,7 @@ const armD = new THREE.Vector3();
 const armP = new THREE.Vector3();
 const segDir = new THREE.Vector3();
 /** upper arm and forearm length (unscaled) */
-const ARM_SEG = 0.22;
+const ARM_SEG = 0.25;
 
 /** Lay a unit capsule (along +y) between two points. */
 function segment(m: THREE.Mesh, a: THREE.Vector3, b: THREE.Vector3) {
@@ -137,6 +144,8 @@ export class Rig {
   hands: [THREE.Group, THREE.Group] = [new THREE.Group(), new THREE.Group()];
   feet: [THREE.Group, THREE.Group] = [new THREE.Group(), new THREE.Group()];
   legs: [THREE.Mesh, THREE.Mesh];
+  /** shorts over the tops of the legs */
+  thighs: [THREE.Mesh, THREE.Mesh];
   /** [upper, fore] for the racket arm and the off arm */
   arms: [THREE.Mesh, THREE.Mesh][];
   private girth = 1;
@@ -148,7 +157,6 @@ export class Rig {
   brows = new THREE.Group();
   mouths: Record<string, THREE.Object3D> = {};
   eyeMeshes: THREE.Object3D[] = [];
-  hipY = 0.2;
   scale: number;
   flat: boolean;
   materials: THREE.Material[] = [];
@@ -191,15 +199,16 @@ export class Rig {
     // body
     this.root.add(this.body);
     const g = this.look.girth;
-    mesh(G.body, shirt, this.body, [g, 1, g]);
-    mesh(G.shorts, shorts, this.body, [g * 1.03, 1, g * 1.03], [0, -0.012, 0]);
+    mesh(G.body, shirt, this.body, [g, TORSO, g]);
+    mesh(G.shorts, shorts, this.body, [g * 1.03, TORSO, g * 1.03], [0, -0.012, 0]);
     // a little collar stripe for readability
-    const collar = mesh(G.ring, hat, this.body, [0.1, 0.1, 0.1], [0, 0.585, 0]);
+    const collar = mesh(G.ring, hat, this.body, [0.1, 0.1, 0.1], [0, 0.585 * TORSO, 0]);
     collar.rotation.x = Math.PI / 2;
     collar.userData.noOutline = true;
 
     // head
-    this.head.position.set(0, 0.86, 0);
+    this.head.position.set(0, 0.62 * TORSO + 0.3 * HEAD * 0.8, 0);
+    this.head.scale.setScalar(HEAD);
     this.body.add(this.head);
     mesh(G.head, skin, this.head, [1, 0.95, 0.97]);
 
@@ -305,6 +314,8 @@ export class Rig {
     }
     this.legs = [mesh(G.leg, skin, this.root), mesh(G.leg, skin, this.root)];
     for (const l of this.legs) l.userData.outlineScale = 0.8;
+    this.thighs = [mesh(G.thigh, shorts, this.root), mesh(G.thigh, shorts, this.root)];
+    for (const l of this.thighs) l.userData.outlineScale = 0.8;
     // arms: sleeve to the elbow, skin to the hand (Switch Sports' Sportsmates have
     // proper arms; they make every swing read)
     this.girth = g;
@@ -378,10 +389,11 @@ export class Rig {
         break;
       }
       case 'beanie': {
-        mesh(G.deepHemi, hat, h, [0.325, 0.33, 0.325], [0, -0.01, 0.01]);
-        const r = mesh(G.ring, hat, h, [0.32, 0.32, 0.9], [0, 0.07, 0.005]);
+        // worn above the brows so the eyes stay visible
+        mesh(G.deepHemi, hat, h, [0.325, 0.33, 0.325], [0, 0.085, 0.01]);
+        const r = mesh(G.ring, hat, h, [0.315, 0.315, 0.9], [0, 0.14, 0.005]);
         r.rotation.x = Math.PI / 2;
-        mesh(G.sphere, hair, h, [0.075, 0.07, 0.075], [0, 0.36, 0.02]);
+        mesh(G.sphere, hair, h, [0.075, 0.07, 0.075], [0, 0.44, 0.02]);
         break;
       }
       case 'mohawk':
@@ -466,8 +478,15 @@ export class Rig {
       const leg = this.legs[i];
       leg.position.set((tmpV.x + fx) / 2, (tmpV.y + fy) / 2, (tmpV.z + fz) / 2);
       leg.scale.set(1, Math.max(0.01, len - 0.06), 1);
+      // the shorts cover the top third of the leg
+      const th = this.thighs[i];
+      const tl = Math.min(0.16, len * 0.4);
+      th.position.set(tmpV.x + (dx / len) * tl * 0.5, tmpV.y + (dy / len) * tl * 0.5, tmpV.z + (dz / len) * tl * 0.5);
+      th.scale.set(1, Math.max(0.01, tl - 0.05), 1);
       leg.quaternion.setFromUnitVectors(THREE.Object3D.DEFAULT_UP, tmpV.set(dx / len, dy / len, dz / len));
+      th.quaternion.copy(leg.quaternion);
       leg.visible = len > 0.03;
+      th.visible = leg.visible;
     }
 
     // arms: shoulder → elbow → hand, two-bone IK with the elbows dropping down
@@ -475,7 +494,7 @@ export class Rig {
     this.body.updateMatrix();
     for (let i = 0; i < 2; i++) {
       const sx = i === 0 ? p.handed : -p.handed;
-      armS.set(sx * 0.2 * this.girth, 0.47, 0).applyMatrix4(this.body.matrix);
+      armS.set(sx * 0.2 * this.girth, 0.47 * TORSO, 0).applyMatrix4(this.body.matrix);
       armH.copy(this.hands[i].position);
       armD.subVectors(armH, armS);
       const d = Math.max(1e-4, armD.length());

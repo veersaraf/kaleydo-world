@@ -236,7 +236,7 @@ export function serveShot(
   }
   tx += rng.gauss() * (perfect ? 0.08 : 0.25);
   return {
-    spec: { tx, tz: zSign * depth, speed, spin: rocket ? 0.15 : 0.35, clear, netted: clear < 0, maxApex: 4.2 },
+    spec: { tx, tz: zSign * depth, speed, spin: 0.35, clear, netted: clear < 0, maxApex: 4.2 },
     perfect,
     fault,
     rocket,

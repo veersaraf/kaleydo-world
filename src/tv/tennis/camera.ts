@@ -127,7 +127,7 @@ export class CameraRig {
       const p = this.versus;
       const f = p.team === 0 ? -1 : 1;
       tp.set(p.x + 1.15 * f, 1.5, p.z + f * 3.3);
-      tl.set(p.x, 1.25, p.z);
+      tl.set(p.x, 1.4, p.z);
       fov = 30;
       lambda = this.shotT++ === 0 ? 1000 : 5;
     } else if (this.mode === 'play' || this.mode === 'intro') {

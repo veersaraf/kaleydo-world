@@ -475,7 +475,7 @@ export abstract class World {
     // halo: on while the ball is in play and moving, in the colour of whoever hit it
     const flying = v.holder < 0 && v.ballSpeed > 2 && (v.state === 'play' || v.state === 'toss');
     this.haloOn += ((flying ? 1 : 0) - this.haloOn) * Math.min(1, v.realDt * (flying ? 14 : 5));
-    (this.ballHalo.material as THREE.ShaderMaterial).uniforms.uOpacity.value = this.haloOn * 0.85 * this.haloStrength;
+    (this.ballHalo.material as THREE.ShaderMaterial).uniforms.uOpacity.value = this.haloOn * 0.85 * this.haloStrength * this.haloNear;
     this.ballHalo.visible = v.ballVisible && this.haloOn > 0.01;
     this.fitBall(v.cam);
     this.trail.update(b.position, v.holder >= 0 ? 0 : v.ballSpeed, v.cam, v.realDt, v.realT);
@@ -486,7 +486,7 @@ export abstract class World {
       this.sweatT = 0.32;
       for (const pose of v.poses) {
         if (pose.tired < 0.3) continue;
-        this.particles.burst({ x: pose.x + (Math.random() - 0.5) * 0.3, y: 1.75 + pose.hop, z: pose.z, count: 2 + (pose.tired > 0.7 ? 1 : 0), speed: [0.6, 1.5], dir: [0, 1, 0], spread: 0.8, life: [0.4, 0.65], size: [0.09, 0.14], colors: [this.sweatColor], shape: 'soft', alpha: 0.9, gravity: 7 });
+        this.particles.burst({ x: pose.x + (Math.random() - 0.5) * 0.3, y: 1.95 + pose.hop, z: pose.z, count: 2 + (pose.tired > 0.7 ? 1 : 0), speed: [0.6, 1.5], dir: [0, 1, 0], spread: 0.8, life: [0.4, 0.65], size: [0.09, 0.14], colors: [this.sweatColor], shape: 'soft', alpha: 0.9, gravity: 7 });
       }
     }
     this.particles.update(v.realDt);
@@ -520,7 +520,10 @@ export abstract class World {
     h.position.copy(b.position).addScaledVector(this.tmp.subVectors(b.position, cam.position).normalize(), COURT.ballR * s);
     h.quaternion.copy(cam.quaternion);
     h.scale.setScalar(COURT.ballR * s * 5);
+    // the halo is for reading a far-away ball; close up it just gets in the way
+    this.haloNear = THREE.MathUtils.smoothstep(d, 4, 9);
   }
+  private haloNear = 1;
 
   /** Colour the trail by the kind of shot (Mario Tennis-style: read the spin at a glance). */
   private tintTrail(e: Extract<MatchEvent, { type: 'hit' }>) {

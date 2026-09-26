@@ -20,5 +20,5 @@ const app = new App(canvas);
 const flow = new Flow(app);
 (window as unknown as { kaleido: App; flow: Flow }).kaleido = app;
 (window as unknown as { flow: Flow }).flow = flow;
-app.startAttract('plaza');
+app.startAttract('park');
 app.start();

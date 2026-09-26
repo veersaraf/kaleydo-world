@@ -33,9 +33,10 @@ click before they'll play sound) and press **F** for full screen.
 4. Type your name, pick your hand, tap **Join game**, and allow motion access.
 5. If macOS asks whether `node` may accept incoming connections, choose **Allow**.
 
-The remote shows a Wii-Remote-style pad in menus, a swing meter while you
-play, and a big **TAP TO TOSS** button when it's your serve. It plays the
-racket "pok" through the phone speaker, like the Wii Remote did.
+The remote shows a Wii-Remote-style pad in menus and a swing meter while you
+play. When it's your serve, **lift the phone** to toss (or tap the big
+button), then swing. It plays the racket "pok" through the phone speaker,
+like the Wii Remote did.
 
 **Optional — faster connection, no warning:** on the phone's join screen open
 *"Optional: remove the security warning"* and follow the three steps to trust
@@ -50,12 +51,15 @@ the KALEIDO certificate. This lets the remote use WebSockets (lower latency).
 | Power | swing speed | flick speed, or <kbd>Shift</kbd>+<kbd>J</kbd> |
 | Spin | brush up = topspin, chop down = slice | <kbd>J</kbd> flat · <kbd>K</kbd> topspin · <kbd>L</kbd> slice |
 | Lob / drop | soft upward / soft downward swing | <kbd>U</kbd> lob · <kbd>I</kbd> drop |
-| Serve | tap **TAP TO TOSS** (or swing), then swing at the top | <kbd>Space</kbd> or click to toss, then swing |
+| Serve | lift the phone to toss (or tap), then swing at the top — nail the top for a **rocket serve** | <kbd>Space</kbd> or click to toss, then swing |
 | Menus | D-pad, **A**, **B** | arrows, <kbd>Enter</kbd>, <kbd>Esc</kbd> |
 | Pause | Home | <kbd>Esc</kbd> / <kbd>P</kbd> |
 
 Your player runs to the ball automatically — you only decide *when* and *how*
-to swing.
+to swing. Balls at the edge of reach get a lunge or a flying dive. Run your
+opponent corner to corner and they tire: slower, sweating, and floating weak
+"wobbly" returns — swing hard at those for a **SMASH**. Local versus gives
+each side its own half of the screen.
 
 ## Modes
 
@@ -70,6 +74,7 @@ to swing.
 
 | World | Look | Twist |
 |---|---|---|
+| Sports Park | Switch Sports-style: smooth shading, soft sun, coral court in a modern plaza | the default |
 | Sunny Plaza | cel-shaded, outlined, sunny | the classic |
 | Inkwell | sumi-e ink wash on rice paper; only vermilion survives | ink splats where the ball lands |
 | Neon Drive | synthwave grid, striped sun, bloom | everything pulses to the beat |

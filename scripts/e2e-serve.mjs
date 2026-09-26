@@ -55,7 +55,7 @@ await tv.evaluate(() => {
   k.match.startNow();
   window.__ev = [];
   const oe = k.onMatchEvent;
-  k.onMatchEvent = (e) => { if (e.type === 'toss' || e.type === 'hit' || e.type === 'whiff' || e.type === 'fault') window.__ev.push({ type: e.type, t: +k.match.t.toFixed(3), human: e.p?.human, rocket: e.rocket, kph: e.kph && Math.round(e.kph), tau: e.tau && +e.tau.toFixed(2) }); oe(e); };
+  k.onMatchEvent = (e) => { if (e.type === 'toss' || e.type === 'hit' || e.type === 'whiff' || e.type === 'fault') window.__ev.push({ type: e.type, reason: e.reason, t: +k.match.t.toFixed(3), human: e.p?.human, rocket: e.rocket, kph: e.kph && Math.round(e.kph), tau: e.tau && +e.tau.toFixed(2) }); oe(e); };
 });
 await tv.waitForFunction(() => { const m = window.kaleido.match; return m.state === 'serve' && m.server.human && m.t - m.stateT0 > 0.6; }, null, { timeout: 20000 });
 await pad.waitForTimeout(700); // the phone rests a moment
@@ -72,7 +72,7 @@ if (shot && process.argv[2]) {
   await tv.waitForTimeout(170);
   await tv.screenshot({ path: process.argv[2] + '/rocket.png' });
 }
-await tv.waitForTimeout(600);
+await tv.waitForTimeout(1600);
 console.log('pad serve button:', padMode, '| state after lift:', afterLift);
 console.log(JSON.stringify(await tv.evaluate(() => window.__ev)));
 console.log(logs.join('\n') || 'no errors');

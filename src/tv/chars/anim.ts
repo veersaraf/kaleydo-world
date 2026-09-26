@@ -1,7 +1,7 @@
 // Procedural animation: turns a TPlayer's gameplay state into a Pose.
 
 import { newPose, type Pose } from './pose';
-import { CHAR_SCALE, RACKET_SWEET } from './rig';
+import { CHAR_SCALE, RACKET_SWEET, HIP } from './rig';
 import type { TPlayer, SwingState, Athletic } from '../tennis/player';
 import { clamp, lerp, smooth, easeOutCubic, easeInCubic, type V3, Rng, damp } from '../core/math';
 
@@ -140,7 +140,7 @@ export class Animator {
     const bob = Math.abs(Math.sin(this.phase)) * 0.045 * run;
     P.body.x = 0;
     P.body.z = 0;
-    P.body.y = 0.19 + bob + Math.sin(t * 2.1 + p.id) * 0.006 - ready * 0.04;
+    P.body.y = HIP + bob + Math.sin(t * 2.1 + p.id) * 0.006 - ready * 0.05;
     P.hop = hop;
     P.bodyPitch = this.lean;
     P.bodyRoll = this.roll;
@@ -217,7 +217,7 @@ export class Animator {
       if (em === 'celebrate') {
         const j = Math.max(0, Math.sin(Math.min(u, 1.2) * Math.PI * 1.7));
         P.hop = j * 0.32;
-        keyFrom(K.a, hs, [0.28, 1.62, -0.12], [0.15, 1, 0.1], [-0.3, 1.2, -0.25], 0);
+        keyFrom(K.a, hs, [0.3, 1.85, -0.12], [0.15, 1, 0.1], [-0.32, 1.4, -0.25], 0);
         lerpKey(out, out, K.a, smooth(clamp(u * 5)));
         P.bodyPitch = -0.12;
         if (this.lastEmote !== em) this.squashV += 1.2;
