@@ -52,6 +52,7 @@ const G = {
   cone: new THREE.ConeGeometry(1, 1, 10),
   capsule: new THREE.CapsuleGeometry(1, 1, 6, 12),
   leg: new THREE.CapsuleGeometry(0.055, 1, 4, 10),
+  arm: new THREE.CapsuleGeometry(0.048, 1, 4, 10),
   handle: new THREE.CylinderGeometry(0.019, 0.022, 0.24, 12),
   throat: new THREE.CylinderGeometry(0.011, 0.014, 0.16, 8),
   frame: new THREE.TorusGeometry(0.135, 0.014, 8, 40),
@@ -102,6 +103,28 @@ export function blobShadowTexture() {
 // ---------------------------------------------------------------- rig
 
 const tmpV = new THREE.Vector3();
+const armS = new THREE.Vector3();
+const armE = new THREE.Vector3();
+const armH = new THREE.Vector3();
+const armD = new THREE.Vector3();
+const armP = new THREE.Vector3();
+const segDir = new THREE.Vector3();
+/** upper arm and forearm length (unscaled) */
+const ARM_SEG = 0.22;
+
+/** Lay a unit capsule (along +y) between two points. */
+function segment(m: THREE.Mesh, a: THREE.Vector3, b: THREE.Vector3) {
+  segDir.subVectors(b, a);
+  const len = segDir.length();
+  m.position.addVectors(a, b).multiplyScalar(0.5);
+  m.visible = len > 0.02;
+  if (!m.visible) return;
+  segDir.divideScalar(len);
+  m.quaternion.setFromUnitVectors(THREE.Object3D.DEFAULT_UP, segDir);
+  // stretched arms thin out a touch
+  const k = Math.min(1, Math.sqrt(ARM_SEG / Math.max(ARM_SEG, len)));
+  m.scale.set(k, Math.max(0.01, len - 0.05), k);
+}
 const tmpX = new THREE.Vector3();
 const tmpY = new THREE.Vector3();
 const tmpZ = new THREE.Vector3();
@@ -114,6 +137,9 @@ export class Rig {
   hands: [THREE.Group, THREE.Group] = [new THREE.Group(), new THREE.Group()];
   feet: [THREE.Group, THREE.Group] = [new THREE.Group(), new THREE.Group()];
   legs: [THREE.Mesh, THREE.Mesh];
+  /** [upper, fore] for the racket arm and the off arm */
+  arms: [THREE.Mesh, THREE.Mesh][];
+  private girth = 1;
   racket = new THREE.Group();
   shadow: THREE.Mesh;
   eyesOpen = new THREE.Group();
@@ -279,6 +305,16 @@ export class Rig {
     }
     this.legs = [mesh(G.leg, skin, this.root), mesh(G.leg, skin, this.root)];
     for (const l of this.legs) l.userData.outlineScale = 0.8;
+    // arms: sleeve to the elbow, skin to the hand (Switch Sports' Sportsmates have
+    // proper arms; they make every swing read)
+    this.girth = g;
+    this.arms = [0, 1].map(() => {
+      const upper = mesh(G.arm, shirt, this.root);
+      const fore = mesh(G.arm, skin, this.root);
+      upper.userData.outlineScale = 0.75;
+      fore.userData.outlineScale = 0.75;
+      return [upper, fore] as [THREE.Mesh, THREE.Mesh];
+    });
 
     // blob shadow (on the ground, not scaled with squash)
     const sm = new THREE.MeshBasicMaterial({
@@ -432,6 +468,34 @@ export class Rig {
       leg.scale.set(1, Math.max(0.01, len - 0.06), 1);
       leg.quaternion.setFromUnitVectors(THREE.Object3D.DEFAULT_UP, tmpV.set(dx / len, dy / len, dz / len));
       leg.visible = len > 0.03;
+    }
+
+    // arms: shoulder → elbow → hand, two-bone IK with the elbows dropping down
+    // and out; past full reach they stretch a little, cartoon-style
+    this.body.updateMatrix();
+    for (let i = 0; i < 2; i++) {
+      const sx = i === 0 ? p.handed : -p.handed;
+      armS.set(sx * 0.2 * this.girth, 0.47, 0).applyMatrix4(this.body.matrix);
+      armH.copy(this.hands[i].position);
+      armD.subVectors(armH, armS);
+      const d = Math.max(1e-4, armD.length());
+      armD.divideScalar(d);
+      const L = ARM_SEG;
+      if (d >= 2 * L * 0.999) {
+        armE.copy(armS).addScaledVector(armD, d / 2);
+      } else {
+        const a = d / 2;
+        const hgt = Math.sqrt(Math.max(0, L * L - a * a));
+        // elbow pole: outwards, down and a little back
+        armP.set(sx * 0.35, -0.45, 0.25);
+        armP.addScaledVector(armD, -armP.dot(armD));
+        if (armP.lengthSq() < 1e-6) armP.set(sx, 0, 0);
+        armP.normalize();
+        armE.copy(armS).addScaledVector(armD, a).addScaledVector(armP, hgt);
+      }
+      const [upper, fore] = this.arms[i];
+      segment(upper, armS, armE);
+      segment(fore, armE, armH);
     }
 
     // face
