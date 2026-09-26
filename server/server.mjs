@@ -425,7 +425,7 @@ async function main() {
     const { createServer } = await import('vite');
     vite = await createServer({
       root: ROOT,
-      server: { middlewareMode: true, hmr: { port: 24678 } },
+      server: { middlewareMode: true, hmr: { port: Number(process.env.HMR_PORT || 24678) } },
       appType: 'mpa',
     });
   } else if (!fs.existsSync(path.join(DIST, 'index.html'))) {
