@@ -181,6 +181,9 @@ const waitTitle = h('div', { class: 'wtitle' }, 'Connecting…');
 const waitHint = h('div', { class: 'whint' }, '');
 const waitPanel = h('div', { class: 'panel wait' }, h('div', { class: 'spinner' }), waitTitle, waitHint);
 
+// bowling: grip pad + move/aim buttons (placeholder until the bowling controller lands)
+const bowlPanel = h('div', { class: 'panel bowl' }, h('div', { class: 'wtitle' }, 'Bowling'));
+
 const panels: Record<PadMode, HTMLElement> = {
   menu: menuPanel,
   play: playPanel,
@@ -188,6 +191,7 @@ const panels: Record<PadMode, HTMLElement> = {
   wait: waitPanel,
   watch: waitPanel,
   skip: skipPanel,
+  bowl: bowlPanel,
 };
 
 const leds = h('div', { class: 'leds' }, h('i'), h('i'), h('i'), h('i'));
