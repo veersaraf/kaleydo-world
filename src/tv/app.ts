@@ -366,6 +366,10 @@ export class App {
     this.bowl = null;
     this.stage.forEachWorld((w) => {
       if (w.sport === 'bowling') w.setSport('tennis');
+      for (const r of w.rigs) {
+        r.racket.visible = true;
+        r.hands[0].rotation.z = 0;
+      }
     });
   }
 
@@ -418,6 +422,9 @@ export class App {
       bowl: g.phys.view,
     };
     this.stage.update(view);
+    // the wrist turns through a hook release
+    const rig = w.rigs[g.current];
+    if (rig) rig.hands[0].rotation.z = this.bowlAnims[g.current].handRoll;
     this.stage.render(this.bowlCam.cam);
     this.onFrame(realDt);
   }

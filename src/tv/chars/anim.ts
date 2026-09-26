@@ -134,7 +134,9 @@ export class Animator {
     }
 
     // body
-    const targetLean = clamp(-lvz * 0.05, -0.25, 0.3) + ready * 0.14;
+    // (the rig: + bodyPitch leans back, + headPitch looks up) — lean into a run
+    // forwards (lvz < 0) and crouch forward in the ready stance
+    const targetLean = clamp(lvz * 0.05, -0.3, 0.25) - ready * 0.14;
     this.lean = damp(this.lean, targetLean, 8, dt);
     this.roll = damp(this.roll, clamp(-lvx * 0.045, -0.2, 0.2), 8, dt);
     const bob = Math.abs(Math.sin(this.phase)) * 0.045 * run;
@@ -219,12 +221,12 @@ export class Animator {
         P.hop = j * 0.32;
         keyFrom(K.a, hs, [0.3, 1.85, -0.12], [0.15, 1, 0.1], [-0.32, 1.4, -0.25], 0);
         lerpKey(out, out, K.a, smooth(clamp(u * 5)));
-        P.bodyPitch = -0.12;
+        P.bodyPitch = 0.1; // chest up
         if (this.lastEmote !== em) this.squashV += 1.2;
       } else if (em === 'sad') {
         keyFrom(K.a, hs, [0.3, 0.45, -0.1], [0.2, -0.7, -0.5], [-0.28, 0.5, -0.1], 0);
         lerpKey(out, out, K.a, smooth(clamp(u * 3)));
-        P.bodyPitch = lerp(P.bodyPitch, 0.32, smooth(clamp(u * 3)));
+        P.bodyPitch = lerp(P.bodyPitch, -0.32, smooth(clamp(u * 3))); // slump forward
       } else if (em === 'wave') {
         keyFrom(K.a, hs, [0.35, 1.6 + Math.sin(u * 12) * 0.05, -0.1], [Math.sin(u * 12) * 0.6, 1, 0], [-0.25, 0.8, -0.2], 0);
         lerpKey(out, out, K.a, smooth(clamp(u * 4)));
@@ -239,7 +241,7 @@ export class Animator {
       P.body.y += Math.sin(t * 13) * 0.014 * tired;
       out.hand.y -= 0.1 * tired;
       out.off.y -= 0.08 * tired;
-      P.bodyPitch += 0.12 * tired;
+      P.bodyPitch -= 0.12 * tired; // hunched over
     }
 
     // write hands & racket
@@ -280,9 +282,9 @@ export class Animator {
     this.headYaw = damp(this.headYaw, looking ? wantYaw : 0, 9, dt);
     this.headPitch = damp(this.headPitch, looking ? wantPitch : 0, 9, dt);
     P.headYaw = this.headYaw;
-    P.headPitch = -this.headPitch * 0.8 + (em === 'sad' && t > p.emoteT0 ? 0.45 : 0);
+    P.headPitch = this.headPitch * 0.8 - (em === 'sad' && t > p.emoteT0 ? 0.45 : 0);
     P.headRoll = Math.sin(t * 1.3 + p.id) * 0.03;
-    P.headPitch += 0.14 * tired;
+    P.headPitch -= 0.14 * tired;
 
     // ------------------------------------------------ face
     this.blinkT -= dt;
@@ -358,7 +360,7 @@ export class Animator {
       P.body.x = side * 0.14 * k;
       P.body.y -= 0.13 * k;
       P.bodyRoll = lerp(P.bodyRoll, -side * 0.3, k);
-      P.bodyPitch += 0.22 * k;
+      P.bodyPitch -= 0.22 * k;
       if (!swinging) {
         lerpV(out.hand, out.hand, V(side * 0.78, 0.55, -0.22), k);
         lerpV(out.dir, out.dir, V(side * 0.8, 0.35, -0.45), k);

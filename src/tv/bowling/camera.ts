@@ -42,13 +42,18 @@ export class BowlCamera {
       }
       case 'ready':
       case 'approach':
-      case 'sweep':
-        // behind the bowler, a touch high, looking down the lane
-        tp.set(b.x * 0.85, 1.8, Math.max(b.z + 3.3, FOUL_Z + 3.4));
-        tl.set(b.x * 0.3, 0.35, HEAD_Z + 5);
-        lambda = g.state === 'approach' ? 2.2 : 4;
+      case 'sweep': {
+        // a little over the bowling shoulder and high: the whole swing at the bottom
+        // of the frame, the aim line and the pins beside and over the bowler
+        // (straight behind, the head hides them)
+        const z = Math.min(b.z, FOUL_Z + 3.9);
+        tp.set(b.x + 0.32 * b.handed, 2.75, z + 4.4);
+        tl.set(b.x * 0.3 + 0.12 * b.handed, 0.2, z - 13);
+        fov = 42;
+        lambda = g.state === 'approach' ? 2.6 : 4;
         this.pinCut = false;
         break;
+      }
       case 'lane':
       case 'pins':
       case 'result': {
