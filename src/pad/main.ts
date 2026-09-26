@@ -260,6 +260,9 @@ const bowlPanel = h(
   ),
 );
 
+// sword duel: guard pad + swings (placeholder until the sword controller lands)
+const swordPanel = h('div', { class: 'panel sword' }, h('div', { class: 'wtitle' }, 'Sword duel'));
+
 const panels: Record<PadMode, HTMLElement> = {
   menu: menuPanel,
   play: playPanel,
@@ -268,6 +271,7 @@ const panels: Record<PadMode, HTMLElement> = {
   watch: waitPanel,
   skip: skipPanel,
   bowl: bowlPanel,
+  sword: swordPanel,
 };
 
 const leds = h('div', { class: 'leds' }, h('i'), h('i'), h('i'), h('i'));
@@ -278,7 +282,7 @@ const remoteScreen = h(
   'section',
   { class: 'remote' },
   header,
-  h('div', { class: 'shell' }, menuPanel, playPanel, servePanel, waitPanel, skipPanel, bowlPanel),
+  h('div', { class: 'shell' }, menuPanel, playPanel, servePanel, waitPanel, skipPanel, bowlPanel, swordPanel),
   footer,
   flash,
   toast,

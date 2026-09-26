@@ -14,13 +14,23 @@ import { Particles } from '../render/particles';
 import { Crowd } from './crowd';
 import { batchStatic, type BatchStats } from '../render/batch';
 import type { BowlView } from '../bowling/types';
+import type { DuelView } from '../duel/types';
+
+export type Sport = 'tennis' | 'bowling' | 'duel';
 
 /** What a world needs from the bowling venue (lanes, pins, ball) — see bowling/venue.ts. */
-export interface VenueLike {
+export interface BowlVenueLike {
   group: THREE.Group;
   update(v: BowlView, realDt: number): void;
   holdBall(p: THREE.Vector3 | null): void;
   setAim(aim: { x: number; angle: number } | null): void;
+  dispose(): void;
+}
+
+/** What a world needs from the sword-duel arena (platform, water, effects) — see duel/venue.ts. */
+export interface DuelVenueLike {
+  group: THREE.Group;
+  update(v: DuelView, realDt: number): void;
   dispose(): void;
 }
 
@@ -84,6 +94,8 @@ export interface FrameView {
   beat: number;
   /** bowling: the ball and pins to draw */
   bowl?: BowlView;
+  /** sword duel: the arena's state and effects */
+  duel?: DuelView;
 }
 
 export interface CourtStyle {
@@ -132,9 +144,11 @@ export abstract class World {
    *  the ground): hidden for other sports — mark it noBatch so it can be */
   protected tennisOnly: THREE.Object3D[] = [];
   /** which sport this world is set up for */
-  sport: 'tennis' | 'bowling' = 'tennis';
-  /** the bowling lanes, pins and ball (built the first time bowling comes here) */
-  venue: VenueLike | null = null;
+  sport: Sport = 'tennis';
+  /** the bowling lanes, pins and ball / the duel arena — each built the first time
+   *  its sport comes to this world, with the world's own materials */
+  bowlVenue: BowlVenueLike | null = null;
+  duelVenue: DuelVenueLike | null = null;
   netWob = 0;
   netWobX = 0;
   w = 1;
@@ -518,7 +532,8 @@ export abstract class World {
     }
     this.particles.update(v.realDt);
     this.crowd?.update(v.realT, v.realDt, v.excitement);
-    if (this.sport === 'bowling' && v.bowl) this.venue?.update(v.bowl, v.realDt);
+    if (this.sport === 'bowling' && v.bowl) this.bowlVenue?.update(v.bowl, v.realDt);
+    else if (this.sport === 'duel' && v.duel) this.duelVenue?.update(v.duel, v.realDt);
     this.updateNet(v.realDt);
     this.flash = Math.max(0, this.flash - v.realDt * 3.5);
     this.animate(v);
@@ -528,21 +543,29 @@ export abstract class World {
   protected animate(_v: FrameView) {}
 
   /**
-   * Turn the court into bowling lanes (or back). The venue is built with this
-   * world's own materials the first time, so the lanes match the art style.
+   * Turn the court into another sport's set — bowling lanes, a duel arena — or
+   * back. Each is built with this world's own materials the first time, so it
+   * matches the art style.
    */
-  setSport(sport: 'tennis' | 'bowling', makeVenue?: (kit: MaterialKit) => VenueLike) {
+  setSport(sport: 'tennis'): void;
+  setSport(sport: 'bowling', make?: (kit: MaterialKit) => BowlVenueLike): void;
+  setSport(sport: 'duel', make?: (kit: MaterialKit) => DuelVenueLike): void;
+  setSport(sport: Sport, make?: (kit: MaterialKit) => BowlVenueLike | DuelVenueLike) {
     this.sport = sport;
-    const bowling = sport === 'bowling';
-    if (bowling && !this.venue && makeVenue) {
-      this.venue = makeVenue(this.kit);
-      this.scene.add(this.venue.group);
+    if (sport === 'bowling' && !this.bowlVenue && make) {
+      this.bowlVenue = make(this.kit) as BowlVenueLike;
+      this.scene.add(this.bowlVenue.group);
+    } else if (sport === 'duel' && !this.duelVenue && make) {
+      this.duelVenue = make(this.kit) as DuelVenueLike;
+      this.scene.add(this.duelVenue.group);
     }
-    if (this.venue) this.venue.group.visible = bowling;
-    if (this.courtGroup) this.courtGroup.visible = !bowling;
-    if (this.netGroup) this.netGroup.visible = !bowling;
-    if (this.netMesh) this.netMesh.visible = !bowling;
-    for (const o of this.tennisOnly) o.visible = !bowling;
+    if (this.bowlVenue) this.bowlVenue.group.visible = sport === 'bowling';
+    if (this.duelVenue) this.duelVenue.group.visible = sport === 'duel';
+    const tennis = sport === 'tennis';
+    if (this.courtGroup) this.courtGroup.visible = tennis;
+    if (this.netGroup) this.netGroup.visible = tennis;
+    if (this.netMesh) this.netMesh.visible = tennis;
+    for (const o of this.tennisOnly) o.visible = tennis;
   }
 
   /** Which view is about to render: 0 = the normal one, 1 = the far player's split-screen half. */

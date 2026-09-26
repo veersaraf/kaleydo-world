@@ -64,11 +64,20 @@ export type PadMsg =
    *  speed m/s; spin −1..1 (+ hooks left); angle radians (+ right), ±0.2: the swing's line
    *  against the player's own backswing (a straight pendulum = 0, a push right / pull left
    *  across the body = ±), or against the calibrated screen when there was no real backswing */
-  | { type: 'bowl'; speed: number; angle: number; spin: number; lat: number; touch?: boolean };
+  | { type: 'bowl'; speed: number; angle: number; spin: number; lat: number; touch?: boolean }
+  /** sword duel: the guard button went down / was let go. While it's held the
+   *  sword guards at whatever angle the phone is held (from the 'ori' stream) */
+  | { type: 'guard'; down: boolean; lat: number }
+  /** sword duel: an attack, measured from the swing. slash: `dir` = which way the
+   *  phone's top (the sword's tip) travelled across the player's view, radians:
+   *  0 = right, π/2 = up, −π/2 = down (a chop), ±π = left. thrust: a push towards
+   *  the screen (dir unused). power 0..1 = how hard. touch = from an on-screen swipe */
+  | { type: 'slash'; kind: 'slash' | 'thrust'; dir: number; power: number; lat: number; touch?: boolean };
 
 /** bowl = your turn to bowl: the grip pad plus move (◀ ▶ = btn left/right) and
- *  aim (↺ ↻ = btn minus/plus) buttons */
-export type PadMode = 'menu' | 'play' | 'serve' | 'wait' | 'watch' | 'skip' | 'bowl';
+ *  aim (↺ ↻ = btn minus/plus) buttons. sword = a duel: swing to attack, hold the
+ *  guard pad to block (the sword follows the phone, streamed as 'ori') */
+export type PadMode = 'menu' | 'play' | 'serve' | 'wait' | 'watch' | 'skip' | 'bowl' | 'sword';
 
 export type PadFx =
   | 'hit'
@@ -81,7 +90,11 @@ export type PadFx =
   | 'back'
   | 'toss'
   | 'win'
-  | 'lose';
+  | 'lose'
+  /** duel: your guard stopped an attack (a clank) */
+  | 'block'
+  /** duel: you took a hit */
+  | 'ouch';
 
 export type TVMsg =
   | { type: 'welcome'; slot: number; color: string; name: string }

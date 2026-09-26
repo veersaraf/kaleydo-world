@@ -391,7 +391,7 @@ export class App {
       return anim.update(g.t, Math.max(1e-4, dt), s);
     });
     // the ball rides in the bowler's hand until the release
-    const venue = w.venue;
+    const venue = w.bowlVenue;
     if (venue) {
       const body = g.body;
       if (body.holding && (g.state === 'ready' || g.state === 'approach' || g.state === 'intro')) {
