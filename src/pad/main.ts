@@ -5,9 +5,10 @@ import './pad.css';
 
 import { PadLink, type LinkStatus } from './link';
 import { SwingDetector, type SwingEvent } from './swing';
+import { BowlDetector, swipeThrow, MIN_SPEED, MAX_SPEED, type BowlThrow, type SwipePoint } from './bowl';
 import { Orientation, qrot } from './orient';
 import { PadAudio } from './audio';
-import type { Handed, PadButton, PadMode, ServerToPad } from '../shared/protocol';
+import type { Handed, PadButton, PadMode, PadMsg, ServerToPad } from '../shared/protocol';
 import { PLAYER_COLORS } from '../shared/protocol';
 
 // ------------------------------------------------------------------ prefs
@@ -181,8 +182,78 @@ const waitTitle = h('div', { class: 'wtitle' }, 'Connecting…');
 const waitHint = h('div', { class: 'whint' }, '');
 const waitPanel = h('div', { class: 'panel wait' }, h('div', { class: 'spinner' }), waitTitle, waitHint);
 
-// bowling: grip pad + move/aim buttons (placeholder until the bowling controller lands)
-const bowlPanel = h('div', { class: 'panel bowl' }, h('div', { class: 'wtitle' }, 'Bowling'));
+// bowling: the phone is the ball. Hold the big grip pad (the ball is in your
+// hand), swing back and forward, let go at the bottom. Move (◀ ▶) and aim
+// (↺ ↻) sit low in the corners, well away from where the thumb rests.
+const SVG = 'http://www.w3.org/2000/svg';
+/** a small line icon: `stroke` is drawn as a line, `fill` as a solid shape */
+function icon(stroke: string, fill: string) {
+  const svg = document.createElementNS(SVG, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const [d, filled] of [
+    [stroke, false],
+    [fill, true],
+  ] as const) {
+    if (!d) continue;
+    const p = document.createElementNS(SVG, 'path');
+    p.setAttribute('d', d);
+    p.setAttribute('fill', filled ? 'currentColor' : 'none');
+    p.setAttribute('stroke', 'currentColor');
+    p.setAttribute('stroke-width', filled ? '1.6' : '2.6');
+    p.setAttribute('stroke-linecap', 'round');
+    p.setAttribute('stroke-linejoin', 'round');
+    svg.append(p);
+  }
+  return svg;
+}
+/** move/aim buttons repeat while held */
+function bowlBtn(b: PadButton, label: string, glyph: SVGSVGElement) {
+  return h('button', { class: 'pb small', 'data-b': b, 'data-rep': '', 'aria-label': label }, glyph);
+}
+const bowlTitle = h('div', { class: 'ptitle' }, '');
+const bowlHint = h('div', { class: 'phint' }, '');
+const bowlTv = h('div', { class: 'tvline' }, '');
+const gripBig = h('b', {}, 'HOLD');
+const gripSub = h('span', {}, 'swing & let go');
+const gripBall = h(
+  'div',
+  { class: 'grip', role: 'button', 'aria-label': 'Hold to pick up the ball, swing, and let go to bowl' },
+  h('i', { class: 'holes' }, h('i'), h('i'), h('i')),
+  gripBig,
+  gripSub,
+);
+const gripWrap = h('div', { class: 'grip-wrap' }, h('div', { class: 'grip-meter' }), gripBall);
+const bowlShot = h('div', { class: 'shotline' }, '');
+const bowlPanel = h(
+  'div',
+  { class: 'panel bowl' },
+  h('div', { class: 'bhead' }, bowlTitle, bowlHint),
+  bowlTv,
+  gripWrap,
+  bowlShot,
+  h(
+    'div',
+    { class: 'bowl-row' },
+    h(
+      'div',
+      { class: 'bgroup' },
+      h('div', {}, bowlBtn('left', 'Step left', icon('', 'M15.5 5.5 7.5 12l8 6.5z')), bowlBtn('right', 'Step right', icon('', 'M8.5 5.5 16.5 12l-8 6.5z'))),
+      h('span', {}, 'MOVE'),
+    ),
+    h(
+      'div',
+      { class: 'bgroup' },
+      h(
+        'div',
+        {},
+        bowlBtn('minus', 'Aim left', icon('M6.4 9.8A6.5 6.5 0 1 0 12 6.5', 'M9 6.5 13 3.2v6.6z')),
+        bowlBtn('plus', 'Aim right', icon('M17.6 9.8A6.5 6.5 0 1 1 12 6.5', 'M15 6.5 11 3.2v6.6z')),
+      ),
+      h('span', {}, 'AIM'),
+    ),
+  ),
+);
 
 const panels: Record<PadMode, HTMLElement> = {
   menu: menuPanel,
@@ -202,7 +273,7 @@ const remoteScreen = h(
   'section',
   { class: 'remote' },
   header,
-  h('div', { class: 'shell' }, menuPanel, playPanel, servePanel, waitPanel, skipPanel),
+  h('div', { class: 'shell' }, menuPanel, playPanel, servePanel, waitPanel, skipPanel, bowlPanel),
   footer,
   flash,
   toast,
@@ -250,6 +321,8 @@ detector.handed = prefs.handed === 'L' ? -1 : 1;
 // iOS reports accelerometer & gravity with the opposite sign to the W3C spec
 detector.upSign = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ? -1 : 1;
 const orient = new Orientation();
+const bowl = new BowlDetector();
+bowl.sensitivity = prefs.sens;
 const link = new PadLink(pid, () => prefs.name || 'Player');
 let slot = -1;
 let mode: PadMode = 'wait';
@@ -257,6 +330,12 @@ let motionOK = false;
 let motionSeen = false;
 let seq = 0;
 let joined = false;
+/** which game the TV's fx lines are about (they can arrive while on 'watch') */
+let sport: 'tennis' | 'bowl' = 'tennis';
+/** bowling: the pointer holding the grip (the ball is in the hand), or null */
+let gripId: number | null = null;
+/** bowling: move/aim ignore presses until then (a thumb sliding off the grip) */
+let bowlLockUntil = 0;
 
 function setColor(c: string) {
   root.style.setProperty('--pc', c);
@@ -284,6 +363,7 @@ for (const b of sensBtns) {
   b.addEventListener('click', () => {
     prefs.sens = Number(b.dataset.s);
     detector.sensitivity = prefs.sens;
+    bowl.sensitivity = prefs.sens;
     store.set('sens', String(prefs.sens));
     syncHandButtons();
     audio.tick();
@@ -312,7 +392,16 @@ function doFlash(strong = false) {
 }
 
 function setMode(m: PadMode, title?: string, hint?: string) {
+  const prev = mode;
   mode = m;
+  if (m === 'bowl') sport = 'bowl';
+  else if (m === 'play' || m === 'serve') sport = 'tennis';
+  if (prev === 'bowl' && m !== 'bowl') {
+    // the game moved on with the ball still in the hand: drop it, don't throw
+    gripCancel();
+    // and whatever the tennis detector made of the bowling swings is forgotten
+    detector.reset();
+  }
   for (const el of new Set(Object.values(panels))) el.classList.remove('on');
   panels[m].classList.add('on');
   if (m === 'wait' || m === 'watch') {
@@ -331,6 +420,11 @@ function setMode(m: PadMode, title?: string, hint?: string) {
     tossBtn.classList.remove('tossed');
     tossBtn.querySelector('b')!.textContent = title || (motionOK ? 'LIFT TO TOSS' : 'TAP TO TOSS');
     tossBtn.querySelector('span')!.textContent = hint || (motionOK ? 'raise the phone (or tap here), then swing' : 'then swing to serve');
+  }
+  if (m === 'bowl') {
+    bowlTitle.textContent = title || 'Your turn!';
+    bowlHint.textContent = hint || (motionOK ? 'Hold the ball, swing back, then forward' : 'Hold the ball, drag up and let go');
+    if (gripId === null) gripIdle();
   }
   swipeZone.classList.toggle('on', !motionOK && (m === 'play' || m === 'serve'));
   servePanel.classList.toggle('swipe', !motionOK);
@@ -365,21 +459,34 @@ function onMessage(m: ServerToPad) {
     case 'score':
       scoreLine.textContent = m.line;
       break;
-    case 'fx':
+    case 'fx': {
+      const bowling = sport === 'bowl';
+      // bowling: the TV's verdict on the throw, e.g. "STRIKE! · 7.6 m/s · hook"
+      const line = [m.label, m.detail].filter(Boolean).join(' · ');
+      if (bowling && line) {
+        bowlTv.textContent = line;
+        bowlTv.classList.remove('pop');
+        void bowlTv.offsetWidth;
+        bowlTv.classList.add('pop');
+        // on 'watch' while the ball rolls the bowling panel isn't showing: say it anyway
+        if (mode !== 'bowl' || m.fx === 'perfect') showToast(m.label || line, 1800);
+      }
       switch (m.fx) {
         case 'hit':
           audio.hit(m.power ?? 0.6);
           doFlash();
-          if (m.label) tvLine.textContent = [m.label, m.detail].filter(Boolean).join(' · ');
+          if (m.label && !bowling) tvLine.textContent = line;
           break;
         case 'perfect':
           audio.hit(m.power ?? 0.8, true);
           doFlash(true);
-          showToast('PERFECT!');
-          if (m.label) tvLine.textContent = [m.label, m.detail].filter(Boolean).join(' · ');
+          if (!bowling) {
+            showToast('PERFECT!');
+            if (m.label) tvLine.textContent = line;
+          }
           break;
         case 'whiff':
-          tvLine.textContent = m.label ? `MISS · ${m.label}` : 'MISS';
+          if (!bowling) tvLine.textContent = m.label ? `MISS · ${m.label}` : 'MISS';
           break;
         case 'toss':
           audio.toss();
@@ -403,6 +510,7 @@ function onMessage(m: ServerToPad) {
           break;
       }
       break;
+    }
     case 'bye':
       if (m.reason === 'replaced') setMode('wait', 'Opened elsewhere', 'This remote is active in another tab');
       break;
@@ -417,24 +525,51 @@ setInterval(() => {
 
 // ------------------------------------------------------------------ buttons
 
+/** the phone is held to be looked at (screen facing up-ish), so its top points the way you face */
+function lookingAtPhone() {
+  return orient.have && orient.toEarth([0, 0, 1])[2] > 0.35;
+}
+
+/** bowling move/aim buttons that are down: let go of them all */
+const bowlBtnUps: (() => void)[] = [];
+
 for (const el of root.querySelectorAll<HTMLButtonElement>('.pb')) {
   const b = el.dataset.b as PadButton;
+  // bowling's move/aim buttons repeat while held, like a held key: more downs, one up
+  const rep = el.dataset.rep !== undefined;
+  let repTimer = 0;
   const up = () => {
+    clearTimeout(repTimer);
+    clearInterval(repTimer);
     if (!el.classList.contains('down')) return;
     el.classList.remove('down');
     link.send({ type: 'btn', b, down: false });
   };
+  if (rep) bowlBtnUps.push(up);
   el.addEventListener('pointerdown', (e) => {
     e.preventDefault();
+    // not while the ball is in the hand or just after letting go: that's a palm
+    // or a thumb sliding off the grip, not a press
+    if (rep && (gripId !== null || performance.now() < bowlLockUntil)) return;
     try {
       el.setPointerCapture?.(e.pointerId);
     } catch {}
     el.classList.add('down');
     audio.tick();
     // pressing A in a menu means you're looking at the phone, facing the screen:
-    // a good moment to refresh which way "towards the screen" is
+    // a good moment to refresh which way "towards the screen" is (the same for
+    // the bowling buttons, if the phone is held to be looked at)
     if (b === 'a' && mode === 'menu') orient.calibrate();
+    if (rep && lookingAtPhone()) orient.calibrate();
     link.send({ type: 'btn', b, down: true });
+    if (rep) {
+      repTimer = window.setTimeout(() => {
+        repTimer = window.setInterval(() => {
+          link.send({ type: 'btn', b, down: true });
+          audio.tick();
+        }, 110);
+      }, 380);
+    }
   });
   el.addEventListener('pointerup', up);
   el.addEventListener('pointercancel', up);
@@ -521,6 +656,8 @@ function swingPath(sw: SwingEvent): number | null {
 }
 
 function emitSwing(sw: SwingEvent, touch = false) {
+  // bowling: the arm swing is a throw, not a racket swing
+  if (mode === 'bowl') return;
   if (!touch && sw.t < noSwingUntil) return;
   const age = Math.max(0, performance.now() - sw.t);
   const path = touch ? null : swingPath(sw);
@@ -557,7 +694,9 @@ function showSwing(sw: SwingEvent, path: number | null) {
 }
 
 detector.onSwing = (s) => emitSwing(s);
-detector.onPrep = (side) => link.send({ type: 'prep', side, lat: Math.round(link.lat) });
+detector.onPrep = (side) => {
+  if (mode !== 'bowl') link.send({ type: 'prep', side, lat: Math.round(link.lat) });
+};
 
 // Live motion meter — reassures players that the sensor works.
 let liveRaf = 0;
@@ -565,6 +704,8 @@ function liveLoop() {
   const v = Math.min(1, detector.live / 20);
   gaugeLive.style.transform = `scale(${0.72 + v * 0.45})`;
   gaugeLive.style.opacity = String(0.15 + v * 0.7);
+  // bowling: the ring round the ball fills with the swing (and falls back slowly)
+  if (mode === 'bowl' && gripId !== null && motionOK) setMeter(Math.max(Math.min(1, bowl.live / 14), gripMeter * 0.94));
   liveRaf = requestAnimationFrame(liveLoop);
 }
 
@@ -577,16 +718,22 @@ function onOrient(e: DeviceOrientationEvent) {
   if (orient.heading === null && joined) orient.calibrate();
 }
 
-// Stream the racket's orientation so the in-game racket mirrors the phone.
+// Stream the racket's orientation so the in-game racket mirrors the phone —
+// and while bowling with the ball in the hand, the arm's swing, so the bowler
+// on screen mirrors that.
+function sendOri() {
+  if (!orient.have || orient.heading === null || link.status !== 'online') return;
+  const r2 = (v: [number, number, number]) => v.map((x) => Math.round(x * 100) / 100) as [number, number, number];
+  const msg: Extract<PadMsg, { type: 'ori' }> = { type: 'ori', s: r2(orient.devToPlayer([0, 1, 0])), n: r2(orient.devToPlayer([0, 0, 1])) };
+  if (mode === 'bowl' && gripId !== null && motionOK) msg.arm = Math.round(bowl.arm * 100) / 100;
+  link.send(msg);
+}
 let oriTimer = 0;
 function startOriStream() {
   clearInterval(oriTimer);
   oriTimer = window.setInterval(
     () => {
-      if (!orient.have || orient.heading === null || link.status !== 'online') return;
-      if (mode !== 'play' && mode !== 'serve' && mode !== 'menu') return;
-      const r2 = (v: [number, number, number]) => v.map((x) => Math.round(x * 100) / 100) as [number, number, number];
-      link.send({ type: 'ori', s: r2(orient.devToPlayer([0, 1, 0])), n: r2(orient.devToPlayer([0, 0, 1])) });
+      if (mode === 'play' || mode === 'serve' || mode === 'menu' || mode === 'bowl') sendOri();
     },
     link.transport === 'http' ? 100 : 50,
   );
@@ -622,10 +769,13 @@ function onMotion(e: DeviceMotionEvent) {
   prevRate[0] = rx;
   prevRate[1] = ry;
   prevRate[2] = rz;
+  const q: [number, number, number, number] | undefined = orient.have ? [orient.q[0], orient.q[1], orient.q[2], orient.q[3]] : undefined;
+  bowl.heading = orient.heading;
+  bowl.push({ t: now, rx, ry, rz, q });
   detector.push({
     t: now,
     up: orient.have ? orient.upDevice() : undefined,
-    q: orient.have ? [orient.q[0], orient.q[1], orient.q[2], orient.q[3]] : undefined,
+    q,
     rx,
     ry,
     rz,
@@ -685,6 +835,124 @@ function attachSwipe(el: HTMLElement) {
 }
 attachSwipe(swipeZone);
 attachSwipe(tossBtn);
+
+// ------------------------------------------------------------------ bowling
+
+// Hold the grip pad = the ball is in your hand. With motion: swing back, then
+// forward, and let go at the bottom — the detector measures the swing. Without:
+// drag up the pad and let go (the swipe gives the speed, line and curve).
+// Either way: 'grip' down on touch, 'grip' up then 'bowl' on letting go.
+
+let gripPts: SwipePoint[] = [];
+let gripMeter = 0;
+let gripIdleTimer = 0;
+
+function setMeter(v: number) {
+  if (Math.abs(v - gripMeter) < 0.002 && v !== 0) return;
+  gripMeter = v;
+  gripWrap.style.setProperty('--p', v.toFixed(3));
+}
+
+function gripLabels(big: string, sub: string) {
+  gripBig.textContent = big;
+  gripSub.textContent = sub;
+}
+
+/** ready for the next ball */
+function gripIdle() {
+  clearTimeout(gripIdleTimer);
+  gripBall.classList.remove('held', 'thrown');
+  gripLabels('HOLD', motionOK ? 'swing & let go' : 'drag up & let go');
+}
+
+gripBall.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  if (mode !== 'bowl' || !joined || gripId !== null) return;
+  gripId = e.pointerId;
+  try {
+    gripBall.setPointerCapture(e.pointerId);
+  } catch {}
+  for (const up of bowlBtnUps) up(); // the palm on ◀ ▶ as the thumb lands isn't a move
+  const now = performance.now();
+  bowl.heading = orient.heading;
+  bowl.grip(now);
+  gripPts = [{ t: now, x: e.clientX, y: e.clientY }];
+  link.send({ type: 'grip', down: true, lat: Math.round(link.lat) });
+  audio.tick();
+  clearTimeout(gripIdleTimer);
+  gripBall.classList.remove('thrown');
+  gripBall.classList.add('held');
+  gripLabels(motionOK ? 'SWING' : 'DRAG UP', 'let go to bowl');
+  bowlTv.textContent = '';
+  setMeter(0);
+});
+
+gripBall.addEventListener('pointermove', (e) => {
+  if (e.pointerId !== gripId) return;
+  gripPts.push({ t: performance.now(), x: e.clientX, y: e.clientY });
+  if (gripPts.length > 400) gripPts.splice(1, 200); // (keep the start: the stroke is measured from it)
+  // no motion sensor: the meter follows the drag up
+  if (!motionOK) setMeter(Math.max(0, Math.min(1, (gripPts[0].y - e.clientY) / 300)));
+});
+
+const gripUp = (e: PointerEvent) => {
+  if (e.pointerId !== gripId) return;
+  if (e.type === 'pointerup') gripPts.push({ t: performance.now(), x: e.clientX, y: e.clientY });
+  throwBall();
+};
+gripBall.addEventListener('pointerup', gripUp);
+gripBall.addEventListener('pointercancel', gripUp);
+gripBall.addEventListener('lostpointercapture', gripUp);
+gripBall.addEventListener('contextmenu', (e) => e.preventDefault());
+
+/** The grip was let go: the throw. */
+function throwBall() {
+  const touch = !motionOK;
+  const lat = Math.round(link.lat);
+  if (!touch) sendOri(); // the pose (and arm) it left the hand in
+  gripId = null;
+  bowlLockUntil = performance.now() + 700;
+  // tell the TV at once; the measurement takes a moment
+  link.send({ type: 'grip', down: false, lat });
+  const r = touch ? swipeThrow(gripPts) : bowl.release(performance.now());
+  bowl.cancel();
+  link.send({ type: 'bowl', speed: +r.speed.toFixed(2), angle: +r.angle.toFixed(3), spin: +r.spin.toFixed(2), lat, touch });
+  showThrow(r);
+}
+
+/** The game left the bowling screen with the ball still in the hand: drop it, no throw. */
+function gripCancel() {
+  if (gripId === null) return;
+  const id = gripId;
+  gripId = null;
+  bowl.cancel();
+  try {
+    gripBall.releasePointerCapture(id);
+  } catch {}
+  link.send({ type: 'grip', down: false, lat: Math.round(link.lat) });
+  gripIdle();
+  setMeter(0);
+}
+
+function showThrow(r: BowlThrow) {
+  gripBall.classList.remove('held');
+  gripBall.classList.add('thrown');
+  gripLabels(r.speed.toFixed(1), 'm/s');
+  const p = (r.speed - MIN_SPEED) / (MAX_SPEED - MIN_SPEED);
+  setMeter(Math.max(0.02, p));
+  gripWrap.classList.remove('pop');
+  void gripWrap.offsetWidth;
+  gripWrap.classList.add('pop');
+  const deg = Math.round((Math.abs(r.angle) * 180) / Math.PI);
+  const line = deg < 1 ? 'straight' : `${deg}° ${r.angle > 0 ? 'right' : 'left'}`;
+  const hook = Math.abs(r.spin) < 0.15 ? 'no hook' : `${Math.abs(r.spin) > 0.6 ? 'big hook' : 'hook'} ${r.spin > 0 ? '←' : '→'}`;
+  bowlShot.textContent = `${r.speed.toFixed(1)} m/s · ${line} · ${hook}`;
+  audio.swish(p);
+  clearTimeout(gripIdleTimer);
+  gripIdleTimer = window.setTimeout(() => {
+    if (gripId === null) gripIdle();
+  }, 2600);
+}
 
 // ------------------------------------------------------------------ join
 
