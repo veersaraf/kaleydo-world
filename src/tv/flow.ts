@@ -941,7 +941,9 @@ export class Flow {
     const b = this.app.bowl?.bowler;
     if (!b || b.cpu !== null) return '';
     const seat = this.app.input.seats[b.slot];
-    return seat && !seat.local ? '<b>Hold</b> the grip · swing your arm back and through · <b>let go</b>' : '<b>Hold Space</b> (or the mouse) · let go to bowl · <b>J K L</b> straight / hook left / hook right';
+    return seat && !seat.local
+      ? '<b>Hold</b> the ball · swing back and through · <b>let go</b> · twist to hook · <b>◀ ▶</b> move · <b>↺ ↻</b> aim'
+      : '<b>Hold Space</b> (or the mouse) · let go to bowl · <b>J K L</b> straight / hook left / hook right · <b>arrows</b> move and aim';
   }
 
   /** ◀ ▶ step along the approach, ↺ ↻ (− +, or ▲ ▼) turn the aim; held down, they keep going. */
