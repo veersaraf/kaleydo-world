@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { Stage } from './render/stage';
 import { Quality, LEVELS } from './render/quality';
-import { BowlingGame, type Bowler, type BowlEvent } from './bowling/game';
+import { BowlingGame, START_X, type Bowler, type BowlEvent } from './bowling/game';
 import { BowlCamera } from './bowling/camera';
 import { BowlPhysics } from './bowling/physics';
 import { BowlVenue } from './bowling/venue';
@@ -340,7 +340,7 @@ export class App {
     this.input.bowlMode = true;
     this.worldId = worldId;
     this.stage.setWorld(worldId);
-    const bowlers: Bowler[] = specs.map((b) => ({ ...b, score: new BowlScore(), x: 0, aim: 0 }));
+    const bowlers: Bowler[] = specs.map((b) => ({ ...b, score: new BowlScore(), x: START_X * b.handed, aim: 0 }));
     this.bowl = new BowlingGame(bowlers, this.phys);
     this.bowl.onEvent = (e) => {
       if (e.type === 'physics' && e.e.type === 'hit' && e.e.ballOnPin) this.bowlCam.kick(Math.min(0.6, e.e.impact * 0.06));
@@ -380,13 +380,14 @@ export class App {
     const dt = this.paused ? 0 : Math.min(0.05, realDt);
     if (dt > 0) g.step(dt);
     this.bowlCam.update(g, realDt, this.realT);
-    // the bowler up, and the others waiting at the back of the approach
+    // the bowler up, and the others waiting at the back of the approach, off to
+    // the side and turned to watch (out of the aiming view's way)
     const poses = g.bowlers.map((b, i) => {
       const anim = this.bowlAnims[i];
       if (i === g.current) return anim.update(g.t, Math.max(1e-4, dt), g.body);
       const order = (i - g.current + g.bowlers.length) % g.bowlers.length;
       const side = order % 2 ? -1 : 1;
-      const s: BowlerState = { x: side * (1.7 + Math.floor((order - 1) / 2) * 0.9), z: FOUL_Z + 5.2, yaw: 0, handed: b.handed, phase: 'idle', t: g.t, arm: 0, step: 0, holding: false, spin: 0 };
+      const s: BowlerState = { x: side * (2.3 + Math.floor((order - 1) / 2) * 0.8), z: FOUL_Z + 7.2, yaw: side * 0.5, handed: b.handed, phase: 'idle', t: g.t, arm: 0, step: 0, holding: false, spin: 0 };
       return anim.update(g.t, Math.max(1e-4, dt), s);
     });
     // the ball rides in the bowler's hand until the release
@@ -403,7 +404,7 @@ export class App {
         this.tmpBall.set(body.x + (c * hand.x + sn * hand.z) * sc, pose.hop + hand.y * sc, body.z + (-sn * hand.x + c * hand.z) * sc);
         venue.holdBall(this.tmpBall);
       } else venue.holdBall(null);
-      venue.setAim(g.state === 'ready' && g.bowler.cpu === null ? { x: g.bowler.x + 0.2 * g.bowler.handed, angle: g.bowler.aim } : null);
+      venue.setAim(g.state === 'ready' && g.bowler.cpu === null ? { x: g.releaseX(g.bowler), angle: g.bowler.aim } : null);
     }
     const view: FrameView = {
       t: g.t,

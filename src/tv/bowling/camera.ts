@@ -22,6 +22,15 @@ export class BowlCamera {
     this.shake = Math.min(1, this.shake + a);
   }
 
+  /** A little over the bowling shoulder and high: the whole swing at the bottom of
+   *  the frame, the aim line and the pins beside and over the bowler (straight
+   *  behind, the head hides them). Sets tp/tl. */
+  private aimView(b: BowlingGame['body']) {
+    const z = Math.min(b.z, FOUL_Z + 3.9);
+    this.tp.set(b.x + 0.32 * b.handed, 2.75, z + 4.4);
+    this.tl.set(b.x * 0.3 + 0.12 * b.handed, 0.2, z - 13);
+  }
+
   update(g: BowlingGame, dt: number, t: number) {
     const tp = this.tp,
       tl = this.tl;
@@ -31,29 +40,25 @@ export class BowlCamera {
     const ball = g.phys.view.ball;
     switch (g.state) {
       case 'intro': {
-        // swing in over the lanes and settle behind the bowler
+        // from the pins, pull back up the lane and settle over the bowler's shoulder
+        // — exactly where aiming starts, so nothing jumps when the turn begins
         const u = easeInOutCubic(clamp((g.t - g.stateT0) / 2.6));
-        const a = (1 - u) * 1.1;
-        tp.set(Math.sin(a) * 9, 1.8 + (1 - u) * 7, FOUL_Z + 3.2 + (1 - u) * 6);
-        tl.set(0, 0.3 + (1 - u) * 0.4, HEAD_Z + 3 * u - 6 * (1 - u));
-        fov = 50 + (1 - u) * 8;
+        this.aimView(b);
+        const a = (1 - u) * 0.9;
+        tp.set(tp.x * u + Math.sin(a) * 2.2, tp.y + (1 - u) * 0.6, tp.z + (HEAD_Z + 6 - tp.z) * (1 - u));
+        tl.set(tl.x * u, tl.y + (1 - u) * 0.1, tl.z + (HEAD_Z - 0.4 - tl.z) * (1 - u));
+        fov = 42 - (1 - u) * 6;
         lambda = 1000;
         break;
       }
       case 'ready':
       case 'approach':
-      case 'sweep': {
-        // a little over the bowling shoulder and high: the whole swing at the bottom
-        // of the frame, the aim line and the pins beside and over the bowler
-        // (straight behind, the head hides them)
-        const z = Math.min(b.z, FOUL_Z + 3.9);
-        tp.set(b.x + 0.32 * b.handed, 2.75, z + 4.4);
-        tl.set(b.x * 0.3 + 0.12 * b.handed, 0.2, z - 13);
+      case 'sweep':
+        this.aimView(b);
         fov = 42;
         lambda = g.state === 'approach' ? 2.6 : 4;
         this.pinCut = false;
         break;
-      }
       case 'lane':
       case 'pins':
       case 'result': {

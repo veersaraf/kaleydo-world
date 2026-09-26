@@ -2,7 +2,7 @@
 // (strike, spare, split…). Physics, rendering and animation live in their own
 // modules; this is the referee and the stage manager.
 
-import { FOUL_Z, LANE } from './lane';
+import { FOUL_Z, LANE, pinSpots } from './lane';
 import type { BallThrow, BowlPhysicsEvent, BowlerState } from './types';
 import type { BowlPhysics } from './physics';
 import { BowlScore } from './score';
@@ -51,7 +51,41 @@ const APPROACH_T = 1.35;
 const HAND_X = 0.2;
 /** the phone measures the swing's real direction; the lane wants a fraction of it
  *  (0.1 rad over 18 m is 1.8 m — a sure gutter — so a small pull stays a small miss) */
-const ANGLE_GAIN = 0.35;
+const ANGLE_GAIN = 0.1;
+/** where a bowler starts: a straight ball from here meets the pocket (1-3 for a right-hander) */
+export const START_X = 0.065 - HAND_X;
+/** ◀ ▶ and ↺ ↻: a press steps (a board), holding keeps going after a moment */
+const MOVE_STEP = 0.027;
+const MOVE_RATE = 0.4;
+const TURN_STEP = 0.0015;
+const TURN_RATE = 0.02;
+const AIM_MAX = 0.06;
+const HOLD_DELAY = 0.35;
+
+/** The hook's sideways travel at the head pin for a speed and spin (m, − = left),
+ *  measured from the lane model (scripts/bowl-hook-table.ts): it's the same whatever
+ *  the line, so aiming a hook is aiming a straight ball at a point this far aside.
+ *  K(v) = the hook per unit of spin at speed v, which saturates a little. */
+const HOOK_K: [number, number][] = [
+  [3, 2.6],
+  [4, 2.03],
+  [5, 1.48],
+  [6, 1.165],
+  [7, 0.95],
+  [8, 0.785],
+  [9, 0.645],
+  [10, 0.52],
+  [11, 0.405],
+];
+export function hookAt(speed: number, spin: number) {
+  const v = clamp(speed, 3, 11);
+  let i = 0;
+  while (i < HOOK_K.length - 2 && HOOK_K[i + 1][0] < v) i++;
+  const [v0, k0] = HOOK_K[i];
+  const [v1, k1] = HOOK_K[i + 1];
+  const k = k0 + ((v - v0) / (v1 - v0)) * (k1 - k0);
+  return -spin * k * (1 - 0.1 * Math.abs(spin));
+}
 
 /** pins that touch each other in the rack (for splits) */
 const ADJ: number[][] = [[1, 2], [0, 2, 3, 4], [0, 1, 4, 5], [1, 4, 6, 7], [1, 2, 3, 5, 7, 8], [2, 4, 8, 9], [3, 7], [3, 4, 6, 8], [4, 5, 7, 9], [5, 8]];
@@ -77,6 +111,10 @@ export class BowlingGame {
   private cpuReleaseAt = 0;
   private moveDir = 0;
   private turnDir = 0;
+  private moveT = 0;
+  private turnT = 0;
+  /** a CPU bowler's plan for this ball: where to stand, the line, and the throw */
+  private plan: { x: number; aim: number; speed: number; spin: number } | null = null;
   private resultAt = 0;
   private rng = new Rng();
   lastThrow: BallThrow | null = null;
@@ -138,10 +176,13 @@ export class BowlingGame {
     // a tap with no swing behind it: not a throw (a thumb brushing the grip)
     if (r.speed < 2.8 && this.t - this.gripT < 0.6) return this.cancel();
     const angle = r.angle * ANGLE_GAIN;
+    // a little wrist turn is a little hook, a real twist a big one: a stray turn
+    // doesn't wreck a straight ball, and a full hook stays a full hook
+    const spin = Math.sign(r.spin) * Math.pow(Math.min(1, Math.abs(r.spin)), 1.5);
     // the ball leaves the hand at the foul line: if the bowler isn't there yet,
     // they hurry through the last steps and let go on arrival
-    if (this.body.step >= 0.9) this.throwBall(r.speed, angle, r.spin);
-    else this.pending = { speed: r.speed, angle, spin: r.spin };
+    if (this.body.step >= 0.9) this.throwBall(r.speed, angle, spin);
+    else this.pending = { speed: r.speed, angle, spin };
   }
 
   /** back to the stance, ball in hand, as if the grip never happened */
@@ -163,12 +204,35 @@ export class BowlingGame {
     this.armLiveT = this.t;
   }
 
-  /** hold ◀ ▶ to step along the approach, ↺ ↻ to turn the aim (dir 0 = stop) */
+  /** ◀ ▶ step along the approach, ↺ ↻ turn the aim: a press moves one board,
+   *  holding keeps going (dir 0 = let go) */
   move(slot: number, dir: number) {
-    if (this.bowler.slot === slot) this.moveDir = dir;
+    const b = this.bowler;
+    if (b.slot !== slot) return;
+    if (dir && dir !== this.moveDir && this.state === 'ready') {
+      b.x = this.clampX(b, b.x + dir * MOVE_STEP);
+      this.moveT = this.t;
+    }
+    this.moveDir = dir;
   }
   turn(slot: number, dir: number) {
-    if (this.bowler.slot === slot) this.turnDir = dir;
+    const b = this.bowler;
+    if (b.slot !== slot) return;
+    if (dir && dir !== this.turnDir && this.state === 'ready') {
+      b.aim = clamp(b.aim + dir * TURN_STEP, -AIM_MAX, AIM_MAX);
+      this.turnT = this.t;
+    }
+    this.turnDir = dir;
+  }
+
+  /** where the ball leaves the hand, for a bowler standing at x */
+  releaseX(b: Bowler, x = b.x) {
+    return x + HAND_X * b.handed;
+  }
+
+  /** keep the ball over the lane */
+  private clampX(b: Bowler, x: number) {
+    return clamp(x, -0.5 - HAND_X * b.handed, 0.5 - HAND_X * b.handed);
   }
 
   // ------------------------------------------------------------ simulation
@@ -185,13 +249,19 @@ export class BowlingGame {
         if (t - this.stateT0 > 2.6) this.beginTurn();
         break;
       case 'ready': {
-        // stepping and turning before the throw
-        if (this.moveDir) b.x = clamp(b.x + this.moveDir * 0.9 * dt, -0.5 - HAND_X * b.handed, 0.5 - HAND_X * b.handed);
-        if (this.turnDir) b.aim = clamp(b.aim + this.turnDir * 0.09 * dt, -0.09, 0.09);
+        // stepping and turning before the throw (held: after a moment, keep going)
+        if (this.moveDir && t - this.moveT > HOLD_DELAY) b.x = this.clampX(b, b.x + this.moveDir * MOVE_RATE * dt);
+        if (this.turnDir && t - this.turnT > HOLD_DELAY) b.aim = clamp(b.aim + this.turnDir * TURN_RATE * dt, -AIM_MAX, AIM_MAX);
+        // a CPU shuffles to its spot and lines up
+        if (this.plan) {
+          const dx = this.plan.x - b.x;
+          b.x += clamp(dx, -0.8 * dt, 0.8 * dt);
+          b.aim = this.plan.aim;
+        }
         this.body.x = b.x;
         this.body.z = STANCE_Z;
         this.body.arm = 0.9; // ball held at the chest
-        if (b.cpu !== null && t >= this.cpuAt) {
+        if (b.cpu !== null && t >= this.cpuAt && (!this.plan || Math.abs(this.plan.x - b.x) < 0.01)) {
           this.gripping = true;
           this.setState('approach');
           this.body.phase = 'approach';
@@ -247,14 +317,15 @@ export class BowlingGame {
     return -1.6 + ((u - 0.75) / 0.25) * 2.3; // forward to the release
   }
 
-  private throwBall(speed: number, angle: number, spin: number) {
+  private throwBall(speed: number, angle: number, spin: number, dx = 0) {
     const b = this.bowler;
-    const x = clamp(b.x + HAND_X * b.handed, -LANE.width / 2 + LANE.ballR, LANE.width / 2 - LANE.ballR);
+    const x = clamp(this.releaseX(b) + dx, -LANE.width / 2 + LANE.ballR, LANE.width / 2 - LANE.ballR);
     const th: BallThrow = { x, speed: clamp(speed, 2.5, 10.5), angle: clamp(b.aim + angle, -0.2, 0.2), spin: clamp(spin, -1, 1) };
     this.lastThrow = th;
     this.phys.throw(th);
     this.gripping = false;
     this.armLive = null;
+    this.plan = null;
     this.body.phase = 'release';
     this.body.t = 0;
     this.body.holding = false;
@@ -263,12 +334,46 @@ export class BowlingGame {
     this.onEvent({ type: 'release', bowler: b, t: th, kph: th.speed * 3.6 });
   }
 
-  /** a CPU bowler's throw: a hook into the pocket, as steady as their skill */
+  /**
+   * A CPU bowler's plan: on a full rack, a hook into the pocket (better bowlers
+   * hook more and throw a touch faster); for a spare, a straighter ball at the
+   * front pin of what's left, from the other side of the lane.
+   */
+  private cpuPlan(b: Bowler) {
+    const s = b.cpu ?? 0.5;
+    const h = b.handed;
+    const standing = this.rackStanding;
+    let speed: number;
+    let spin: number;
+    let target: number;
+    let from: number;
+    if (standing.every(Boolean)) {
+      speed = 7.3 + 0.7 * s;
+      spin = (0.1 + 0.45 * s) * h;
+      target = 0.065 * h;
+      from = 0.2 * h;
+    } else {
+      speed = 7.8;
+      spin = 0.1 * h;
+      const up = pinSpots(0).filter((_, i) => standing[i]);
+      if (!up.length) return null;
+      const key = up.reduce((a, p) => (p.z > a.z + 1e-6 ? p : a));
+      const cx = up.reduce((a, p) => a + p.x, 0) / up.length;
+      target = key.x + clamp(cx - key.x, -0.05, 0.05);
+      from = clamp(-target * 0.7 + 0.1 * h, -0.4, 0.4);
+    }
+    const aim = Math.atan2(target - from - hookAt(speed, spin), LANE.length);
+    return { x: this.clampX(b, from - HAND_X * h), aim, speed, spin };
+  }
+
+  /** a CPU bowler's throw: the plan, as steady as their skill */
   private cpuThrow(b: Bowler) {
     const s = b.cpu ?? 0.5;
-    const err = 1 - s;
-    const g = () => this.rng.gauss();
-    this.throwBall(7.6 + g() * 0.5 * err, -0.012 * b.handed + g() * 0.02 * err, 0.55 * b.handed + g() * 0.25 * err);
+    // 1 = a steady league bowler (about ±1.3 boards at the pins)
+    const k = 1 + 18 * (1 - s) * (1 - s);
+    const g = () => this.rng.gauss() * k;
+    const p = this.plan ?? { speed: 7.6, spin: 0.4 * b.handed };
+    this.throwBall(p.speed + g() * 0.15, g() * 0.0014, p.spin + g() * 0.025, g() * 0.01);
   }
 
   private physEvent(e: BowlPhysicsEvent) {
@@ -340,6 +445,7 @@ export class BowlingGame {
     this.pending = null;
     this.moveDir = 0;
     this.turnDir = 0;
+    this.plan = b.cpu !== null ? this.cpuPlan(b) : null;
     this.body = { x: b.x, z: STANCE_Z, yaw: 0, handed: b.handed, phase: 'ready', t: 0, arm: 0.9, step: 0, holding: true, spin: 0 };
     this.cpuAt = this.t + this.rng.range(1.2, 2.0);
     this.onEvent({ type: 'turn', bowler: b, frame: b.score.frame, ball: b.score.ball });
