@@ -6,16 +6,22 @@
 // the orientation quaternion, so it works whichever way the phone sits in the
 // hand:
 //
-//  • arm    — the arm's pendulum angle since the grip: the angular velocity
-//             about the player's lateral axis (x), integrated. A hanging arm
-//             swinging forward turns about +x (right-hand rule: the hand goes
-//             down → forward), so + = forward/up, − = backswing.
+//  • arm    — the arm's pendulum angle: 0 = hanging straight down, + = forward
+//             and up, − = behind. At the grip it's a guess from how the phone
+//             is held (looked at in front ≈ +1.1, pointing down ≈ 0); then the
+//             angular velocity about the lateral axis (x) is integrated (a
+//             hanging arm swinging forward turns about +x), and once the arm
+//             swings, its pull on the hand shows where the arm really is.
 //  • speed  — how fast the arm swings through the bottom: the peak angular
 //             speed about the swing's (horizontal) axis over the last 120 ms
 //             before the release × arm length = hand speed → ball speed.
-//  • angle  — which way the hand was moving: v = ω × r_arm with r_arm = −up
-//             (the arm hangs at the bottom of the swing) → v = (−ωy, ωx, 0),
-//             for ω along the forward swing's axis.
+//  • angle  — which way the hand was moving at the release (v = ω × r_arm with
+//             r_arm = −up at the bottom → v = (−ωy, ωx, 0), for ω along the
+//             swing's axis), measured against the player's own backswing: a
+//             straight pendulum reads 0 whichever way the phone thinks the
+//             screen is, a pull or a push across the body reads as an angle.
+//             Without a real backswing, against the calibrated "towards the
+//             screen" instead.
 //  • spin   — the wrist twist: angular velocity about the vertical over the
 //             last 100 ms. A pendulum swing turns about a horizontal axis, so
 //             anything about the vertical is the wrist. Counter-clockwise seen
@@ -27,8 +33,10 @@
 // the line of travel — it would read as a swing across the body (and a faster
 // swing), enough to send every hook into the gutter. measure() takes it out.
 //
-// Only rotation rates and the orientation are used — no accelerometer — so the
-// iOS sign quirks of acceleration (see swing.ts) don't come into it.
+// The accelerometer is only used for the arm (the swing's centripetal pull).
+// iOS reports acceleration with the opposite sign to the W3C spec (see
+// swing.ts); comparing the reported gravity with the orientation's "up" tells
+// which convention a sample uses.
 
 import { qrot, type Vec3 } from './orient';
 
@@ -43,12 +51,20 @@ export interface BowlSample {
   rz: number;
   /** device→earth orientation quaternion at this sample, if known */
   q?: [number, number, number, number];
+  /** acceleration without gravity, device axes, m/s², as the browser reports it */
+  ax?: number;
+  ay?: number;
+  az?: number;
+  /** accelerationIncludingGravity − acceleration, as reported (only its sign against "up" is used) */
+  gx?: number;
+  gy?: number;
+  gz?: number;
 }
 
 export interface BowlThrow {
   /** ball speed, m/s (2.5 … 10.5) */
   speed: number;
-  /** direction, radians from straight at the screen (+ right), ±0.2 */
+  /** direction, radians (+ right), ±0.2: against the backswing, or the screen without one */
   angle: number;
   /** −1..1, + hooks left (counter-clockwise wrist twist seen from above) */
   spin: number;
@@ -56,6 +72,8 @@ export interface BowlThrow {
   peak: number;
   /** for tuning: mean twist about the vertical, rad/s (swipe: curve, rad) */
   twist: number;
+  /** what the angle was measured against */
+  ref: 'backswing' | 'screen' | null;
 }
 
 export interface SwipePoint {
@@ -65,6 +83,17 @@ export interface SwipePoint {
 }
 
 const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
+const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const unit = (v: Vec3): Vec3 => {
+  const l = Math.hypot(v[0], v[1], v[2]) || 1;
+  return [v[0] / l, v[1] / l, v[2] / l];
+};
+/** v with its part along the unit vector u taken out */
+const without = (v: Vec3, u: Vec3): Vec3 => {
+  const k = dot(v, u);
+  return [v[0] - k * u[0], v[1] - k * u[1], v[2] - k * u[2]];
+};
 
 function qmul(a: Quat, b: Quat): Quat {
   return [
@@ -76,7 +105,7 @@ function qmul(a: Quat, b: Quat): Quat {
 }
 const qconj = (q: Quat): Quat => [-q[0], -q[1], -q[2], q[3]];
 
-const N = 64; // ring buffer: ≥ 0.6 s even at 100 Hz
+const N = 256; // ring buffer: the whole swing since the grip (≥ 2.5 s at 100 Hz)
 /** shoulder → hand, metres */
 export const ARM_LENGTH = 0.65;
 const SPEED_WIN = 120; // ms before the release: the swing through the bottom
@@ -87,8 +116,16 @@ const TWIST_NOISE = 0.3; // rad/s (rms per sample) of turning off the swing axis
 const TWIST_FULL = 6; // rad/s: a full hook
 const MAX_ANGLE = 0.2;
 const MIN_LINE = 1.5; // rad/s: slower than this the direction is mostly noise
+const BACK_RATE = 1.5; // rad/s: a backswing is at least this fast…
+const BACK_MS = 150; // …for at least this long
+const BACK_TURN = 0.6; // rad: a bigger turn between backswing and release isn't a pull or a push
 export const MIN_SPEED = 2.5;
 export const MAX_SPEED = 10.5;
+/** the arm's pendulum angle with the ball held up in front, looked at (the TV draws it at the chest) */
+export const ARM_FRONT = 1.1;
+export const ARM_MAX = 2.2;
+const PULL_MEMORY = 0.35; // s: how long the arm's direction read from the swing's pull is trusted
+const PULL_RATE = 1.8; // rad/s: slower swings pull too little to read
 
 /**
  * Hand speed at the release (m/s) → ball speed (m/s). Linear through the
@@ -131,17 +168,23 @@ export class BowlDetector {
   private prevR: Vec3 = [0, 0, 0];
   private prevWx = 0;
   private prevWh = 0;
+  private lastQ: Quat | null = null;
 
   private held = false;
   private tGrip = 0;
   private armAngle = 0;
+  // the arm (hand → shoulder) in device axes as the swing's pull shows it,
+  // summed with recent readings counting most, and how much there is of it
+  private fore: Vec3 = [0, 0, 0];
+  private foreW = 0;
+  private pulls: { t: number; w: Vec3; a: Vec3 }[] = [];
 
   /** the grip is down (the ball is in the hand) */
   get gripping() {
     return this.held;
   }
 
-  /** pendulum angle since the grip, radians (+ forward/up, − backswing) */
+  /** the arm's pendulum angle while gripping, radians: 0 hanging, + forward/up, − behind */
   get arm() {
     return this.armAngle;
   }
@@ -156,6 +199,13 @@ export class BowlDetector {
     const fx = Math.sin(h),
       fy = Math.cos(h);
     return [v[0] * fy - v[1] * fx, v[0] * fx + v[1] * fy, v[2]];
+  }
+
+  /** the arm (hand → shoulder) in device axes, once the swing has shown it clearly */
+  private foreArm(): Vec3 | null {
+    // enough of it, and the readings agree
+    if (this.foreW < 0.4 || Math.hypot(...this.fore) < 0.7 * this.foreW) return null;
+    return unit(this.fore);
   }
 
   push(s: BowlSample) {
@@ -183,12 +233,16 @@ export class BowlDetector {
     }
 
     if (this.held && s.q) {
-      // trapezoid from the grip (or the previous sample) to this sample
+      // the arm turns with the phone: integrate the rate about the lateral
+      // axis (trapezoid from the grip or the previous sample)…
       const from = Math.max(this.lastT, this.tGrip);
       const span = clamp((s.t - from) / 1000, 0, 0.05);
       const w0 = this.lastT && this.lastT >= this.tGrip - 50 ? this.prevWx : wx;
-      this.armAngle = clamp(this.armAngle + ((w0 + wx) / 2) * span, -Math.PI, Math.PI);
+      this.armAngle = clamp(this.armAngle + ((w0 + wx) / 2) * span, -ARM_MAX, ARM_MAX);
+      // …and let the swing's pull say where it really is
+      this.armFromPull(s, span);
     }
+    if (s.q) this.lastQ = [s.q[0], s.q[1], s.q[2], s.q[3]];
 
     const i = this.head;
     this.T[i] = s.t;
@@ -208,11 +262,104 @@ export class BowlDetector {
     this.lastT = s.t;
   }
 
-  /** The grip went down: the ball is picked up, the arm angle starts from 0. */
+  /**
+   * Where the arm is at the grip, from how the phone is held — a guess, which
+   * the swing corrects. The screen turned up or towards the face: held out in
+   * front to be looked at (the ball at the chest). Otherwise by the phone's
+   * top: pointing down, it lies along the fingers and the arm follows it
+   * (straight down = hanging, tipped forwards or back = the arm swung that
+   * way); pointing up, it points up the arm, the same the other way round;
+   * about level: held out in front.
+   */
+  private armGuess(q: Quat): number {
+    const n = this.toPlayer(qrot(q, [0, 0, 1]));
+    const top = this.toPlayer(qrot(q, [0, 1, 0]));
+    const facing = this.heading === null ? n[2] : Math.max(n[2], (n[2] - n[1]) / Math.SQRT2);
+    if (facing > 0.35 || Math.abs(top[2]) < 0.3) return ARM_FRONT;
+    return clamp(top[2] < 0 ? Math.atan2(top[1], -top[2]) : Math.atan2(-top[1], top[2]), -ARM_MAX, ARM_MAX);
+  }
+
+  /**
+   * A swinging arm pulls the hand towards the shoulder (centripetal, s²·R) and
+   * pushes it along as it speeds up (ṡ·R): a = R·(s²·u − ṡ·(L × u)), with L
+   * the swing's axis and u the arm (hand → shoulder). So while the arm swings,
+   * the accelerometer shows which way the arm runs through the phone — fixed,
+   * as the phone sits rigidly in the hand — and with the orientation, where
+   * the arm is. The guess from the grip gives way to it within a fraction of
+   * a second of swinging.
+   */
+  private armFromPull(s: BowlSample, dt: number) {
+    const keep = Math.exp(-dt / PULL_MEMORY);
+    this.fore = [this.fore[0] * keep, this.fore[1] * keep, this.fore[2] * keep];
+    this.foreW *= keep;
+    const q = s.q!;
+    if (s.ax !== undefined && s.gx !== undefined) {
+      // which sign convention: the reported gravity points up (W3C) or down (iOS)
+      const up = qrot(qconj(q), [0, 0, 1]);
+      const gu = s.gx * up[0] + (s.gy ?? 0) * up[1] + (s.gz ?? 0) * up[2];
+      if (Math.abs(gu) > 4) {
+        const sg = gu > 0 ? 1 : -1;
+        this.pulls.push({ t: s.t, w: [s.rx, s.ry, s.rz], a: [sg * s.ax, sg * (s.ay ?? 0), sg * (s.az ?? 0)] });
+        if (this.pulls.length > 3) this.pulls.shift();
+        if (this.pulls.length === 3) this.readPull();
+      }
+    }
+    // follow the arm the pull shows: quickly, but without a visible jump
+    const f = this.foreArm();
+    if (f) {
+      const u = this.toPlayer(qrot(q, f));
+      const target = Math.atan2(-u[1], u[2]);
+      const k = (1 - Math.exp(-dt / 0.05)) * Math.min(1, this.foreW / 0.4);
+      // at about the pace the arm is already moving: a correction made
+      // mid-swing doesn't show as a jump
+      const lim = (4 + 2 * Math.hypot(s.rx, s.ry, s.rz)) * dt;
+      this.armAngle = clamp(this.armAngle + clamp((target - this.armAngle) * k, -lim, lim), -ARM_MAX, ARM_MAX);
+    }
+  }
+
+  /** the middle of the last three samples: its swing axis, its pull, and (from its neighbours) how fast the swing sped up */
+  private readPull() {
+    const [p0, p1, p2] = this.pulls;
+    const f = this.foreArm();
+    // the swing, less any twist about the arm found so far
+    const swing = (w: Vec3) => (f ? without(w, f) : w);
+    const w1 = swing(p1.w);
+    const sp = Math.hypot(...w1);
+    const span = (p2.t - p0.t) / 1000;
+    const am1 = Math.hypot(...p1.a);
+    // not where an 8 g accelerometer may have run out of range
+    if (sp < PULL_RATE || span <= 0 || am1 < 1 || Math.max(Math.abs(p1.a[0]), Math.abs(p1.a[1]), Math.abs(p1.a[2])) > 70) return;
+    // A clean swing turns square to its pull (the pull up the arm and the push
+    // along the swing both lie in the swing's plane, however fast it speeds
+    // up): if it doesn't, there's a twist the arm estimate hasn't caught, or
+    // the body lurched — skip it.
+    if (Math.abs(dot(w1, p1.a)) > 0.2 * sp * am1) return;
+    const L: Vec3 = [w1[0] / sp, w1[1] / sp, w1[2] / sp];
+    const sd = (Math.hypot(...swing(p2.w)) - Math.hypot(...swing(p0.w))) / span;
+    const ap = without(p1.a, L); // the pull, in the swing's plane
+    const am = Math.hypot(...ap);
+    // an arm's worth of pull (0.25–1.3 m from the shoulder), not the body lurching
+    const r = am / Math.hypot(sp * sp, sd);
+    if (am < 2.5 || r < 0.25 || r > 1.3) return;
+    // â = cos φ·u + sin φ·(L × u), φ = atan2(−ṡ, s²): turn it back by φ
+    const ph = Math.atan2(-sd, sp * sp);
+    const ah: Vec3 = [ap[0] / am, ap[1] / am, ap[2] / am];
+    const x = cross(L, ah);
+    const c = Math.cos(ph),
+      sn = Math.sin(ph);
+    const wgt = sp * sp * (span / 2);
+    for (let k = 0; k < 3; k++) this.fore[k] += (ah[k] * c - x[k] * sn) * wgt;
+    this.foreW += wgt;
+  }
+
+  /** The grip went down: the ball is picked up. */
   grip(t = this.lastT) {
     this.held = true;
     this.tGrip = t;
-    this.armAngle = 0;
+    this.armAngle = this.lastQ ? this.armGuess(this.lastQ) : 0;
+    this.fore = [0, 0, 0];
+    this.foreW = 0;
+    this.pulls = [];
   }
 
   /** Drop the grip without throwing (e.g. the game left the bowling screen). */
@@ -229,30 +376,34 @@ export class BowlDetector {
   /** What letting go at time t would throw, without changing any state. */
   measure(t = this.lastT): BowlThrow {
     const { T, R, Q, HQ, G } = this;
-    // the forward swing: the samples of the last 300 ms, newest first
-    const win: number[] = [];
+    // the samples since the grip (at least the last 300 ms), newest first; the
+    // first n are the forward swing's
+    const since = this.tGrip ? this.tGrip - 50 : -Infinity;
+    const from = Math.min(t - AXIS_WIN, since);
+    const all: number[] = [];
+    let n = 0;
     for (let b = 0; b < this.count; b++) {
       const j = this.idx(b);
-      const age = t - T[j];
-      if (age < 0) continue;
-      if (age > AXIS_WIN) break;
-      win.push(j);
+      if (T[j] > t) continue;
+      if (T[j] < from) break;
+      all.push(j);
+      if (t - T[j] <= AXIS_WIN) n = all.length;
     }
-    const n = win.length;
-    if (!n) return { speed: MIN_SPEED, angle: 0, spin: 0, peak: 0, twist: 0 };
+    if (!n) return { speed: MIN_SPEED, angle: 0, spin: 0, peak: 0, twist: 0, ref: null };
     const q4 = (A: Float64Array, j: number): Quat => [A[j * 4], A[j * 4 + 1], A[j * 4 + 2], A[j * 4 + 3]];
 
     // Device → player orientation of every sample. The fused orientation of
     // the newest sample anchors it and the others follow by the gyro alone:
     // the fused one is pulled towards the OS's reading, which runs a little
     // late — fine for where the phone points, but it bends the turn from one
-    // sample to the next, which is what the twist is measured against.
+    // sample to the next, which is what the twist and the backswing's line
+    // are measured against.
     const h = this.heading ?? 0;
     const turn: Quat = [0, 0, Math.sin(h / 2), Math.cos(h / 2)]; // earth → player
-    const anchor = HQ[win[0]] ? qmul(turn, qmul(q4(Q, win[0]), qconj(q4(G, win[0])))) : null;
+    const anchor = HQ[all[0]] ? qmul(turn, qmul(q4(Q, all[0]), qconj(q4(G, all[0])))) : null;
     const P: Quat[] = [];
     const W: Vec3[] = [];
-    for (const j of win) {
+    for (const j of all) {
       const r: Vec3 = [R[j * 3], R[j * 3 + 1], R[j * 3 + 2]];
       if (anchor) {
         const p = qmul(anchor, q4(G, j));
@@ -269,12 +420,12 @@ export class BowlDetector {
     let fast = 0,
       refX = 1,
       refY = 0;
-    for (const w of W) {
-      const m = Math.hypot(w[0], w[1]);
+    for (let i = 0; i < n; i++) {
+      const m = Math.hypot(W[i][0], W[i][1]);
       if (m > fast) {
         fast = m;
-        refX = w[0];
-        refY = w[1];
+        refX = W[i][0];
+        refY = W[i][1];
       }
     }
 
@@ -286,10 +437,12 @@ export class BowlDetector {
     const free = (i: number, arm: Vec3 | null): Vec3 => {
       const w = W[i];
       if (!arm) return w;
-      const u = qrot(P[i], arm);
-      const tw = w[0] * u[0] + w[1] * u[1] + w[2] * u[2];
-      return [w[0] - tw * u[0], w[1] - tw * u[1], w[2] - tw * u[2]];
+      return without(w, qrot(P[i], arm));
     };
+    // The fast part of the swing, round the bottom, decides: near the top the
+    // arm is slow and other things happen (the plane turning for a pull, the
+    // elbow settling) that aren't a swing or a twist.
+    const weight = W.slice(0, n).map((w) => Math.min(1, Math.hypot(w[0], w[1]) / (0.5 * fast || 1)) ** 2);
     const fit = (arm: Vec3 | null) => {
       let sx = 0,
         sy = 0,
@@ -302,16 +455,17 @@ export class BowlDetector {
         m22 = 0;
       for (let i = 0; i < n; i++) {
         const [vx, vy, vz] = free(i, arm);
-        const f = vx * refX + vy * refY >= 0 ? 1 : -1; // backswing and forward swing agree
+        const k = weight[i];
+        const f = (vx * refX + vy * refY >= 0 ? 1 : -1) * k; // backswing and forward swing agree
         sx += f * vx;
         sy += f * vy;
         sz += f * vz;
-        m00 += vx * vx;
-        m01 += vx * vy;
-        m02 += vx * vz;
-        m11 += vy * vy;
-        m12 += vy * vz;
-        m22 += vz * vz;
+        m00 += k * vx * vx;
+        m01 += k * vx * vy;
+        m02 += k * vx * vz;
+        m11 += k * vy * vy;
+        m12 += k * vy * vz;
+        m22 += k * vz * vz;
       }
       const sl = Math.hypot(sx, sy, sz) || 1;
       const ax = sx / sl,
@@ -328,12 +482,9 @@ export class BowlDetector {
     const plain = fit(null);
     let best = plain;
     let arm: Vec3 | null = null;
-    if (anchor && fast > 1e-3 && plain.res > n * TWIST_NOISE * TWIST_NOISE) {
+    const nw = weight.reduce((a, b) => a + b, 0);
+    if (anchor && fast > 1e-3 && plain.res > nw * TWIST_NOISE * TWIST_NOISE) {
       const back = qconj(P[0]);
-      const unit = (v: Vec3): Vec3 => {
-        const l = Math.hypot(v[0], v[1], v[2]) || 1;
-        return [v[0] / l, v[1] / l, v[2] / l];
-      };
       // Where to look: the forearm at the newest sample, in device axes, is
       // "up" turned th about the swing axis L (the arm th past the bottom —
       // −1.0 … +1.6 rad, late releases being the common ones) and leaning ps
@@ -365,7 +516,7 @@ export class BowlDetector {
         for (let it = 0; it < 8 && h > 0.003; it++) {
           // two directions across u, and the leftover on a 3×3 patch (a, b ∈ −h, 0, h)
           const e1 = unit(Math.abs(u[0]) < 0.9 ? [0, -u[2], u[1]] : [-u[2], 0, u[0]]);
-          const e2: Vec3 = [u[1] * e1[2] - u[2] * e1[1], u[2] * e1[0] - u[0] * e1[2], u[0] * e1[1] - u[1] * e1[0]];
+          const e2 = cross(u, e1);
           const move = (a: number, b: number) => unit([u[0] + a * e1[0] + b * e2[0], u[1] + a * e1[1] + b * e2[1], u[2] + a * e1[2] + b * e2[2]]);
           const v = [0, 1, 2].map((i) => [0, 1, 2].map((j) => (i === 1 && j === 1 ? cur.res : fit(move((i - 1) * h, (j - 1) * h)).res)));
           const ga = (v[2][1] - v[0][1]) / (2 * h),
@@ -415,6 +566,16 @@ export class BowlDetector {
         arm = null;
       }
     }
+    // A pull through the bottom turns the whole arm about the vertical, which
+    // at the bottom the gyro can't tell from a twist of the wrist — with both,
+    // the fit above can land on a wrong forearm. The swing's pull on the hand
+    // can tell them apart (a pull moves the hand, a twist doesn't): unless the
+    // two agree closely, it wins.
+    const pulled = this.foreArm();
+    if (arm && pulled && Math.abs(dot(arm, pulled)) < Math.cos(0.045)) {
+      arm = pulled;
+      best = fit(arm);
+    }
     const { lx: Lx, ly: Ly } = best;
 
     // speed: the fastest swing about that axis in the last 120 ms (2-tap mean
@@ -423,34 +584,105 @@ export class BowlDetector {
       const v = free(i, arm);
       return Math.abs(v[0] * Lx + v[1] * Ly);
     };
-    let peak = 0;
-    for (let i = 0; i < n && t - T[win[i]] <= SPEED_WIN; i++) {
+    let peak = 0,
+      peakT = t;
+    for (let i = 0; i < n && t - T[all[i]] <= SPEED_WIN; i++) {
       const s = (along(i) + along(Math.min(i + 1, n - 1))) / 2;
-      if (s > peak) peak = s;
+      if (s > peak) {
+        peak = s;
+        peakT = T[all[i]];
+      }
+    }
+    // The line: the swing plane's, from the bottom of the swing (its fastest
+    // moment) to the release — a pull can still be turning it after the
+    // bottom; before, the whole window mixes in the start of the forward
+    // swing. The plane's line is square to the swing's axis (twist taken out),
+    // so it doesn't matter where on the arc the hand was, or how far the arm
+    // leans out: a straight pendulum is straight.
+    let gx = 0,
+      gy = 0;
+    for (let i = 0; i < n; i++) {
+      if (T[all[i]] < peakT - 25 && i > 1) break;
+      const v = free(i, arm);
+      const f = v[0] * Lx + v[1] * Ly >= 0 ? 1 : -1; // forwards, as the swing's axis says
+      gx -= f * v[1];
+      gy += f * v[0];
+    }
+    if (Math.hypot(gx, gy) < 1e-9) {
+      gx = -Ly;
+      gy = Lx;
     }
 
-    // line: the hand's velocity v ∝ ω × r_arm with r_arm = −up → v = (−ωy, ωx),
-    // for ω along the swing axis. Let go on the backswing: the line is the
-    // same, just travelled the other way.
-    let vx = -Ly,
-      vy = Lx;
-    if (vy < 0) {
-      vx = -vx;
-      vy = -vy;
+    // …measured against the player's own backswing: the swing before this one
+    // that turned the other way, from the grip to its top, its direction of
+    // travel folded forwards and speed-weighted. The heading cancels out, so a
+    // straight pendulum reads 0 however stale the calibration; a pull or a
+    // push across the body reads as an angle.
+    let angle = 0;
+    let ref: BowlThrow['ref'] = null;
+    if (anchor && peak >= MIN_LINE) {
+      const backswing = (twist: Vec3 | null) => {
+        let bx = 0,
+          by = 0,
+          top = 0,
+          first = -1,
+          last = -1,
+          quiet = 0;
+        const vs: Vec3[] = [];
+        for (let i = 0; i < all.length && T[all[i]] >= since; i++) {
+          const v = free(i, twist);
+          const s = v[0] * Lx + v[1] * Ly; // + forwards (as at the release), − backwards
+          if (s < -0.3) {
+            quiet = 0;
+            if (first < 0) first = i;
+            last = i;
+            bx -= v[0];
+            by -= v[1];
+            top = Math.max(top, -s);
+            vs.push(v);
+          } else if (first >= 0 && ++quiet >= 3) break; // before the backswing began
+        }
+        // how cleanly it turned about the one (horizontal) axis: what's left off it
+        const bl = Math.hypot(bx, by) || 1;
+        let res = 0;
+        for (const v of vs) res += v[0] * v[0] + v[1] * v[1] + v[2] * v[2] - ((v[0] * bx + v[1] * by) / bl) ** 2;
+        return { bx, by, top, res, ms: first >= 0 ? T[all[first]] - T[all[last]] : 0 };
+      };
+      // a twist that began before the top leaks into the backswing too: take
+      // it out — if that leaves a cleaner swing (with none, the arm's small
+      // error would only add its own)
+      let bk = backswing(null);
+      if (arm) {
+        const b2 = backswing(arm);
+        if (b2.res < 0.7 * bk.res) bk = b2;
+      }
+      const { bx, by, top } = bk;
+      if (top >= BACK_RATE && bk.ms >= BACK_MS) {
+        // clockwise from the backswing's direction of travel (−by, bx) to the release's (gx, gy)
+        const d = -Math.atan2(-by * gy - bx * gx, -by * gx + bx * gy);
+        if (Math.abs(d) <= BACK_TURN) {
+          angle = clamp(d, -MAX_ANGLE, MAX_ANGLE);
+          ref = 'backswing';
+        }
+      }
+      // no real backswing (or something other than a swing): against the calibrated screen
+      if (!ref && this.heading !== null) {
+        angle = clamp(gy >= 0 ? Math.atan2(gx, gy) : Math.atan2(-gx, -gy), -MAX_ANGLE, MAX_ANGLE);
+        ref = 'screen';
+      }
     }
-    const angle = this.heading === null || !anchor || peak < MIN_LINE ? 0 : clamp(Math.atan2(vx, vy), -MAX_ANGLE, MAX_ANGLE);
 
     // spin: the wrist twist about the vertical just before letting go
     let sz = 0,
       m = 0;
-    for (let i = 0; i < n && t - T[win[i]] <= SPIN_WIN; i++) {
+    for (let i = 0; i < n && t - T[all[i]] <= SPIN_WIN; i++) {
       sz += W[i][2];
       m++;
     }
     const twist = m ? sz / m : 0;
 
     const hand = peak * ARM_LENGTH * Math.sqrt(this.sensitivity);
-    return { speed: ballSpeed(hand), angle, spin: twistToSpin(twist), peak, twist };
+    return { speed: ballSpeed(hand), angle, spin: twistToSpin(twist), peak, twist, ref };
   }
 }
 
@@ -462,7 +694,7 @@ export class BowlDetector {
  * hooks left, like the ball's path seen from above.
  */
 export function swipeThrow(pts: SwipePoint[]): BowlThrow {
-  const still: BowlThrow = { speed: MIN_SPEED, angle: 0, spin: 0, peak: 0, twist: 0 };
+  const still: BowlThrow = { speed: MIN_SPEED, angle: 0, spin: 0, peak: 0, twist: 0, ref: null };
   if (pts.length < 2) return still;
   let len = 0;
   const cum = [0];
@@ -514,5 +746,5 @@ export function swipeThrow(pts: SwipePoint[]): BowlThrow {
     full = 0.7;
   const spin = Math.abs(turnLeft) < dead ? 0 : clamp((turnLeft - Math.sign(turnLeft) * dead) / (full - dead), -1, 1);
 
-  return { speed, angle, spin, peak: up, twist: turnLeft };
+  return { speed, angle, spin, peak: up, twist: turnLeft, ref: null };
 }

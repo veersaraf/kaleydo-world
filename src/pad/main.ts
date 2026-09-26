@@ -225,9 +225,14 @@ const gripBall = h(
 );
 const gripWrap = h('div', { class: 'grip-wrap' }, h('div', { class: 'grip-meter' }), gripBall);
 const bowlShot = h('div', { class: 'shotline' }, '');
+// pause: up in a corner, where a thumb sliding off the grip mid-throw can't reach
+const bowlHome = padBtn('home', 'small home bhome', h('i', { class: 'house' }));
+bowlHome.dataset.lock = '';
+bowlHome.setAttribute('aria-label', 'Pause');
 const bowlPanel = h(
   'div',
   { class: 'panel bowl' },
+  bowlHome,
   h('div', { class: 'bhead' }, bowlTitle, bowlHint),
   bowlTv,
   gripWrap,
@@ -530,13 +535,15 @@ function lookingAtPhone() {
   return orient.have && orient.toEarth([0, 0, 1])[2] > 0.35;
 }
 
-/** bowling move/aim buttons that are down: let go of them all */
+/** bowling's move/aim/home buttons that are down: let go of them all */
 const bowlBtnUps: (() => void)[] = [];
 
 for (const el of root.querySelectorAll<HTMLButtonElement>('.pb')) {
   const b = el.dataset.b as PadButton;
   // bowling's move/aim buttons repeat while held, like a held key: more downs, one up
   const rep = el.dataset.rep !== undefined;
+  // bowling's buttons (move, aim, home) wait while the ball is in the hand
+  const lock = rep || el.dataset.lock !== undefined;
   let repTimer = 0;
   const up = () => {
     clearTimeout(repTimer);
@@ -545,12 +552,12 @@ for (const el of root.querySelectorAll<HTMLButtonElement>('.pb')) {
     el.classList.remove('down');
     link.send({ type: 'btn', b, down: false });
   };
-  if (rep) bowlBtnUps.push(up);
+  if (lock) bowlBtnUps.push(up);
   el.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     // not while the ball is in the hand or just after letting go: that's a palm
     // or a thumb sliding off the grip, not a press
-    if (rep && (gripId !== null || performance.now() < bowlLockUntil)) return;
+    if (lock && (gripId !== null || performance.now() < bowlLockUntil)) return;
     try {
       el.setPointerCapture?.(e.pointerId);
     } catch {}
@@ -771,7 +778,15 @@ function onMotion(e: DeviceMotionEvent) {
   prevRate[2] = rz;
   const q: [number, number, number, number] | undefined = orient.have ? [orient.q[0], orient.q[1], orient.q[2], orient.q[3]] : undefined;
   bowl.heading = orient.heading;
-  bowl.push({ t: now, rx, ry, rz, q });
+  // (the acceleration only if the phone reports it: some Androids don't)
+  bowl.push({
+    t: now,
+    rx,
+    ry,
+    rz,
+    q,
+    ...(a && a.x != null && g && g.x != null ? { ax, ay, az, gx: (g.x ?? 0) - ax, gy: (g.y ?? 0) - ay, gz: (g.z ?? 0) - az } : {}),
+  });
   detector.push({
     t: now,
     up: orient.have ? orient.upDevice() : undefined,

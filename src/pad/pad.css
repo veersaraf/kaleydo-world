@@ -1043,3 +1043,13 @@ section {
   width: 24px;
   height: 24px;
 }
+
+/* pause, up in a corner of the bowl panel: out of reach of a thumb sliding off the grip */
+.bowl .bhome {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  width: 42px;
+  height: 42px;
+  z-index: 1;
+}

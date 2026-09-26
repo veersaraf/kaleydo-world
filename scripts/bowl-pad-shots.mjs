@@ -39,7 +39,10 @@ async function nextJoin(n) {
 // ---------------------------------------------------------------- a phone that moves
 // Runs in the page before its scripts. The pose is device→earth; the screen is
 // straight ahead (north). The phone lies flat in the palm, top towards the
-// screen, so the remote calibrates "towards the screen" when it joins.
+// screen, so the remote calibrates "towards the screen" when it joins. It sits
+// 0.65 m down the arm from the shoulder, and its accelerometer reads that
+// (W3C signs): so a flat phone with the arm hanging — which the remote first
+// guesses is held up in front — has to be put right by the swing itself.
 function phone() {
   const D = 180 / Math.PI;
   const qmul = (a, b) => [
@@ -85,6 +88,12 @@ function phone() {
     return W * sig * (Math.sqrt(Math.PI) / 2) * (1 + e(x));
   };
   const pose = (t) => qmul(qaxis([0, 0, 1], yaw(t)), qmul(qaxis([1, 0, 0], theta(t)), qmul(qaxis([0, 0, 1], phi(t)), grip)));
+  const rot = (q, v) => {
+    const r = qmul(qmul(q, [v[0], v[1], v[2], 0]), qconj(q));
+    return [r[0], r[1], r[2]];
+  };
+  // the phone on the end of the arm (the tennis swing turns it in place)
+  const where = (t) => rot(qaxis([1, 0, 0], theta(t)), [0, 0, -0.65]);
   const now = () => performance.now() / 1000;
   // (the script also runs on about:blank first, where the sensor events don't exist)
   if (typeof DeviceOrientationEvent === 'undefined') return;
@@ -98,14 +107,19 @@ function phone() {
     const k = s > 1e-12 ? (2 * Math.atan2(s, d[3])) / (2 * h) / s : 0;
     const w = [d[0] * k, d[1] * k, d[2] * k];
     const [alpha, beta, gamma] = euler(q);
-    const upDev = qmul(qmul(qconj(q), [0, 0, 1, 0]), q);
+    const upDev = rot(qconj(q), [0, 0, 1]);
+    const e = 0.004,
+      p0 = where(t - e),
+      p1 = where(t),
+      p2 = where(t + e);
+    const acc = rot(qconj(q), [0, 1, 2].map((k) => (p0[k] - 2 * p1[k] + p2[k]) / (e * e)));
     window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', { alpha, beta, gamma }));
     window.dispatchEvent(
       new DeviceMotionEvent('devicemotion', {
         interval: 16,
         rotationRate: { alpha: w[2] * D, beta: w[0] * D, gamma: w[1] * D },
-        acceleration: { x: 0, y: 0, z: 0 },
-        accelerationIncludingGravity: { x: upDev[0] * 9.81, y: upDev[1] * 9.81, z: upDev[2] * 9.81 },
+        acceleration: { x: acc[0], y: acc[1], z: acc[2] },
+        accelerationIncludingGravity: { x: acc[0] + upDev[0] * 9.81, y: acc[1] + upDev[1] * 9.81, z: acc[2] + upDev[2] * 9.81 },
       }),
     );
   }, 16);
@@ -119,8 +133,9 @@ function phone() {
     el.dispatchEvent(new PointerEvent(type, { pointerId: id, pointerType: 'touch', isPrimary: true, clientX: x, clientY: y, bubbles: true, cancelable: true }));
   };
   window.__phone = {
-    /** grip, swing back and forward (peak rad/s through the bottom), let go `late` ms after the bottom */
-    bowl({ back = 1.2, peak = 8, twist = 0, late = 10 } = {}) {
+    /** grip, swing back and forward (peak rad/s through the bottom), let go `late` ms after the bottom
+     *  (and press pause `homeAfter` ms after letting go, as a sliding thumb might) */
+    bowl({ back = 1.2, peak = 8, twist = 0, late = 10, homeAfter = 0 } = {}) {
       const t0 = now() + 0.3;
       const Tb = 0.6, Tf = (back * Math.PI) / peak;
       sw = { kind: 'bowl', t0, back, Tb, Tf, twist, tBottom: t0 + Tb + Tf / 2 };
@@ -129,6 +144,11 @@ function phone() {
       return new Promise((done) =>
         setTimeout(() => {
           ptr('pointerup');
+          if (homeAfter)
+            setTimeout(() => {
+              const el = document.querySelector('.bowl .bhome');
+              for (const type of ['pointerdown', 'pointerup']) el.dispatchEvent(new PointerEvent(type, { pointerId: 12, pointerType: 'touch', bubbles: true, cancelable: true }));
+            }, homeAfter);
           setTimeout(() => {
             sw = null;
             done();
@@ -182,7 +202,7 @@ await wait(700);
 await shot(pa, 'bowl-idle');
 
 let t0 = Date.now();
-const thrown = pa.evaluate(() => window.__phone.bowl({ peak: 8, twist: 1.2 }));
+const thrown = pa.evaluate(() => window.__phone.bowl({ peak: 8, twist: 1.2, homeAfter: 250 }));
 await wait(1000); // into the forward swing, ball still in the hand (it's let go at ~1.15 s)
 await shot(pa, 'bowl-swinging');
 await thrown;
@@ -192,14 +212,23 @@ let msgs = since(t0, pidA).filter((m) => m.type !== 'hello' && m.type !== 'prefs
 const seq = msgs.filter((m) => m.type !== 'ori' || m.arm !== undefined);
 console.log('pad → TV:', seq.map(brief).join(' | '));
 const iDown = msgs.findIndex((m) => m.type === 'grip' && m.down);
+// (the arm starts at the remote's guess for a flat phone — held up in front, 1.1 — and the swing corrects it)
 const iUp = msgs.findIndex((m) => m.type === 'grip' && !m.down);
 const iBowl = msgs.findIndex((m) => m.type === 'bowl');
 check('grip down → grip up → bowl, in order', iDown >= 0 && iDown < iUp && iUp + 1 === iBowl);
 const arms = msgs.filter((m) => m.type === 'ori' && m.arm !== undefined).map((m) => m.arm);
-check('arm streamed while gripping (backswing −, then forward)', arms.length > 8 && Math.min(...arms) < -1 && arms[arms.length - 1] > -0.3, `${arms.length} values, min ${Math.min(...arms)}, last ${arms[arms.length - 1]}`);
+check('arm streamed while gripping, absolute (top of the backswing ≈ −1.2, near 0 at the release)', arms.length > 8 && Math.abs(Math.min(...arms) + 1.2) < 0.4 && Math.abs(arms[arms.length - 1]) < 0.3, `${arms.length} values: ${arms.join(' ')}`);
 check('no arm outside the grip', msgs.slice(iUp + 1).every((m) => m.type !== 'ori' || m.arm === undefined));
 const b = msgs[iBowl];
-check('bowl: relaxed speed, straight, hooks left', b && b.speed > 6 && b.speed < 7.6 && Math.abs(b.angle) < 0.04 && b.spin > 0.4 && b.touch === false, JSON.stringify(b));
+check('bowl: relaxed speed, straight, hooks left', b && b.speed > 6 && b.speed < 7.6 && Math.abs(b.angle) < 0.03 && b.spin > 0.4 && b.touch === false, JSON.stringify(b));
+
+// pause: not straight after letting go (a thumb sliding off the grip — pressed 250 ms after), then it works
+check('home ignored just after letting go', !msgs.some((m) => m.type === 'btn'));
+const home = async () => {
+  const r = await pa.locator('.bowl .bhome').boundingBox();
+  await pa.mouse.click(r.x + r.width / 2, r.y + r.height / 2);
+  await wait(60);
+};
 check('no tennis swing or prep while bowling', !msgs.some((m) => m.type === 'swing' || m.type === 'prep' || m.type === 'toss'));
 
 toPad(pidA, { type: 'fx', fx: 'perfect', label: 'STRIKE!', detail: `${b?.speed.toFixed(1)} m/s · hook` });
@@ -217,6 +246,18 @@ const btn = async (label, ms) => {
   await wait(100);
 };
 await wait(700); // past the lock after letting go
+t0 = Date.now();
+await home();
+msgs = since(t0, pidA).filter((m) => m.type === 'btn');
+check('home works once the ball is gone: down, up', msgs.length === 2 && msgs[0].b === 'home' && msgs[0].down && !msgs[1].down, msgs.map(brief).join(' | '));
+// and not while the ball is in the hand
+t0 = Date.now();
+await pa.evaluate(() => document.querySelector('.grip').dispatchEvent(new PointerEvent('pointerdown', { pointerId: 11, pointerType: 'touch', bubbles: true, cancelable: true })));
+await home();
+check('home ignored while gripping', !since(t0, pidA).some((m) => m.type === 'btn'));
+await pa.evaluate(() => document.querySelector('.grip').dispatchEvent(new PointerEvent('pointerup', { pointerId: 11, pointerType: 'touch', bubbles: true, cancelable: true })));
+await wait(800);
+t0 = Date.now();
 await btn('Step left', 80);
 await btn('Aim right', 800);
 msgs = since(t0, pidA).filter((m) => m.type === 'btn');

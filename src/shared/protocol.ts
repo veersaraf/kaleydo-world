@@ -53,12 +53,17 @@ export type PadMsg =
   | { type: 'prep'; side: 'fh' | 'bh'; lat: number }
   /** live racket orientation in the player's frame (x right, y towards screen, z up):
    *  s = shaft (phone top), n = face (screen normal); while bowling with the grip
-   *  held, `arm` = the arm's pendulum angle since the grip (radians, + forward) */
+   *  held, `arm` = the bowling arm's pendulum angle, radians, −2.2 … 2.2: 0 = hanging
+   *  straight down, + = forward/up, − = behind (as BowlerState.arm). Guessed at the
+   *  grip from how the phone is held (looked at in front ≈ +1.1), then tracked; the
+   *  swing itself shows where the arm is within a fraction of a second */
   | { type: 'ori'; s: [number, number, number]; n: [number, number, number]; arm?: number }
   /** bowling: the grip (hold the ball) went down / was let go */
   | { type: 'grip'; down: boolean; lat: number }
   /** bowling: the ball was released — measured from the swing.
-   *  speed m/s; angle radians from straight at the screen (+ right); spin −1..1 (+ hooks left) */
+   *  speed m/s; spin −1..1 (+ hooks left); angle radians (+ right), ±0.2: the swing's line
+   *  against the player's own backswing (a straight pendulum = 0, a push right / pull left
+   *  across the body = ±), or against the calibrated screen when there was no real backswing */
   | { type: 'bowl'; speed: number; angle: number; spin: number; lat: number; touch?: boolean };
 
 /** bowl = your turn to bowl: the grip pad plus move (◀ ▶ = btn left/right) and
