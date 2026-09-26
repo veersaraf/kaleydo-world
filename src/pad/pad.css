@@ -861,3 +861,185 @@ section {
   background: linear-gradient(135deg, #52a7ff, #4be3a2);
   animation: none;
 }
+
+/* bowl */
+.panel.bowl {
+  justify-content: space-between;
+  padding: 18px 18px 16px;
+  gap: 6px;
+}
+
+.bhead {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.bowl .tvline.pop {
+  animation: pop 0.35s cubic-bezier(0.2, 2, 0.4, 1);
+}
+
+.grip-wrap {
+  --p: 0;
+  position: relative;
+  flex: none;
+  width: min(76vw, 292px, 40vh);
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+}
+
+/* the swing meter: the tennis gauge's arc, as a ring round the ball */
+.grip-meter {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(from 210deg, var(--pc) calc(var(--p) * 300deg), rgba(60, 50, 110, 0.1) 0 300deg, transparent 0);
+  -webkit-mask: radial-gradient(closest-side, transparent calc(100% - 12px), #000 calc(100% - 11px));
+  mask: radial-gradient(closest-side, transparent calc(100% - 12px), #000 calc(100% - 11px));
+}
+
+.grip-wrap.pop .grip-meter {
+  animation: pop 0.35s cubic-bezier(0.2, 2, 0.4, 1);
+}
+
+/* the grip: a bowling ball in the player's colour */
+.grip {
+  position: relative;
+  width: 83%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background:
+    radial-gradient(30% 22% at 32% 22%, rgba(255, 255, 255, 0.55), transparent 72%),
+    radial-gradient(circle at 50% 36%, color-mix(in oklab, var(--pc) 70%, white), var(--pc) 56%, color-mix(in oklab, var(--pc) 58%, black));
+  box-shadow:
+    inset 0 -12px 0 rgba(0, 0, 0, 0.14),
+    0 14px 30px color-mix(in oklab, var(--pc) 45%, transparent);
+  touch-action: none;
+  cursor: grab;
+  animation: breathe 1.6s ease-in-out infinite;
+  transition: transform 0.12s;
+}
+
+.grip .holes {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.grip .holes i {
+  position: absolute;
+  top: 15%;
+  width: 11%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--pc) 30%, #1d1c2b);
+  box-shadow:
+    inset 0 4px 5px rgba(0, 0, 0, 0.55),
+    0 1.5px 0 rgba(255, 255, 255, 0.4);
+}
+
+.grip .holes i:nth-child(1) {
+  left: 34%;
+}
+
+.grip .holes i:nth-child(2) {
+  left: 55%;
+}
+
+/* the thumb hole */
+.grip .holes i:nth-child(3) {
+  top: 30%;
+  left: 43.5%;
+  width: 13%;
+}
+
+.grip b {
+  margin-top: 24%;
+  font-size: 46px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  text-shadow: 0 3px 0 rgba(0, 0, 0, 0.2);
+}
+
+.grip span {
+  margin-top: 6px;
+  font-size: 17px;
+  font-weight: 600;
+  opacity: 0.92;
+}
+
+.grip.held {
+  cursor: grabbing;
+  transform: scale(0.96);
+  animation: glow 0.9s ease-in-out infinite alternate;
+}
+
+@keyframes glow {
+  from {
+    box-shadow:
+      inset 0 -8px 0 rgba(0, 0, 0, 0.14),
+      0 0 0 5px color-mix(in oklab, var(--pc) 40%, transparent),
+      0 0 24px 6px color-mix(in oklab, var(--pc) 65%, transparent);
+  }
+  to {
+    box-shadow:
+      inset 0 -8px 0 rgba(0, 0, 0, 0.14),
+      0 0 0 9px color-mix(in oklab, var(--pc) 28%, transparent),
+      0 0 46px 16px color-mix(in oklab, var(--pc) 80%, transparent);
+  }
+}
+
+.grip.thrown {
+  animation: none;
+}
+
+.grip.thrown b {
+  font-size: 54px;
+  letter-spacing: 0;
+}
+
+/* move (◀ ▶) and aim (↺ ↻): low in the corners, away from the thumb on the grip */
+.bowl-row {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 0 2px;
+}
+
+.bgroup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+}
+
+.bgroup > div {
+  display: flex;
+  gap: 12px;
+}
+
+.bgroup > span {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  opacity: 0.45;
+}
+
+.bowl-row .small {
+  width: 50px;
+  height: 50px;
+}
+
+.bowl-row svg {
+  width: 24px;
+  height: 24px;
+}
