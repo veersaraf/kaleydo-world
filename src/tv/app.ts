@@ -187,7 +187,7 @@ export class App {
         this.hitstop = m.hitstop;
         m.hitstop = 0;
       }
-      const k = e.kind === 'smash' ? 0.8 : e.power > 0.85 || e.perfect ? 0.35 : 0.06;
+      const k = e.kind === 'smash' ? 0.8 : e.rocket ? 0.65 : e.power > 0.85 || e.perfect ? 0.35 : 0.06;
       this.rig.kick(k);
       this.rig2.kick(k);
     }

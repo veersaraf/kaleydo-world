@@ -1074,19 +1074,23 @@ export class Flow {
         this.hitTimes.push(m.t);
         if (this.hitTimes.length > 8) this.hitTimes.shift();
         this.lastHit = { kind: e.kind, kph: e.kph, perfect: e.perfect };
-        a?.sfx.hit(e.power, e.perfect, pan(e.pos.x), e.kind === 'smash');
+        a?.sfx.hit(e.power, e.perfect, pan(e.pos.x), e.kind === 'smash' || !!e.rocket);
+        if (e.rocket) {
+          a?.sfx.swish(1, pan(e.pos.x));
+          if (real) a?.sfx.ooh();
+        }
         if (real) {
           a?.music.hitNote(e.rally + 1, e.power, pan(e.pos.x));
           this.stats.fastest[e.p.team] = Math.max(this.stats.fastest[e.p.team], e.kph);
           if (e.perfect) this.stats.perfects[e.p.team]++;
           if (e.p.human) {
             const seat = this.app.input.seats[e.p.slot];
-            const timing = e.perfect ? 'PERFECT' : e.tau < -0.55 ? 'EARLY' : e.tau > 0.55 ? 'LATE' : 'GOOD';
+            const timing = e.rocket ? 'ROCKET SERVE' : e.perfect ? 'PERFECT' : e.tau < -0.55 ? 'EARLY' : e.tau > 0.55 ? 'LATE' : 'GOOD';
             const strokeName = e.serve ? 'Serve' : e.kind === 'smash' ? 'Smash' : e.stroke === 'bh' ? 'Backhand' : e.stroke === 'oh' ? 'Overhead' : 'Forehand';
-            const spinName = e.kind === 'lob' ? ' lob' : e.kind === 'drop' ? ' drop shot' : e.spin > 0.3 ? ' topspin' : e.spin < -0.3 ? ' slice' : '';
+            const spinName = e.kind === 'lob' ? ' lob' : e.kind === 'drop' ? ' drop shot' : e.kind === 'wobbly' ? ' floater' : e.spin > 0.3 ? ' topspin' : e.spin < -0.3 ? ' slice' : '';
             const detail = `${strokeName}${spinName} · ${Math.round(e.kph)} km/h`;
             if (seat?.pid) this.app.link.toPad(seat.pid, { type: 'fx', fx: e.perfect ? 'perfect' : 'hit', power: e.power, label: timing, detail });
-            const label = e.perfect ? 'PERFECT!' : e.tau < -0.55 ? 'EARLY' : e.tau > 0.55 ? 'LATE' : e.kind === 'lob' ? 'LOB' : e.kind === 'drop' ? 'DROP SHOT' : e.kind === 'smash' ? 'SMASH!' : e.serve ? '' : '';
+            const label = e.rocket ? 'ROCKET SERVE!' : e.perfect ? 'PERFECT!' : e.tau < -0.55 ? 'EARLY' : e.tau > 0.55 ? 'LATE' : e.kind === 'lob' ? 'LOB' : e.kind === 'drop' ? 'DROP SHOT' : e.kind === 'smash' ? 'SMASH!' : e.serve ? '' : '';
             const sub = e.serve ? '' : `${strokeName.toUpperCase()}${spinName.toUpperCase()}`;
             if (label || sub) this.hud?.float(label ? `${label}${sub ? ' · ' + sub : ''}` : sub, { x: e.pos.x, y: e.pos.y + 0.9, z: e.pos.z }, e.perfect ? 'perfect' : label ? '' : 'soft', e.p.team);
             if (!this.settings.seenTutorial && this.stats.fastest[e.p.team] > 0) {
@@ -1349,7 +1353,7 @@ export class Flow {
       if (this.audio) this.audio.sfx.setCrowd(m.excitement);
       if (!this.versusEnd) {
         const seat = srv?.human ? this.app.input.seats[srv.slot] : null;
-        this.hud.track(m, dt, !seat ? '' : seat.local ? 'Space to toss' : 'tap to toss');
+        this.hud.track(m, dt, !seat ? '' : seat.local ? 'Space to toss' : 'lift your phone to toss');
       }
       if (m.state === 'serve' && !this.tossHintShown) this.tossHintShown = true;
     }

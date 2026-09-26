@@ -525,9 +525,11 @@ export abstract class World {
   /** Colour the trail by the kind of shot (Mario Tennis-style: read the spin at a glance). */
   private tintTrail(e: Extract<MatchEvent, { type: 'hit' }>) {
     const key =
-      e.kind === 'smash' ? 'smash' : e.serve ? (e.perfect ? 'rocket' : 'serve') : e.kind === 'lob' || e.kind === 'wobbly' ? 'lob' : e.kind === 'drop' ? 'drop' : e.shotSpin > 0.25 ? 'topspin' : e.shotSpin < -0.25 ? 'slice' : 'flat';
+      e.kind === 'smash' ? 'smash' : e.serve ? (e.rocket ? 'rocket' : 'serve') : e.kind === 'lob' || e.kind === 'wobbly' ? 'lob' : e.kind === 'drop' ? 'drop' : e.shotSpin > 0.25 ? 'topspin' : e.shotSpin < -0.25 ? 'slice' : 'flat';
     this.trail.tint(SHOT_TINT[key]);
-    (this.ballHalo.material as THREE.ShaderMaterial).uniforms.uColor.value.copy(this.teamColors[e.p.team]);
+    // a rocket serve and a smash burn: the halo goes fiery instead of team-coloured
+    (this.ballHalo.material as THREE.ShaderMaterial).uniforms.uColor.value.copy(key === 'rocket' || key === 'smash' ? SHOT_TINT[key] : this.teamColors[e.p.team]);
+    if (key === 'rocket') this.flash = Math.max(this.flash, 0.25);
   }
 
   private updateNet(dt: number) {

@@ -65,6 +65,8 @@ export type MatchEvent =
       crossed?: boolean;
       /** spin actually put on the ball (−1 slice … +1 topspin) */
       shotSpin: number;
+      /** a serve struck right at the top of the toss */
+      rocket?: boolean;
     }
   | { type: 'whiff'; p: TPlayer; tau: number; dtMs?: number; why?: 'early' | 'late' | 'reach' | 'noball' }
   | { type: 'toss'; p: TPlayer }
@@ -887,6 +889,7 @@ export class Match {
     let power = sw.input.power;
     const spin = sw.input.spin;
     let shotSpin = 0;
+    let rocket = false;
 
     if (sw.serve) {
       const bias = p.human ? 0 : this.cfg.practice ? -1 : this.second ? 0.02 : 0.12 + p.ctrl.ai.serve * 0.18;
@@ -895,6 +898,7 @@ export class Match {
       seg = buildShot(contact, res.spec, tc);
       shotSpin = res.spec.spin;
       perfect = res.perfect;
+      rocket = res.rocket;
       kind = 'serve';
       this.ball.serve = true;
       this.ball.letPending = false;
@@ -963,7 +967,7 @@ export class Match {
     const big = power > 0.82 || kind === 'smash' || perfect;
     // a freeze-frame is punctuation: only for smashes and a player's perfect shot
     // (on every strong hit it read as stutter)
-    this.hitstop = kind === 'smash' ? 0.07 : perfect && p.human ? 0.045 : 0;
+    this.hitstop = kind === 'smash' || rocket ? 0.07 : perfect && p.human ? 0.045 : 0;
     this.excitement = Math.min(1, this.excitement + 0.04 + this.rally * 0.01 + (big ? 0.08 : 0));
     this.onEvent({
       type: 'hit',
@@ -982,6 +986,7 @@ export class Match {
       aim: sw.input.aim,
       crossed: sw.input.crossed,
       shotSpin,
+      rocket,
     });
   }
 

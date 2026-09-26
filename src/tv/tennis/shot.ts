@@ -199,13 +199,16 @@ export function serveShot(
   sw: SwingInput,
   rng: Rng,
   faultBias = 0,
-): { spec: ShotSpec; perfect: boolean; fault: boolean } {
+): { spec: ShotSpec; perfect: boolean; fault: boolean; rocket: boolean } {
   const box = serviceBox(team, deuce);
   const tau = clamp(sw.tau, -1.3, 1.3);
   const q = clamp(1 - Math.pow(Math.abs(tau), 1.4));
-  const perfect = Math.abs(tau) < 0.14;
+  // the top of the toss: ±50 ms or so (a phone's swing arrives with a little jitter)
+  const perfect = Math.abs(tau) < 0.2;
   const power = clamp(sw.power);
-  const speed = 15 + 21 * (0.4 * q + 0.6 * power * (0.55 + 0.45 * q)) * (perfect ? 1.06 : 1);
+  // struck right at the top of the toss with a real swing: a rocket serve
+  const rocket = perfect && power > 0.55;
+  const speed = (15 + 21 * (0.4 * q + 0.6 * power * (0.55 + 0.45 * q))) * (rocket ? 1.16 : perfect ? 1.06 : 1);
 
   const centreX = box.x0 === 0 ? 1 : -1; // sign of x inside the box
   // aim with the racket's path when measured (towards the sideline = wide);
@@ -219,7 +222,7 @@ export function serveShot(
   let depth = COURT.service - lerp(0.35, 1.6, rng.next() * (0.4 + 0.6 * (1 - power)));
   let clear = 0.06;
 
-  const faultP = clamp(Math.max(0, (0.62 - q) * 1.15) + faultBias + (power > 0.92 ? 0.1 : 0), 0, 0.75);
+  const faultP = rocket ? 0.04 : clamp(Math.max(0, (0.62 - q) * 1.15) + faultBias + (power > 0.92 ? 0.1 : 0), 0, 0.75);
   let fault = false;
   if (rng.chance(faultP)) {
     fault = true;
@@ -233,8 +236,9 @@ export function serveShot(
   }
   tx += rng.gauss() * (perfect ? 0.08 : 0.25);
   return {
-    spec: { tx, tz: zSign * depth, speed, spin: 0.35, clear, netted: clear < 0, maxApex: 4.2 },
+    spec: { tx, tz: zSign * depth, speed, spin: rocket ? 0.15 : 0.35, clear, netted: clear < 0, maxApex: 4.2 },
     perfect,
     fault,
+    rocket,
   };
 }

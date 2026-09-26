@@ -171,7 +171,7 @@ const playPanel = h(
   h('div', { class: 'row3' }, h('span', {}), padBtn('home', 'small home', h('i', { class: 'house' })), h('span', {})),
 );
 
-const tossBtn = h('button', { class: 'toss' }, h('b', {}, 'TAP TO TOSS'), h('span', {}, 'then swing to serve'));
+const tossBtn = h('button', { class: 'toss' }, h('b', {}, 'LIFT TO TOSS'), h('span', {}, 'raise the phone (or tap here), then swing'));
 const servePanel = h('div', { class: 'panel serve' }, tossBtn);
 
 const skipBtn = h('button', { class: 'toss skip' }, h('b', {}, 'SKIP'), h('span', {}, 'replay'));
@@ -325,8 +325,8 @@ function setMode(m: PadMode, title?: string, hint?: string) {
   }
   if (m === 'serve') {
     tossBtn.classList.remove('tossed');
-    tossBtn.querySelector('b')!.textContent = title || 'TAP TO TOSS';
-    tossBtn.querySelector('span')!.textContent = hint || 'then swing to serve';
+    tossBtn.querySelector('b')!.textContent = title || (motionOK ? 'LIFT TO TOSS' : 'TAP TO TOSS');
+    tossBtn.querySelector('span')!.textContent = hint || (motionOK ? 'raise the phone (or tap here), then swing' : 'then swing to serve');
   }
   swipeZone.classList.toggle('on', !motionOK && (m === 'play' || m === 'serve'));
   servePanel.classList.toggle('swipe', !motionOK);
@@ -437,15 +437,41 @@ for (const el of root.querySelectorAll<HTMLButtonElement>('.pb')) {
   el.addEventListener('lostpointercapture', up);
 }
 
-tossBtn.addEventListener('pointerdown', (e) => {
-  e.preventDefault();
-  if (!joined) return;
+function doToss() {
+  if (!joined || tossBtn.classList.contains('tossed')) return;
   link.send({ type: 'toss', lat: link.lat });
   audio.toss();
   tossBtn.classList.add('tossed');
   tossBtn.querySelector('b')!.textContent = 'SWING!';
   tossBtn.querySelector('span')!.textContent = motionOK ? 'hit it at the top' : 'swipe up here to serve';
+}
+
+tossBtn.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  doToss();
 });
+
+// Lift to toss (Switch Sports-style): while it's your serve, raising the phone
+// sharply tosses the ball. It has to start from a still phone, so waving it
+// around while you wait doesn't toss; the lift itself is never a swing.
+let liftV = 0;
+let lastStill = 0;
+let lastLift = 0;
+let noSwingUntil = 0;
+function liftCheck(now: number, aUp: number, w: number, dt: number) {
+  if (mode !== 'serve' || !joined || tossBtn.classList.contains('tossed')) {
+    liftV = 0;
+    return;
+  }
+  if (w < 1.5 && Math.abs(aUp) < 1.5) lastStill = now;
+  liftV = Math.max(0, liftV * Math.exp(-dt / 0.25) + aUp * dt);
+  if (liftV > 0.55 && now - lastStill < 700 && now - lastLift > 1200) {
+    lastLift = now;
+    liftV = 0;
+    noSwingUntil = now + 320;
+    doToss();
+  }
+}
 
 skipBtn.addEventListener('pointerdown', (e) => {
   e.preventDefault();
@@ -491,6 +517,7 @@ function swingPath(sw: SwingEvent): number | null {
 }
 
 function emitSwing(sw: SwingEvent, touch = false) {
+  if (!touch && sw.t < noSwingUntil) return;
   const age = Math.max(0, performance.now() - sw.t);
   const path = touch ? null : swingPath(sw);
   pathOk = path !== null;
@@ -579,6 +606,15 @@ function onMotion(e: DeviceMotionEvent) {
   // trapezoidal: the rate over the interval is the mean of its two ends (a one-sided
   // sum runs a whole sample ahead — ~15° at the peak of a hard swing)
   orient.integrate((rx + prevRate[0]) / 2, (ry + prevRate[1]) / 2, (rz + prevRate[2]) / 2, dt);
+  {
+    // vertical acceleration (the sign quirks of iOS cancel in this product)
+    const gx0 = (g?.x ?? 0) - ax,
+      gy0 = (g?.y ?? 0) - ay,
+      gz0 = (g?.z ?? 0) - az;
+    const gl = Math.hypot(gx0, gy0, gz0);
+    const aUp = gl > 1 ? (ax * gx0 + ay * gy0 + az * gz0) / gl : 0;
+    liftCheck(now, aUp, Math.hypot(rx, ry, rz), dt);
+  }
   prevRate[0] = rx;
   prevRate[1] = ry;
   prevRate[2] = rz;
