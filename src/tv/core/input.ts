@@ -44,6 +44,14 @@ export class Input {
   onSeatsChanged: () => void = () => {};
   onWave: (slot: number) => void = () => {};
   onPrep: (slot: number, side: 'fh' | 'bh') => void = () => {};
+  /** bowling: the grip went down / up, the ball was released, the arm's live angle */
+  onGrip: (slot: number, down: boolean) => void = () => {};
+  onBowl: (slot: number, r: { speed: number; angle: number; spin: number }) => void = () => {};
+  onArm: (slot: number, arm: number) => void = () => {};
+  /** set by the app while bowling: Space/mouse bowl instead of swinging */
+  bowlMode = false;
+  private bowlSpin = 0;
+  private bowlDrag: { y: number; t: number; hist: { x: number; y: number; t: number }[] } | null = null;
   /** live racket orientation per slot (player frame: x right, y towards screen, z up) */
   racket: ({ s: [number, number, number]; n: [number, number, number]; t: number } | null)[] = [null, null, null, null];
   /** set by the app: while true the mouse drives swings (in matches) */
@@ -58,10 +66,31 @@ export class Input {
     window.addEventListener('pointermove', (e) => this.pointer(e));
     // a click on the game (not on a menu) tosses the ball when serving
     window.addEventListener('pointerdown', (e) => {
-      if (!this.mouseSwings || e.button !== 0) return;
-      if ((e.target as HTMLElement)?.closest?.('.screen')) return;
+      if (e.button !== 0 || (e.target as HTMLElement)?.closest?.('.screen')) return;
+      if (this.bowlMode) {
+        // bowling with the mouse: press to grip, flick up and let go to bowl
+        this.lastLocalInput = performance.now();
+        this.bowlDrag = { y: e.clientY, t: performance.now(), hist: [{ x: e.clientX, y: e.clientY, t: performance.now() }] };
+        this.onGrip(0, true);
+        return;
+      }
+      if (!this.mouseSwings) return;
       this.lastLocalInput = performance.now();
       this.onToss(0);
+    });
+    window.addEventListener('pointerup', (e) => {
+      const d = this.bowlDrag;
+      if (!this.bowlMode || !d) return;
+      this.bowlDrag = null;
+      // the flick over the last ~120 ms sets speed, line and spin
+      const now = performance.now();
+      const h = d.hist.filter((p) => now - p.t < 140);
+      const a = h[0] ?? { x: e.clientX, y: e.clientY, t: now - 100 };
+      const dt = Math.max(0.03, (now - a.t) / 1000);
+      const vy = (a.y - e.clientY) / dt / Math.max(600, window.innerHeight);
+      const vx = (e.clientX - a.x) / dt / Math.max(600, window.innerHeight);
+      this.onGrip(0, false);
+      this.onBowl(0, { speed: 3 + Math.max(0, vy) * 1.6, angle: Math.max(-0.15, Math.min(0.15, vx * 0.05)), spin: this.bowlSpin });
     });
   }
 
@@ -181,6 +210,13 @@ export class Input {
         break;
       case 'ori':
         this.racket[seat.slot] = { s: m.s, n: m.n, t: performance.now() };
+        if (m.arm !== undefined) this.onArm(seat.slot, m.arm);
+        break;
+      case 'grip':
+        this.onGrip(seat.slot, m.down);
+        break;
+      case 'bowl':
+        this.onBowl(seat.slot, { speed: m.speed, angle: m.angle, spin: m.spin });
         break;
     }
   }
@@ -213,6 +249,20 @@ export class Input {
       if (!e.repeat) this.onButton(0, b, down);
       return;
     }
+    if (this.bowlMode) {
+      const k = e.key.toLowerCase();
+      // Space: hold to grip, let go to bowl; J straight, K hook left, L hook right
+      if (k === ' ') {
+        e.preventDefault();
+        if (e.repeat) return;
+        this.lastLocalInput = performance.now();
+        this.onGrip(0, down);
+        if (!down) this.onBowl(0, { speed: 7.3, angle: 0, spin: this.bowlSpin });
+        return;
+      }
+      if (down && (k === 'j' || k === 'k' || k === 'l')) this.bowlSpin = k === 'k' ? 0.7 : k === 'l' ? -0.7 : 0;
+      if (down && (k === 'j' || k === 'k' || k === 'l')) return;
+    }
     if (!down || e.repeat) return;
     const k = e.key.toLowerCase();
     if (k === 'f') {
@@ -235,6 +285,10 @@ export class Input {
 
   private pointer(e: PointerEvent) {
     const now = performance.now();
+    if (this.bowlDrag) {
+      this.bowlDrag.hist.push({ x: e.clientX, y: e.clientY, t: now });
+      if (this.bowlDrag.hist.length > 40) this.bowlDrag.hist.shift();
+    }
     const m = this.mouse;
     m.hist.push({ x: e.clientX, y: e.clientY, t: now });
     while (m.hist.length && now - m.hist[0].t > 90) m.hist.shift();

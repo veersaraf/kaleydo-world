@@ -139,6 +139,73 @@ export class Sfx {
     e.tone(t, f * 2.01, 0.035, { type: 'sine', gain: 0.025, bus: e.voice });
   }
 
+  // ---------------------------------------------------------------- bowling
+
+  private rollBed: { src: AudioBufferSourceNode; g: GainNode; f: BiquadFilterNode; p: StereoPannerNode } | null = null;
+
+  /** the low rumble of a ball rolling down the lane: level 0..1 follows its speed */
+  roll(level: number, pan = 0) {
+    const e = this.e;
+    if (!this.rollBed && level > 0.01) {
+      const src = e.ctx.createBufferSource();
+      src.buffer = e.pinkBuf;
+      src.loop = true;
+      const f = e.ctx.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.value = 240;
+      f.Q.value = 0.9;
+      const g = e.ctx.createGain();
+      g.gain.value = 0;
+      const p = e.ctx.createStereoPanner();
+      src.connect(f).connect(g).connect(p).connect(e.sfx);
+      src.start();
+      this.rollBed = { src, g, f, p };
+    }
+    const r = this.rollBed;
+    if (!r) return;
+    const t = e.now;
+    r.g.gain.setTargetAtTime(level * 0.9, t, 0.06);
+    r.f.frequency.setTargetAtTime(160 + level * 220, t, 0.1);
+    r.p.pan.setTargetAtTime(Math.max(-1, Math.min(1, pan)), t, 0.1);
+    if (level <= 0.01) {
+      const bed = r;
+      this.rollBed = null;
+      setTimeout(() => bed.src.stop(), 400);
+    }
+  }
+
+  /** wooden pin clatter; the ball hitting a pin is a deeper thock */
+  pinHit(impact: number, pan: number, ballOnPin: boolean) {
+    const e = this.e;
+    const t = e.now + Math.random() * 0.012;
+    const g = Math.min(1, impact / 6);
+    if (ballOnPin) {
+      e.tone(t, 150, 0.12, { gain: 0.5 * g + 0.2, to: 90, bus: e.sfx, pan });
+      e.noise(t, 0.08, { type: 'bandpass', f0: 1100, q: 1.2, gain: 0.45 * g + 0.15, bus: e.sfx, pan });
+      return;
+    }
+    const f = 700 + Math.random() * 700;
+    e.tone(t, f, 0.06, { type: 'triangle', gain: 0.18 * g + 0.05, to: f * 0.8, bus: e.sfx, pan });
+    e.tone(t, f * 1.51, 0.04, { type: 'sine', gain: 0.08 * g, bus: e.sfx, pan });
+    e.noise(t, 0.05, { type: 'bandpass', f0: 2200 + Math.random() * 1200, q: 2, gain: 0.22 * g + 0.04, bus: e.sfx, pan });
+  }
+
+  /** the ball dropping into a gutter */
+  gutter(pan = 0) {
+    const e = this.e;
+    const t = e.now + 0.002;
+    e.tone(t, 130, 0.22, { gain: 0.35, to: 85, bus: e.sfx, pan });
+    e.noise(t, 0.3, { type: 'lowpass', f0: 500, gain: 0.25, bus: e.sfx, pan });
+  }
+
+  /** the pinsetter sweeping and re-racking */
+  pinsetter() {
+    const e = this.e;
+    const t = e.now + 0.002;
+    e.noise(t, 0.9, { type: 'bandpass', f0: 700, f1: 320, q: 3, gain: 0.08, bus: e.sfx, attack: 0.1 });
+    e.tone(t + 0.75, 220, 0.08, { type: 'square', gain: 0.04, to: 160, bus: e.sfx });
+  }
+
   // ---------------------------------------------------------------- crowd
 
   startCrowd() {

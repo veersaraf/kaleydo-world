@@ -17,6 +17,8 @@ import { Rng } from './core/math';
 import { Color } from 'three';
 import { COURT } from './tennis/court';
 import { TOUR, loadTour, saveTour, type Champion } from './tour';
+import { BowlHud } from './ui/bowlhud';
+import type { BowlEvent } from './bowling/game';
 import type { PadMode } from '../shared/protocol';
 
 type Level = 'rookie' | 'club' | 'pro' | 'ace';
@@ -132,8 +134,17 @@ export class Flow {
     this.applyTheme(worldDef('plaza'));
 
     app.input.onButton = (slot, b, down) => {
+      if (this.app.sport === 'bowling' && !this.screen && this.bowlButton(slot, b, down)) return;
       if (down) this.button(slot, b);
     };
+    app.input.onGrip = (slot, down) => {
+      if (!this.screen) this.app.bowl?.grip(slot, down);
+    };
+    app.input.onBowl = (slot, r) => {
+      if (!this.screen) this.app.bowl?.release(slot, r);
+    };
+    app.input.onArm = (slot, arm) => this.app.bowl?.setArm(slot, arm);
+    app.onBowlEvent = (e) => this.bowlEvent(e);
     const prevSwing = app.input.onSwing;
     app.input.onSwing = (e) => {
       if (this.screen?.name === 'title') {
@@ -381,8 +392,10 @@ export class Flow {
     const help = item('?', '#35d49a', 'How to Play', 'Swinging, timing & spin');
     const set = item('⚙', '#8a7dff', 'Settings', 'Sound, voice, controls');
     const labItem = item('🎯', '#ff5a8a', 'Swing Lab', 'Ball machine + a read-out of every swing');
+    const bowlItem = item('🎳', '#ff8a3d', 'Bowling', 'Grip, swing, let go — ten frames');
     const nav = new Nav([
       { el: quick, onSelect: () => this.go(this.setupScreen('quick')) },
+      { el: bowlItem, onSelect: () => this.go(this.bowlSetup()) },
       { el: tour, onSelect: () => this.go(this.tourScreen()) },
       { el: kal, onSelect: () => this.go(this.setupScreen('kaleido')) },
       { el: labItem, onSelect: () => this.beginSwingLab() },
@@ -392,7 +405,7 @@ export class Flow {
     const el = h(
       'div',
       { class: 'screen mainmenu' },
-      h('div', { class: 'col' }, h('div', { class: 'mini-logo' }, h('span', null, 'KALEIDO')), h('div', { class: 'menu' }, quick, tour, kal, labItem, help, set)),
+      h('div', { class: 'col' }, h('div', { class: 'mini-logo' }, h('span', null, 'KALEIDO')), h('div', { class: 'menu' }, quick, bowlItem, tour, kal, labItem, help, set)),
       this.join.el,
     );
     this.join.refresh();
@@ -663,7 +676,7 @@ export class Flow {
     const quit = item('Quit to menu');
     const nav = new Nav([
       { el: resume, onSelect: () => this.resume() },
-      { el: restart, onSelect: () => this.lastCfg && this.beginMatch(this.lastCfg.world, true) },
+      { el: restart, onSelect: () => (this.app.sport === 'bowling' ? this.bowlCfg && void this.beginBowling(this.bowlCfg.world, this.bowlCfg.cpu) : this.lastCfg && this.beginMatch(this.lastCfg.world, true)) },
       { el: quit, onSelect: () => this.quitToMenu() },
     ]);
     const sheet = h('div', { class: 'sheet panel', style: 'width:auto;min-width:calc(var(--u)*56)' }, h('h2', null, 'Paused'), h('div', { class: 'menu' }, resume, restart, quit));
@@ -812,7 +825,7 @@ export class Flow {
   }
 
   private pause() {
-    if (!this.app.match || this.app.attract || this.screen) return;
+    if ((!this.app.match && !this.app.bowl) || this.app.attract || this.screen) return;
     this.app.paused = true;
     this.go(this.pauseScreen());
     this.sound('select');
@@ -830,11 +843,234 @@ export class Flow {
     this.app.paused = false;
     this.hud?.el.remove();
     this.hud = null;
+    this.bowlHud?.el.remove();
+    this.bowlHud = null;
+    this.audio?.sfx.roll(0);
+    this.app.stopBowling();
     this.app.startAttract(this.app.stage.current?.def.id ?? 'plaza');
     this.app.stage.setTeamColors('#3aa8ff', '#ff5a8c');
     this.app.input.prune();
     this.go(this.mainMenu());
     this.audio?.music.setIntensity(3);
+  }
+
+  // ---------------------------------------------------------------- bowling
+
+  private bowlHud: BowlHud | null = null;
+  private bowlCfg: { world: string; cpu: number } | null = null;
+  private bowlRoll = { x: 0, z: 0, on: false };
+
+  /** Who's bowling, an optional CPU, and where. */
+  private bowlSetup(): Screen {
+    const S = this.settings;
+    const cpuLevels = [
+      { label: 'No CPU', skill: -1 },
+      { label: 'CPU · Rookie', skill: 0.3 },
+      { label: 'CPU · Pro', skill: 0.65 },
+      { label: 'CPU · Ace', skill: 0.9 },
+    ];
+    let cpu = this.bowlCfg ? Math.max(0, cpuLevels.findIndex((c) => c.skill === this.bowlCfg!.cpu)) : this.app.input.activeSeats.length > 1 ? 0 : 2;
+    let wi = Math.max(0, WORLDS.findIndex((w) => w.id === (this.bowlCfg?.world ?? S.world)));
+    const row = (k: string) => {
+      const v = h('span');
+      const r = h('div', { class: 'row' }, h('span', { class: 'k' }, k), h('span', { class: 'v' }, h('span', { class: 'arrow' }, '◀'), v, h('span', { class: 'arrow' }, '▶')));
+      return { r, v };
+    };
+    const who = h('div', { class: 'hintline' });
+    const cpuRow = row('Opponent');
+    const worldRow = row('World');
+    const go = h('div', { class: 'row go' }, 'Bowl!');
+    const refresh = () => {
+      const names = this.app.input.activeSeats.map((st) => st.name);
+      who.textContent = names.length ? `Bowlers: ${names.join(', ')}` : 'Bowler: Player 1';
+      cpuRow.v.textContent = cpuLevels[cpu].label;
+      worldRow.v.textContent = WORLDS[wi].name;
+    };
+    const cycle = (d: number) => {
+      wi = (wi + d + WORLDS.length) % WORLDS.length;
+      this.app.stage.setWorld(WORLDS[wi].id, { transition: true });
+      refresh();
+    };
+    const nav = new Nav([
+      { el: cpuRow.r, onLeft: () => ((cpu = (cpu + 3) % 4), refresh()), onRight: () => ((cpu = (cpu + 1) % 4), refresh()), onSelect: () => ((cpu = (cpu + 1) % 4), refresh()) },
+      { el: worldRow.r, onLeft: () => cycle(-1), onRight: () => cycle(1), onSelect: () => cycle(1) },
+      { el: go, onSelect: () => void this.beginBowling(WORLDS[wi].id, cpuLevels[cpu].skill) },
+    ]);
+    refresh();
+    const sheet = h(
+      'div',
+      { class: 'sheet panel' },
+      h('h2', null, 'Bowling'),
+      h('div', { class: 'hintline' }, 'Hold the grip on your phone, swing your arm back and through, and let go. Twist your wrist to hook it.'),
+      who,
+      cpuRow.r,
+      worldRow.r,
+      go,
+    );
+    return this.navScreen('bowlsetup', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Bowling', hint: '◀ ▶ to change · A to bowl' });
+  }
+
+  async beginBowling(world: string, cpu: number) {
+    this.bowlCfg = { world, cpu };
+    this.go(null);
+    this.hud?.el.remove();
+    this.hud = null;
+    this.bowlHud?.el.remove();
+    this.bowlHud = null;
+    const seats = this.app.input.activeSeats.length ? this.app.input.activeSeats : [this.app.input.seats[0]!];
+    const specs = seats.map((st) => {
+      const sp = this.app.humanSpec(st.slot, 0);
+      return { name: sp.name, color: st.color, look: sp.look, handed: sp.handed, slot: st.slot, cpu: null as number | null };
+    });
+    if (cpu >= 0) specs.push({ name: 'CPU', color: '#6c6a84', look: randomLook(this.rng), handed: this.rng.chance(0.15) ? -1 : 1, slot: -1, cpu });
+    await this.app.startBowling(specs, world);
+    const g = this.app.bowl!;
+    this.bowlHud = new BowlHud(g.bowlers);
+    this.hudLayer.append(this.bowlHud.el);
+    this.bowlHud.setHint(this.bowlHint());
+    const def = worldDef(world);
+    if (this.audio) {
+      this.audio.playSong(def.song);
+      this.audio.music.setIntensity(1);
+      this.audio.sfx.cheer(0.4);
+    }
+    this.syncPads(true);
+  }
+
+  private bowlHint() {
+    const b = this.app.bowl?.bowler;
+    if (!b || b.cpu !== null) return '';
+    const seat = this.app.input.seats[b.slot];
+    return seat && !seat.local ? '<b>Hold</b> the grip · swing your arm back and through · <b>let go</b>' : '<b>Hold Space</b> (or the mouse) · let go to bowl · <b>J K L</b> straight / hook left / hook right';
+  }
+
+  /** ◀ ▶ step along the approach, ↺ ↻ (− +, or ▲ ▼) turn the aim; held down, they keep going. */
+  private bowlButton(slot: number, b: Btn, down: boolean) {
+    const g = this.app.bowl;
+    if (!g) return false;
+    if (b === 'left' || b === 'right') {
+      g.move(slot, down ? (b === 'left' ? -1 : 1) : 0);
+      return true;
+    }
+    if (b === 'minus' || b === 'plus' || b === 'up' || b === 'down') {
+      g.turn(slot, down ? (b === 'minus' || b === 'up' ? -1 : 1) : 0);
+      return true;
+    }
+    if (b === 'a' && down) {
+      g.startNow();
+      return true;
+    }
+    return false;
+  }
+
+  private bowlEvent(e: BowlEvent) {
+    const a = this.audio;
+    const hud = this.bowlHud;
+    const g = this.app.bowl;
+    if (!g) return;
+    const pan = (x: number) => Math.max(-1, Math.min(1, x / 4));
+    const padOf = (slot: number) => (slot >= 0 ? this.app.input.seats[slot]?.pid : undefined);
+    switch (e.type) {
+      case 'turn':
+        hud?.update(g.current);
+        hud?.showTurn(e.bowler, e.frame, e.ball);
+        hud?.setHint(e.frame === 0 && e.ball === 0 ? this.bowlHint() : '');
+        if (e.ball === 0) hud?.setPins(null);
+        this.syncPads(true);
+        break;
+      case 'release': {
+        a?.sfx.swish(0.8, 0);
+        hud?.showSpeed(e.kph);
+        hud?.setHint('');
+        const pid = padOf(e.bowler.slot);
+        const hook = Math.abs(e.t.spin) < 0.2 ? 'straight' : e.t.spin > 0 ? 'hook left' : 'hook right';
+        if (pid) this.app.link.toPad(pid, { type: 'fx', fx: 'hit', power: Math.min(1, e.t.speed / 9), label: `${Math.round(e.kph)} km/h`, detail: hook });
+        this.bowlRoll.on = true;
+        this.syncPads(true);
+        break;
+      }
+      case 'physics': {
+        const p = e.e;
+        if (p.type === 'hit') a?.sfx.pinHit(p.impact, pan(p.x), p.ballOnPin);
+        else if (p.type === 'gutter') a?.sfx.gutter(pan(p.x));
+        else if (p.type === 'pit') a?.sfx.thud(0);
+        else if (p.type === 'settled') {
+          this.bowlRoll.on = false;
+          a?.sfx.roll(0);
+        }
+        break;
+      }
+      case 'result': {
+        this.bowlRoll.on = false;
+        a?.sfx.roll(0);
+        const calls: Record<string, [string, string]> = { strike: ['STRIKE!', 'good'], spare: ['SPARE!', 'good'], split: ['SPLIT', 'bad'], gutter: ['GUTTER', 'bad'], miss: ['MISS', 'bad'] };
+        const [text, cls] = calls[e.mark] ?? [`${e.pins} ${e.pins === 1 ? 'PIN' : 'PINS'}`, ''];
+        hud?.say(text, e.mark === 'split' ? splitName(e.standing) : '', cls);
+        hud?.update(g.current);
+        hud?.setPins(e.mark === 'strike' || e.mark === 'spare' ? null : e.standing);
+        if (e.mark === 'strike') {
+          a?.sfx.cheer(1);
+          a?.music.jingle('point');
+        } else if (e.mark === 'spare') a?.sfx.cheer(0.7);
+        else if (e.mark === 'split' || e.mark === 'gutter') a?.sfx.aww();
+        else if (e.pins >= 7) a?.sfx.applause(0.4);
+        const pid = padOf(e.bowler.slot);
+        if (pid) this.app.link.toPad(pid, { type: 'fx', fx: e.mark === 'strike' || e.mark === 'spare' ? 'perfect' : 'hit', label: text, detail: `Frame ${e.frame + 1} · ${e.bowler.score.total()} total` });
+        break;
+      }
+      case 'sweep':
+        a?.sfx.pinsetter();
+        break;
+      case 'over':
+        this.bowlRoll.on = false;
+        a?.sfx.roll(0);
+        a?.sfx.cheer(1);
+        window.setTimeout(() => {
+          if (this.app.sport === 'bowling') this.go(this.bowlResults(e.ranking));
+        }, 1600);
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** Per frame while bowling: the rolling rumble follows the ball; pads follow the game. */
+  private bowlFrame(dt: number) {
+    const g = this.app.bowl;
+    if (!g) return;
+    const ball = g.phys.view.ball;
+    if (this.bowlRoll.on && ball.visible && dt > 0) {
+      const v = Math.hypot(ball.x - this.bowlRoll.x, ball.z - this.bowlRoll.z) / dt;
+      this.audio?.sfx.roll(Math.min(1, v / 9) * (ball.gutter ? 0.6 : 1), Math.max(-1, Math.min(1, ball.x / 2)));
+    }
+    this.bowlRoll.x = ball.x;
+    this.bowlRoll.z = ball.z;
+    this.syncPads();
+  }
+
+  private bowlResults(ranking: import('./bowling/game').Bowler[]): Screen {
+    const again = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Play again')));
+    const other = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Another world')));
+    const menu = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Main menu')));
+    const nav = new Nav([
+      { el: again, onSelect: () => this.bowlCfg && void this.beginBowling(this.bowlCfg.world, this.bowlCfg.cpu) },
+      { el: other, onSelect: () => this.bowlCfg && void this.beginBowling(this.shuffledWorlds().find((w) => w !== this.bowlCfg!.world) ?? 'park', this.bowlCfg.cpu) },
+      { el: menu, onSelect: () => this.quitToMenu() },
+    ]);
+    const winner = ranking[0];
+    const rows = ranking.map((b, i) =>
+      h('div', { class: 'brank', style: `--c:${b.color}` }, h('b', null, `${i + 1}`), h('i'), h('span', null, b.name), h('em', null, String(b.score.total()))),
+    );
+    const strikes = (b: import('./bowling/game').Bowler) => b.score.frames().reduce((n, f) => n + f.rolls.filter((r) => r === 'X').length, 0);
+    const sheet = h(
+      'div',
+      { class: 'sheet panel results' },
+      h('h2', null, ranking.length > 1 ? `${winner.name} wins!` : `${winner.score.total()} points!`),
+      h('div', { class: 'hintline' }, ranking.length > 1 ? 'Final scores' : `${strikes(winner)} strike${strikes(winner) === 1 ? '' : 's'} this game`),
+      ...rows,
+      h('div', { class: 'menu' }, again, other, menu),
+    );
+    return this.navScreen('bowlresults', h('div', { class: 'screen center results' }, sheet), nav, () => this.quitToMenu(), { title: 'Game over', hint: 'A to choose' });
   }
 
   // ---------------------------------------------------------------- swing lab
@@ -1303,7 +1539,20 @@ export class Flow {
       let mode: PadMode = 'menu';
       let title = this.screen?.pad?.title;
       let hint = this.screen?.pad?.hint;
-      if (!this.screen && this.app.replay) {
+      const g = this.app.bowl;
+      if (!this.screen && this.app.sport === 'bowling' && g) {
+        const up = g.bowler;
+        const mine = up.slot === seat.slot;
+        if (mine && (g.state === 'ready' || g.state === 'approach' || g.state === 'intro')) {
+          mode = 'bowl';
+          title = 'Your turn!';
+          hint = up.score.frame === 9 ? `10th frame · ball ${up.score.ball + 1}` : `Frame ${up.score.frame + 1} · ball ${up.score.ball + 1}`;
+        } else {
+          mode = 'wait';
+          title = mine ? 'Rolling…' : `${up.name} is up`;
+          hint = mine ? 'watch the pins' : 'you\'re next soon';
+        }
+      } else if (!this.screen && this.app.replay) {
         mode = 'skip';
         title = 'SKIP';
         hint = 'replay';
@@ -1315,8 +1564,8 @@ export class Flow {
           hint = 'Enjoy the match';
         } else if (m.isServerSlot(seat.slot)) {
           mode = 'serve';
-          title = m.second ? 'SECOND SERVE' : 'TAP TO TOSS';
-          hint = 'then swing to serve';
+          title = m.second ? 'SECOND SERVE' : 'LIFT TO TOSS';
+          hint = 'raise the phone (or tap), then swing';
         } else {
           mode = 'play';
           title = m.state === 'intro' ? 'Get ready!' : 'Rally!';
@@ -1336,6 +1585,7 @@ export class Flow {
     this.time += dt;
     this.screen?.update?.(dt);
     this.hud?.update(dt);
+    if (this.app.sport === 'bowling') this.bowlFrame(dt);
     const m = this.app.match;
     if (m && !this.app.attract && this.hud) {
       // serve hint
@@ -1398,4 +1648,12 @@ export class Flow {
       '--panel': def.ui.panel,
     });
   }
+}
+
+/** "7-10", "4-6-7-10"… the standing pins of a split */
+function splitName(standing: boolean[]) {
+  return standing
+    .map((st, i) => (st ? i + 1 : 0))
+    .filter(Boolean)
+    .join('-');
 }

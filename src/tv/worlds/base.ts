@@ -13,6 +13,16 @@ import { Trail, type TrailStyle } from '../render/trail';
 import { Particles } from '../render/particles';
 import { Crowd } from './crowd';
 import { batchStatic, type BatchStats } from '../render/batch';
+import type { BowlView } from '../bowling/types';
+
+/** What a world needs from the bowling venue (lanes, pins, ball) — see bowling/venue.ts. */
+export interface VenueLike {
+  group: THREE.Group;
+  update(v: BowlView, realDt: number): void;
+  holdBall(p: THREE.Vector3 | null): void;
+  setAim(aim: { x: number; angle: number } | null): void;
+  dispose(): void;
+}
 
 /** trail colours per kind of shot (topspin red, slice blue, lob yellow…) */
 const SHOT_TINT: Record<string, THREE.Color> = {
@@ -72,6 +82,8 @@ export interface FrameView {
   cam: THREE.PerspectiveCamera;
   /** 1 on each musical beat, decaying to 0 */
   beat: number;
+  /** bowling: the ball and pins to draw */
+  bowl?: BowlView;
 }
 
 export interface CourtStyle {
@@ -114,6 +126,12 @@ export abstract class World {
    *  built as far-end background ends up right in front of their camera. */
   env = new THREE.Group();
   netMesh!: THREE.Mesh;
+  courtGroup: THREE.Group | null = null;
+  netGroup: THREE.Group | null = null;
+  /** which sport this world is set up for */
+  sport: 'tennis' | 'bowling' = 'tennis';
+  /** the bowling lanes, pins and ball (built the first time bowling comes here) */
+  venue: VenueLike | null = null;
   netWob = 0;
   netWobX = 0;
   w = 1;
@@ -225,6 +243,9 @@ export abstract class World {
       m.receiveShadow = !!s.receiveShadow;
       g.add(m);
     }
+    // kept apart from the static batch so bowling can hide it
+    g.userData.noBatch = true;
+    this.courtGroup = g;
     this.scene.add(g);
     return g;
   }
@@ -266,6 +287,9 @@ export abstract class World {
     const strap = new THREE.Mesh(new THREE.BoxGeometry(0.05, COURT.netH, 0.01), s.band);
     strap.position.set(0, COURT.netH / 2, 0.005);
     g.add(strap);
+    // kept apart from the static batch so bowling can hide it
+    g.userData.noBatch = true;
+    this.netGroup = g;
     this.scene.add(g);
     return g;
   }
@@ -491,6 +515,7 @@ export abstract class World {
     }
     this.particles.update(v.realDt);
     this.crowd?.update(v.realT, v.realDt, v.excitement);
+    if (this.sport === 'bowling' && v.bowl) this.venue?.update(v.bowl, v.realDt);
     this.updateNet(v.realDt);
     this.flash = Math.max(0, this.flash - v.realDt * 3.5);
     this.animate(v);
@@ -498,6 +523,23 @@ export abstract class World {
 
   /** Scenery animation hook. */
   protected animate(_v: FrameView) {}
+
+  /**
+   * Turn the court into bowling lanes (or back). The venue is built with this
+   * world's own materials the first time, so the lanes match the art style.
+   */
+  setSport(sport: 'tennis' | 'bowling', makeVenue?: (kit: MaterialKit) => VenueLike) {
+    this.sport = sport;
+    const bowling = sport === 'bowling';
+    if (bowling && !this.venue && makeVenue) {
+      this.venue = makeVenue(this.kit);
+      this.scene.add(this.venue.group);
+    }
+    if (this.venue) this.venue.group.visible = bowling;
+    if (this.courtGroup) this.courtGroup.visible = !bowling;
+    if (this.netGroup) this.netGroup.visible = !bowling;
+    if (this.netMesh) this.netMesh.visible = !bowling;
+  }
 
   /** Which view is about to render: 0 = the normal one, 1 = the far player's split-screen half. */
   setView(i: number, cam?: THREE.PerspectiveCamera) {

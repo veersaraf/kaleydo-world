@@ -3,6 +3,15 @@
 import * as THREE from 'three';
 import { Stage } from './render/stage';
 import { Quality, LEVELS } from './render/quality';
+import { BowlingGame, type Bowler, type BowlEvent } from './bowling/game';
+import { BowlCamera } from './bowling/camera';
+import { BowlPhysics } from './bowling/physics';
+import { BowlVenue } from './bowling/venue';
+import { BowlAnimator } from './bowling/anim';
+import { BowlScore } from './bowling/score';
+import { FOUL_Z } from './bowling/lane';
+import type { BowlerState } from './bowling/types';
+import { CHAR_SCALE } from './chars/rig';
 import { newPose, copyPose } from './chars/pose';
 import { WORLDS } from './worlds';
 import { CameraRig } from './tennis/camera';
@@ -44,6 +53,14 @@ export class App {
   /** provided by the audio layer: 0..1 pulse on the beat */
   beat: () => number = () => 0;
   worldId = 'plaza';
+  // ---- bowling
+  sport: 'tennis' | 'bowling' = 'tennis';
+  bowl: BowlingGame | null = null;
+  bowlCam = new BowlCamera();
+  private bowlAnims: BowlAnimator[] = [];
+  private phys: BowlPhysics | null = null;
+  onBowlEvent: (e: BowlEvent) => void = () => {};
+
   /** player preference: give each side its own view in local versus */
   splitPref = true;
   /** this match wants a split screen (humans on both teams) */
@@ -104,6 +121,7 @@ export class App {
   private applyViews() {
     this.stage.setViews(this.splitOn ? 2 : 1);
     const a = this.stage.vw / this.stage.h;
+    this.bowlCam.aspect = this.stage.w / this.stage.h;
     this.rig.aspect = a;
     this.rig2.aspect = a;
     this.rig.split = this.splitOn;
@@ -281,6 +299,17 @@ export class App {
     const realDt = Math.min(0.1, Math.max(0, gapMs / 1000));
     this.last = now;
     this.realT += realDt;
+    if (this.sport === 'bowling') {
+      if (!this.bowl || !this.stage.current) return;
+      this.quality.beginFrame();
+      this.bowlFrame(realDt);
+      this.quality.endFrame();
+      if (!document.hidden) {
+        const st = this.bowl.state;
+        if (this.quality.update(now, gapMs, this.paused || (st !== 'approach' && st !== 'lane' && st !== 'pins')) !== null) this.applyQuality();
+      }
+      return;
+    }
     const m = this.match;
     if (!m || !this.stage.current) return;
     const wid = this.stage.current.def.id;
@@ -296,6 +325,103 @@ export class App {
       if (this.quality.update(now, gapMs, safe) !== null) this.applyQuality();
     }
   }
+
+  // ---------------------------------------------------------------- bowling
+
+  /** Turn the current world's court into lanes and start a game. */
+  async startBowling(specs: Omit<Bowler, 'score' | 'x' | 'aim'>[], worldId: string) {
+    this.phys ??= await BowlPhysics.load();
+    this.match = null;
+    this.replay = null;
+    this.attract = false;
+    this.paused = false;
+    this.split = false;
+    this.sport = 'bowling';
+    this.input.bowlMode = true;
+    this.worldId = worldId;
+    this.stage.setWorld(worldId);
+    const bowlers: Bowler[] = specs.map((b) => ({ ...b, score: new BowlScore(), x: 0, aim: 0 }));
+    this.bowl = new BowlingGame(bowlers, this.phys);
+    this.bowl.onEvent = (e) => {
+      if (e.type === 'physics' && e.e.type === 'hit' && e.e.ballOnPin) this.bowlCam.kick(Math.min(0.6, e.e.impact * 0.06));
+      this.onBowlEvent(e);
+    };
+    this.bowlAnims = bowlers.map((b) => new BowlAnimator(b.handed, b.look));
+    this.stage.setPlayers(bowlers.map((b) => b.look));
+    this.prepareBowlWorld();
+  }
+
+  /** The world on screen shows lanes; its characters put their rackets away. */
+  private prepareBowlWorld() {
+    const w = this.stage.current;
+    if (!w) return;
+    w.setSport('bowling', (kit) => new BowlVenue(kit));
+    for (const r of w.rigs) r.racket.visible = false;
+  }
+
+  stopBowling() {
+    if (this.sport !== 'bowling') return;
+    this.sport = 'tennis';
+    this.input.bowlMode = false;
+    this.bowl = null;
+    this.stage.forEachWorld((w) => {
+      if (w.sport === 'bowling') w.setSport('tennis');
+    });
+  }
+
+  private bowlFrame(realDt: number) {
+    const g = this.bowl!;
+    const w = this.stage.current!;
+    if (w.sport !== 'bowling') this.prepareBowlWorld();
+    const dt = this.paused ? 0 : Math.min(0.05, realDt);
+    if (dt > 0) g.step(dt);
+    this.bowlCam.update(g, realDt, this.realT);
+    // the bowler up, and the others waiting at the back of the approach
+    const poses = g.bowlers.map((b, i) => {
+      const anim = this.bowlAnims[i];
+      if (i === g.current) return anim.update(g.t, Math.max(1e-4, dt), g.body);
+      const order = (i - g.current + g.bowlers.length) % g.bowlers.length;
+      const side = order % 2 ? -1 : 1;
+      const s: BowlerState = { x: side * (1.7 + Math.floor((order - 1) / 2) * 0.9), z: FOUL_Z + 5.2, yaw: 0, handed: b.handed, phase: 'idle', t: g.t, arm: 0, step: 0, holding: false, spin: 0 };
+      return anim.update(g.t, Math.max(1e-4, dt), s);
+    });
+    // the ball rides in the bowler's hand until the release
+    const venue = w.venue;
+    if (venue) {
+      const body = g.body;
+      if (body.holding && (g.state === 'ready' || g.state === 'approach' || g.state === 'intro')) {
+        const b = g.bowler;
+        const hand = this.bowlAnims[g.current].ballHand();
+        const sc = CHAR_SCALE * (b.look.height || 1);
+        const c = Math.cos(body.yaw),
+          sn = Math.sin(body.yaw);
+        const pose = poses[g.current];
+        this.tmpBall.set(body.x + (c * hand.x + sn * hand.z) * sc, pose.hop + hand.y * sc, body.z + (-sn * hand.x + c * hand.z) * sc);
+        venue.holdBall(this.tmpBall);
+      } else venue.holdBall(null);
+      venue.setAim(g.state === 'ready' && g.bowler.cpu === null ? { x: g.bowler.x + 0.2 * g.bowler.handed, angle: g.bowler.aim } : null);
+    }
+    const view: FrameView = {
+      t: g.t,
+      dt,
+      realT: this.realT,
+      realDt,
+      ball: { x: 0, y: -10, z: 0 },
+      ballSpeed: 0,
+      ballVisible: false,
+      holder: -1,
+      poses,
+      excitement: g.state === 'pins' || g.state === 'result' ? 0.8 : 0.3,
+      state: 'play',
+      cam: this.bowlCam.cam,
+      beat: this.beat(),
+      bowl: g.phys.view,
+    };
+    this.stage.update(view);
+    this.stage.render(this.bowlCam.cam);
+    this.onFrame(realDt);
+  }
+  private tmpBall = new THREE.Vector3();
 
   private playFrame(m: Match, realDt: number) {
     let simDt = this.paused ? 0 : realDt;

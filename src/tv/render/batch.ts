@@ -90,6 +90,11 @@ export function batchStatic(root: THREE.Object3D, probe: () => void): BatchStats
     o.scale.copy(s.s);
     o.visible = s.v;
   }
+  // subtrees the world wants to keep as separate objects (e.g. the tennis court,
+  // hidden when the court turns into bowling lanes)
+  root.traverse((o) => {
+    if (o.userData.noBatch) o.traverse((c) => dynamic.add(c));
+  });
   stats.dynamic = dynamic.size;
 
   // ---- 2. choose what to merge

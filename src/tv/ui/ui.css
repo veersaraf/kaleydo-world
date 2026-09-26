@@ -1732,3 +1732,224 @@ kbd {
     transform: translate(0, -62%);
   }
 }
+
+/* ------------------------------------------------------------ bowling HUD */
+
+.bhud .bcard {
+  position: absolute;
+  top: calc(var(--u) * 2.4);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 0.6);
+  font-family: var(--display);
+}
+
+.brow {
+  display: flex;
+  align-items: stretch;
+  background: var(--panel);
+  border-radius: calc(var(--u) * 1.2);
+  overflow: hidden;
+  box-shadow: 0 calc(var(--u) * 0.6) calc(var(--u) * 2) rgba(10, 10, 40, 0.25);
+  opacity: 0.8;
+  color: var(--ink);
+  transition: opacity 0.3s, transform 0.3s;
+}
+
+.brow.on {
+  opacity: 1;
+  transform: scale(1.03);
+  box-shadow: 0 0 0 calc(var(--u) * 0.35) var(--c), 0 calc(var(--u) * 0.6) calc(var(--u) * 2) rgba(10, 10, 40, 0.3);
+}
+
+.bname {
+  width: calc(var(--u) * 14);
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 0.8);
+  padding: 0 calc(var(--u) * 1.2);
+  font-weight: 700;
+  font-size: calc(var(--u) * 2);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.bname i {
+  width: calc(var(--u) * 0.9);
+  align-self: stretch;
+  margin: calc(var(--u) * 0.7) 0;
+  border-radius: 99px;
+  background: var(--c);
+  flex: none;
+}
+
+.bframe {
+  width: calc(var(--u) * 5.6);
+  border-left: 1px solid rgba(20, 20, 60, 0.1);
+  display: flex;
+  flex-direction: column;
+}
+
+.bframe.tenth {
+  width: calc(var(--u) * 7.6);
+}
+
+.bframe.cur {
+  background: color-mix(in srgb, var(--c) 20%, transparent);
+}
+
+.bfn {
+  font-size: calc(var(--u) * 1.05);
+  opacity: 0.45;
+  text-align: left;
+  padding: calc(var(--u) * 0.2) calc(var(--u) * 0.5) 0;
+  line-height: 1;
+}
+
+.brolls {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.brolls b {
+  width: calc(var(--u) * 2.1);
+  height: calc(var(--u) * 2.1);
+  display: grid;
+  place-items: center;
+  font-size: calc(var(--u) * 1.6);
+  border-left: 1px solid rgba(20, 20, 60, 0.1);
+  border-bottom: 1px solid rgba(20, 20, 60, 0.1);
+}
+
+.brolls b.x {
+  color: #ff3d64;
+}
+
+.brolls b.s {
+  color: #2f94f0;
+}
+
+.btot {
+  font-size: calc(var(--u) * 1.9);
+  font-weight: 700;
+  text-align: center;
+  min-height: calc(var(--u) * 2.6);
+  line-height: calc(var(--u) * 2.6);
+}
+
+.btotal {
+  width: calc(var(--u) * 7);
+  display: grid;
+  place-items: center;
+  font-size: calc(var(--u) * 2.8);
+  font-weight: 700;
+  background: var(--accent);
+  color: #fff;
+}
+
+.bpins {
+  position: absolute;
+  right: calc(var(--u) * 3.4);
+  bottom: calc(var(--u) * 4);
+  width: calc(var(--u) * 11);
+  height: calc(var(--u) * 10);
+  padding: calc(var(--u) * 1.4);
+  background: var(--panel);
+  border-radius: calc(var(--u) * 1.6);
+  box-shadow: 0 calc(var(--u) * 0.6) calc(var(--u) * 2) rgba(10, 10, 40, 0.25);
+  opacity: 0;
+  transform: translateY(calc(var(--u) * 2));
+  transition: opacity 0.3s, transform 0.3s;
+}
+
+.bpins.on {
+  opacity: 1;
+  transform: none;
+}
+
+.bpins-in {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.bpins i {
+  position: absolute;
+  width: calc(var(--u) * 1.6);
+  height: calc(var(--u) * 1.6);
+  margin: calc(var(--u) * -0.8);
+  border-radius: 50%;
+  background: rgba(20, 20, 60, 0.14);
+}
+
+.bpins i.up {
+  background: #fff;
+  box-shadow: 0 0 0 calc(var(--u) * 0.3) #ff3d64;
+}
+
+.bturn {
+  position: absolute;
+  left: calc(var(--u) * 3.4);
+  bottom: calc(var(--u) * 4);
+  display: flex;
+  flex-direction: column;
+  padding: calc(var(--u) * 1) calc(var(--u) * 2);
+  border-radius: calc(var(--u) * 1.6);
+  background: var(--c, #3aa8ff);
+  color: #fff;
+  font-family: var(--display);
+  box-shadow: 0 calc(var(--u) * 0.6) calc(var(--u) * 2) rgba(10, 10, 40, 0.3);
+}
+
+.bturn:empty {
+  display: none;
+}
+
+.bturn b {
+  font-size: calc(var(--u) * 2.6);
+}
+
+.bturn span {
+  font-size: calc(var(--u) * 1.7);
+  opacity: 0.9;
+}
+
+.bturn.show {
+  animation: bump 0.45s cubic-bezier(0.2, 2, 0.4, 1);
+}
+
+.brank {
+  display: grid;
+  grid-template-columns: calc(var(--u) * 3.5) calc(var(--u) * 1) 1fr auto;
+  align-items: center;
+  gap: calc(var(--u) * 1.2);
+  padding: calc(var(--u) * 1) calc(var(--u) * 1.6);
+  margin: calc(var(--u) * 0.5) 0;
+  border-radius: calc(var(--u) * 1.2);
+  background: rgba(20, 20, 60, 0.05);
+  font-family: var(--display);
+  font-size: calc(var(--u) * 2.6);
+}
+
+.brank:first-of-type {
+  background: color-mix(in srgb, var(--c) 18%, transparent);
+}
+
+.brank b {
+  font-weight: 700;
+  opacity: 0.55;
+}
+
+.brank i {
+  align-self: stretch;
+  border-radius: 99px;
+  background: var(--c);
+}
+
+.brank em {
+  font-style: normal;
+  font-weight: 700;
+  font-size: calc(var(--u) * 3.2);
+}
