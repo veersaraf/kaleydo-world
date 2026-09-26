@@ -52,6 +52,8 @@ const HAND_X = 0.2;
 /** the phone measures the swing's real direction; the lane wants a fraction of it
  *  (0.1 rad over 18 m is 1.8 m — a sure gutter — so a small pull stays a small miss) */
 const ANGLE_GAIN = 0.1;
+/** how much of the measured wrist twist becomes spin (1 would hook ~0.8 m at 7.5 m/s) */
+const SPIN_GAIN = 0.8;
 /** where a bowler starts: a straight ball from here meets the pocket (1-3 for a right-hander) */
 export const START_X = 0.065 - HAND_X;
 /** ◀ ▶ and ↺ ↻: a press steps (a board), holding keeps going after a moment */
@@ -179,8 +181,8 @@ export class BowlingGame {
     if (r.speed < 2.8 && this.t - this.gripT < 0.6) return this.cancel();
     const angle = r.angle * ANGLE_GAIN;
     // a little wrist turn is a little hook, a real twist a big one: a stray turn
-    // doesn't wreck a straight ball, and a full hook stays a full hook
-    const spin = Math.sign(r.spin) * Math.pow(Math.min(1, Math.abs(r.spin)), 1.5);
+    // doesn't wreck a straight ball; the hardest twist curves about 23 boards
+    const spin = Math.sign(r.spin) * Math.pow(Math.min(1, Math.abs(r.spin)), 1.5) * SPIN_GAIN;
     // the ball leaves the hand at the foul line: if the bowler isn't there yet,
     // they hurry through the last steps and let go on arrival
     if (this.body.step >= 0.9) this.throwBall(r.speed, angle, spin);
