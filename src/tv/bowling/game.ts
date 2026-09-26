@@ -118,6 +118,8 @@ export class BowlingGame {
   private resultAt = 0;
   private rng = new Rng();
   lastThrow: BallThrow | null = null;
+  /** how the last ball went (for the camera's reaction shot) */
+  lastMark: BowlMark | null = null;
   /** a release that came before the bowler reached the line: hurry there, then let go */
   private pending: { speed: number; angle: number; spin: number } | null = null;
 
@@ -397,8 +399,10 @@ export class BowlingGame {
     else if (knocked === 0) mark = this.phys.view.ball.gutter ? 'gutter' : 'miss';
     else if (fresh && isSplit(now)) mark = 'split';
     this.rackStanding = now;
+    this.lastMark = mark;
     this.setState('result');
-    this.resultAt = this.t + (mark === 'strike' || mark === 'spare' ? 2.3 : 1.7);
+    // the big moments get a look at the bowler's reaction too
+    this.resultAt = this.t + (mark === 'strike' || mark === 'spare' ? 2.9 : mark === 'gutter' || mark === 'split' ? 2.5 : 1.7);
     this.body.phase = mark === 'strike' || mark === 'spare' ? 'cheer' : knocked <= 2 || mark === 'gutter' ? 'sad' : 'watch';
     this.body.t = 0;
     this.onEvent({ type: 'result', bowler: b, pins: knocked, standing: now, mark, frame, ball });

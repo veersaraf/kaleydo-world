@@ -17,6 +17,8 @@ export class BowlCamera {
   private tl = new THREE.Vector3();
   /** the ball's lane z when the chase switched to the pin view */
   private pinCut = false;
+  /** cut to the bowler's reaction (strike, spare, gutter, split) */
+  private reactCut = false;
 
   kick(a: number) {
     this.shake = Math.min(1, this.shake + a);
@@ -56,12 +58,26 @@ export class BowlCamera {
       case 'sweep':
         this.aimView(b);
         fov = 42;
-        lambda = g.state === 'approach' ? 2.6 : 4;
+        // (straight from the reaction shot it's a cut: gliding back would pass through the bowler)
+        lambda = this.reactCut ? 1000 : g.state === 'approach' ? 2.6 : 4;
+        this.reactCut = false;
         this.pinCut = false;
         break;
       case 'lane':
       case 'pins':
       case 'result': {
+        const m = g.lastMark;
+        if (g.state === 'result' && g.t - g.stateT0 > 1.05 && (m === 'strike' || m === 'spare' || m === 'gutter' || m === 'split')) {
+          // the reaction: from down the lane, looking back at the bowler at the line
+          const k = clamp((g.t - g.stateT0 - 1.05) / 1.8);
+          tp.set(b.x - 1.1 * b.handed, 1.5 - k * 0.1, b.z - 4.4 + k * 0.6);
+          tl.set(b.x, 1.2, b.z);
+          fov = 42;
+          lambda = this.reactCut ? 3 : 1000;
+          this.reactCut = true;
+          break;
+        }
+        this.reactCut = false;
         const near = ball.visible && ball.z < HEAD_Z + 6;
         if (near) this.pinCut = true;
         if (!this.pinCut && ball.visible) {
