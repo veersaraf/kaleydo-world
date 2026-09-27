@@ -94,6 +94,8 @@ export interface FieldView {
   /** show the last batted ball's path as a tracer, from the bat to where the ball is (it's
    *  kept until the next pitch leaves the hand) */
   tracer: boolean;
+  /** the batter's colour: the tracer, the marks */
+  color: string;
   /** this turn's home runs, where each came down (little stars in the stands) */
   marks: { x: number; y: number; z: number }[];
   /** the camera's position: the ball is drawn bigger far away so it never shrinks to a speck */
