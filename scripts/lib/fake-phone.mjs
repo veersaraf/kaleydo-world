@@ -193,8 +193,9 @@ export function phone() {
         }, releaseAt),
       );
     },
-    /** a forehand (or a bat swing: the same turn) whose fastest moment is `inMs` from now */
-    tennis({ inMs = 600 } = {}) {
+    /** a forehand (or a bat swing: the same turn) whose fastest moment is `inMs` from now — or at `at` (Date.now() ms) */
+    tennis({ inMs = 600, at = 0 } = {}) {
+      if (at) inMs = Math.max(0, at - Date.now());
       sw = { kind: 'tennis', tp: now() + inMs / 1000 };
       return new Promise((done) => setTimeout(() => ((sw = null), done()), inMs + 700));
     },

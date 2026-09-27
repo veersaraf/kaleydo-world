@@ -1109,7 +1109,8 @@ export class Flow {
       this.app.endHrReplay();
       return true;
     }
-    if (b === 'a' && down && g.state === 'intro') {
+    // A hurries things along: the intro, the next hitter stepping in, a celebration once the ball's down
+    if (b === 'a' && down) {
       g.skip();
       return true;
     }
@@ -1251,7 +1252,7 @@ export class Flow {
     const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
     const rows = ranking.map((i) => {
       const n = hr(i);
-      const stats = n ? `longest ${Math.round(g.longest(i))} m · ${tot(i)} m in all` : g.longest(i) > 0 ? `longest hit ${Math.round(g.longest(i))} m` : 'no hits this time';
+      const stats = n ? `longest ${Math.round(g.longest(i))} m · ${tot(i)} m in all` : g.longestHit(i) > 0 ? `longest hit ${Math.round(g.longestHit(i))} m` : 'no hits this time';
       return this.rankRow(place(i), g.hitters[i].color, g.hitters[i].name, stats, `${n} HR`);
     });
     const top = hr(ranking[0]);

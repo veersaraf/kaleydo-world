@@ -119,6 +119,8 @@ export class App {
   hrReplay: { frames: HrFrame[]; i: number; time: number; contact: number; at: { x: number; y: number; z: number }; end: number } | null = null;
   private hrMarks: { x: number; y: number; z: number }[] = [];
   onHrReplay: (on: boolean) => void = () => {};
+  /** when the derby last stepped (a swing that arrives between frames knows how far in it is) */
+  private ballStepAt = 0;
   /** a phone's pose when the draw began, and the aim it started from (the aim follows the turn since) */
   private aimFrom: { q: THREE.Quaternion; yaw: number; pitch: number } | null = null;
   /** how much of the phone's turn the aim takes: well under 1:1 keeps a steady hand's
@@ -309,8 +311,10 @@ export class App {
       if (!g || this.paused || this.attract) return;
       if (e.source === 'mouse' && !this.input.mouseSwings) return;
       // the swing's plane: the phone's attack angle (+ = an uppercut); a flick of the mouse, its direction
-      const lift = e.attack !== undefined ? clamp(e.attack / 35, -1, 1) : clamp(e.spin, -1, 1);
-      g.swing(e.slot, { power: e.power, lift, age: clamp(e.age, 0, 0.2) });
+      const lift = e.attack !== undefined ? clamp(e.attack / 30, -1, 1) : clamp(e.spin, -1, 1);
+      // (the message came in between frames: how long since the game last stepped)
+      const since = this.ballStepAt ? (performance.now() - this.ballStepAt) / 1000 : 0;
+      g.swing(e.slot, { power: e.power, lift, age: clamp(e.age, 0, 0.2) }, since);
       return;
     }
     const m = this.match;
@@ -584,7 +588,10 @@ export class App {
       const left = hit.hang - (g.t - g.hitT);
       if (left > 0 && left < 0.9) gdt = dt * (0.55 + 0.45 * (1 - Math.min(1, (0.9 - left) / 0.5)));
     }
-    if (gdt > 0) g.step(gdt);
+    if (gdt > 0) {
+      g.step(gdt);
+      this.ballStepAt = performance.now();
+    }
     const cam = this.ballCam.cam;
     const view = g.view({ x: cam.position.x, y: cam.position.y, z: cam.position.z });
     this.ballCam.update(g, view, realDt, this.realT);

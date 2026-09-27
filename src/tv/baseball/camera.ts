@@ -22,6 +22,8 @@ export interface CamGame {
   hitT: number;
   pitch: Pitch | null;
   batter: BatterState;
+  /** how the batted ball's flight ends ('back': fouled straight back, over the catcher) */
+  battedFlight?: { end: string } | null;
 }
 
 type Shot = 'intro' | 'bat' | 'portrait' | 'chase' | 'stands' | 'hero' | 'over' | 'replay';
@@ -39,8 +41,9 @@ export class BaseballCamera {
   private shake = 0;
   private shot: Shot = 'intro';
   private shotT = 0;
-  /** where the chase camera started (it rises and pushes out a little over the flight) */
+  /** where the chase camera started (it rises and pushes out a little over the flight); a cut straight to it after the hero shot */
   private chaseFrom = V();
+  private chaseCut = false;
   /** depth of field for the close moments (the hero shot, the ball dropping into the stands) */
   focus: number | null = null;
   aperture = 1;
@@ -85,14 +88,20 @@ export class BaseballCamera {
     else if (g.state === 'switch') shot = 'portrait';
     else if (flying && hit) {
       if (hit.homeRun && !hit.foul) {
+        // a no-doubter: first the batter admiring it (the bat flip), then after the ball
         const down = hit.hang;
-        shot = tau < down - 0.75 ? 'chase' : tau < down + 1.25 ? 'stands' : 'hero';
-      } else shot = g.state === 'flight' ? 'chase' : 'bat';
+        const noDoubt = hit.sweet || hit.distance >= 132;
+        shot = noDoubt && tau < 1.1 ? 'hero' : tau < down - 0.75 ? 'chase' : 'stands';
+      } else if (g.battedFlight?.end === 'back') shot = 'bat';
+      else shot = g.state === 'flight' ? 'chase' : 'bat';
     }
     // a strike / a foul: stay (or go back) behind the catcher for the next pitch
-    const cut = shot !== this.shot && (shot === 'stands' || shot === 'hero' || shot === 'portrait' || (shot === 'bat' && this.shot !== 'intro' && this.shot !== 'portrait'));
+    const cut = shot !== this.shot && (shot === 'stands' || shot === 'hero' || shot === 'portrait' || (shot === 'chase' && this.shot === 'hero') || (shot === 'bat' && this.shot !== 'intro' && this.shot !== 'portrait'));
     if (shot !== this.shot || this.shotT < 0) {
-      if (shot === 'chase') this.chaseFrom.copy(this.pos);
+      if (shot === 'chase') {
+        this.chaseFrom.copy(this.pos);
+        this.chaseCut = this.shot === 'hero';
+      }
       this.shotT = 0;
     }
     const snap = cut || this.shotT === 0 && this.shot === shot;
@@ -131,7 +140,7 @@ export class BaseballCamera {
         // from high behind home plate, over the flight: it rises and leans out a
         // little after the ball, and zooms as the ball goes deep
         const ball = v.ball;
-        const u = clamp(this.shotT / 0.45);
+        const u = this.chaseCut ? 1 : clamp(this.shotT / 0.45);
         const high = V(0.35 * b.handed, 5.4, FIELD.homeZ + 8.5);
         if (hit) high.x += (hit.landX - high.x) * 0.12;
         tp.lerpVectors(this.chaseFrom, high, easeInOutCubic(u));
