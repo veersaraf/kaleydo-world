@@ -27,14 +27,25 @@
 //
 // The view, as the game fills it in:
 //   - the ball is hidden in 'hand' and 'mitt' (the gear draws it there) and
-//     'gone'. Its streak restarts whenever its phase changes, and it's drawn up
-//     to ~2.4× (pixel: 3.2×) its size far from `eye`.
+//     'gone'; 'pitch' is any thrown ball (the pitch, the catcher's toss back),
+//     'play' the batted one (it may sit still at the bat through the hitstop).
+//     It's drawn up to ~2.4× (pixel: 3.2×) its size far from `eye` — but only
+//     once it's away from the pitcher's hand (no jump from the gear's ball at
+//     the release), and never more than ~2.5° across (a foul straight back comes
+//     right past the camera). It streaks when it's fast (a pitch, a hit, not the
+//     toss), the streak restarting whenever its phase changes; in flight it has
+//     a ring in the hitter's colour; its shadow never shrinks under a few pixels.
 //   - the tracer starts when `tracer` is on and the ball is in play (from the
 //     last 'contact' effect's point), grows with the ball, stops at its first
 //     'land' or 'wall', fades a little while it waits, and goes when `tracer`
 //     goes off (or at the next 'contact').
 //   - `marks` are this turn's home runs: a star on a stick over each, in the
 //     hitter's colour; one that appears pops in. An emptier list starts afresh.
+//   - fx: 'contact' (sparks, a ring, dust; `sweet` flashes), 'catch' (a puff),
+//     'land' (dirt or grass on the field; confetti for a home run; a small pop
+//     for a foul into the stands), 'wall' (a thump of dust off the padding),
+//     'homerun' (fireworks over the stands where it went out, the home-run line
+//     and the foul poles flash).
 //
 // Roles picked from the kit (as in the other venues):
 //   'shirt'  lawn, dirt, the wall's padding and back, the chalk
@@ -1425,7 +1436,7 @@ export class FieldVenue implements FieldVenueLike {
   private grow = { from: 4, rate: 0.07, max: 2.4 };
   // the tracer
   private tracer: Ribbon;
-  private tr = { state: 'off' as 'off' | 'live' | 'done', n: 0, age: 0, fade: 0 };
+  private tr = { state: 'off' as 'off' | 'live' | 'done', n: 0, age: 0, fade: 0, laid: false };
   private trPts = new Float32Array(TRACER_MAX * 3);
   private contact = { x: 0, y: 0, z: 0, t: -1 };
   private landAt: THREE.Vector3 | null = null;
@@ -1433,7 +1444,6 @@ export class FieldVenue implements FieldVenueLike {
   private stars: Inst;
   private sticks: Inst;
   private markT: number[] = [];
-  private markY: number[] = [];
   // the pennants, the home-run line's flash, fireworks
   private flags: Flags;
   private accent: THREE.Material;
@@ -1731,6 +1741,7 @@ export class FieldVenue implements FieldVenueLike {
       tr.n = 0;
       tr.age = 0;
       tr.fade = 1;
+      tr.laid = false;
       this.landAt = null;
       // from the bat, when it has just been hit
       if (this.contact.t >= 0 && this.time - this.contact.t < 0.4) this.addTracerPt(this.contact.x, this.contact.y, this.contact.z, true);
@@ -1747,7 +1758,11 @@ export class FieldVenue implements FieldVenueLike {
       tr.age += dt;
       tr.fade = Math.max(0.7, 1 - tr.age * 0.08);
     }
-    this.layTracer(tr.state === 'live' && b.phase === 'play' ? b : null);
+    // (a finished path is laid once: after that only its fade changes)
+    if (tr.state === 'live' || !tr.laid) {
+      this.layTracer(tr.state === 'live' && b.phase === 'play' ? b : null);
+      tr.laid = tr.state === 'done';
+    }
     this.tracer.fade = tr.fade;
   }
 
@@ -1799,10 +1814,7 @@ export class FieldVenue implements FieldVenueLike {
 
   private placeMarks(v: FieldView) {
     const marks = v.marks;
-    if (marks.length < this.markT.length) {
-      this.markT.length = 0;
-      this.markY.length = 0;
-    }
+    if (marks.length < this.markT.length) this.markT.length = 0;
     const S = this.stars,
       K = this.sticks;
     S.begin();
@@ -1813,7 +1825,6 @@ export class FieldVenue implements FieldVenueLike {
       const m = marks[i];
       if (this.markT[i] === undefined) {
         this.markT[i] = this.time;
-        this.markY[i] = m.y;
         this.sparkle(m.x, m.y + 1.3, m.z);
       }
       const age = this.time - this.markT[i];
