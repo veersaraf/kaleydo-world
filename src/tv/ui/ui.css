@@ -2239,3 +2239,19 @@ kbd {
 .callout.dcall {
   top: 23%;
 }
+
+/* a phone's seat shows the player's face */
+.seat .sface {
+  display: block;
+  width: calc(var(--u) * 4.6);
+  height: calc(var(--u) * 4.6);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+  overflow: hidden;
+}
+
+.seat .sface svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
