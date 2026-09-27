@@ -32,7 +32,7 @@ import { FieldVenue } from './baseball/venue';
 import { BatterAnimator, PitcherAnimator, CatcherAnimator } from './baseball/anim';
 import { BaseballGear } from './baseball/gear';
 import type { BaseballEvent, BatterState, CatcherState, FieldBall, FieldFx, Hitter, PitcherState } from './baseball/types';
-import { FIELD } from './baseball/field';
+import { FIELD, SWING } from './baseball/field';
 import type { World } from './worlds/base';
 import { hashStr } from '../shared/hash';
 import { PLAYER_COLORS } from '../shared/protocol';
@@ -645,18 +645,43 @@ export class App {
     const g = this.baseball;
     if (!g || !g.hit || this.hrReplay) return;
     const c = g.hitT;
+    const cur = g.current;
+    // A person's swing is usually judged after the ball has gone by on screen: the
+    // recording then shows it going on into the mitt before the game rewound. Stitch
+    // the ball's approach (up to where it crossed the contact plane) to the flight
+    // (from the rewind on), and swing the bat through to meet it.
+    const t0 = g.pitch?.t0 ?? c - 1;
+    let cross = c;
+    for (const f of this.hrRec) {
+      if (f.t >= t0 && f.t < c && f.ball.phase === 'pitch' && f.ball.z >= FIELD.contactZ - 0.02) {
+        cross = f.t;
+        break;
+      }
+    }
+    const gap = c - cross;
     const frames: HrFrame[] = [];
     for (const f of this.hrRec) {
-      if (f.t >= c - 0.95 && f.t <= c + 1.05) frames.push(f);
+      if ((f.t >= cross - 0.95 && f.t < cross) || (f.t >= c && f.t <= c + 1.05)) frames.push(f);
       else this.hrPool.push(f);
     }
     this.hrRec.length = 0;
-    if (frames.length < 20) {
+    const firstAfter = frames.find((f) => f.t >= c);
+    if (frames.length < 20 || !firstAfter) {
       for (const f of frames) this.hrPool.push(f);
       return;
     }
-    const b = frames.find((f) => f.t >= c)?.hitters[g.current];
-    this.hrReplay = { frames, i: 0, time: frames[0].t, contact: c, at: { x: b?.aimX ?? 0, y: b?.aimY ?? 0.85, z: FIELD.contactZ }, end: frames[frames.length - 1].t };
+    const at = firstAfter.hitters[cur];
+    const start = cross - SWING.contact;
+    const h = g.hitters[cur];
+    const anim = new BatterAnimator(h.handed, h.look);
+    let prev = frames[0].t - 1 / 60;
+    for (const f of frames) {
+      if (f.t >= c) f.t -= gap;
+      else if (f.t >= start) f.hitters[cur] = { ...f.hitters[cur], phase: 'swing', t: f.t - start, lift: at.lift, power: at.power, aimX: at.aimX, aimY: at.aimY };
+      copyPose(f.poses[cur], anim.update(f.t, Math.max(1e-4, f.t - prev), f.hitters[cur]));
+      prev = f.t;
+    }
+    this.hrReplay = { frames, i: 0, time: frames[0].t, contact: cross, at: { x: at.aimX, y: at.aimY, z: FIELD.contactZ }, end: frames[frames.length - 1].t };
     this.onHrReplay(true);
   }
 

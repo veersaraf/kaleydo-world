@@ -61,7 +61,7 @@ export class BaseballCamera {
   private batView(b: BatterState) {
     const s = b.handed;
     // high enough over the catcher to see the whole zone, the pitcher out beyond
-    this.tp.set(0.5 * s, 3.8, FIELD.homeZ + 4.4);
+    this.tp.set(0.8 * s, 3.8, FIELD.homeZ + 4.4);
     this.tl.set(-0.1 * s, 0.5, 7.5);
     this.fov = 40;
   }

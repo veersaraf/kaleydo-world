@@ -65,9 +65,17 @@ while (Date.now() - t0 < 240000) {
   });
   if (st.results || st.state === 'none') break;
   const tag = `${st.who}-${st.n}`;
-  if (st.replay !== null && st.replay > -0.02 && !seen.has('replay' + tag)) {
-    seen.add('replay' + tag);
-    await shot(`replay-h${st.who}-p${st.n}`);
+  if (st.replay !== null && st.replay > -0.12 && !seen.has('replayA' + tag)) {
+    seen.add('replayA' + tag);
+    await shot(`replay-h${st.who}-p${st.n}-a`);
+  }
+  if (st.replay !== null && st.replay > 0 && !seen.has('replayB' + tag)) {
+    seen.add('replayB' + tag);
+    await shot(`replay-h${st.who}-p${st.n}-b`);
+  }
+  if (st.replay !== null && st.replay > 0.25 && !seen.has('replayC' + tag)) {
+    seen.add('replayC' + tag);
+    await shot(`replay-h${st.who}-p${st.n}-c`);
   }
   if (st.state === 'pitch' && !seen.has('pitch' + tag) && seen.size < 40) {
     seen.add('pitch' + tag);
