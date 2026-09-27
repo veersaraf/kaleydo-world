@@ -70,11 +70,24 @@ export const BALL_OUT = 0.07;
 /** The catcher's mitt: the pocket's centre, in mitt space (the racket slot's: the hand at 0, fingers +y, pocket facing +z). */
 export const MITT = { pocket: { x: 0, y: 0.075, z: 0.085 } };
 
+/** The pitcher's glove: the pocket's centre, in glove space (as the mitt's). */
+export const GLOVE = { pocket: { x: 0, y: 0.09, z: 0.07 } };
+
 /**
- * The catcher's throw back to the pitcher, seconds into 'throw': the throwing
- * hand takes the ball out of the mitt, lets it go, and it's in the air this long.
+ * The catcher's throw back to the pitcher, seconds into 'throw' — as game.ts
+ * paces it (BASEBALL_TIMING.throwRelease, .toss, .throwEnd): the throwing hand
+ * has the ball out of the mitt at `take`, lets it go at `release` (the game
+ * flies it from there, a 'pitch' ball, to the pitcher's glove `flight` later),
+ * and the throw's over at `end`.
  */
-export const THROW = { take: 0.2, release: 0.56, flight: 1.05 };
+export const THROW = { take: 0.1, release: 0.3, flight: 0.7, end: 0.8 };
+
+/**
+ * Where the ball leaves the catcher's hand, from the catcher's feet (world
+ * metres: x across, y up, z along) — game.ts's TOSS_FROM, (0.25, 1.55,
+ * catcherZ − 0.15), with the catcher at x = 0.
+ */
+export const TOSS = { x: 0.25, y: 1.55, z: -0.15 };
 
 /** The catcher's mask, seconds into 'watch': the hand has it, it's off. Back on, seconds into the crouch after a watch. */
 export const MASK = { grab: 0.17, off: 0.34, on: 0.3 };
@@ -172,6 +185,15 @@ function slotAxes(dir: V3, face: V3, X: V3, Y: V3, Z: V3) {
   norm(Z);
   set(X, Y.y * Z.z - Y.z * Z.y, Y.z * Z.x - Y.x * Z.z, Y.x * Z.y - Y.y * Z.x);
   norm(X);
+}
+
+const SX = V(),
+  SY = V(),
+  SZ = V();
+/** A point in the racket slot's space (for a racketDir / racketFace), as an offset in root space. */
+function slotAxesTo(dir: V3, face: V3, p: { x: number; y: number; z: number }, o: V3) {
+  slotAxes(dir, face, SX, SY, SZ);
+  return set(o, SX.x * p.x + SY.x * p.y + SZ.x * p.z, SX.y * p.x + SY.y * p.y + SZ.y * p.z, SX.z * p.x + SY.z * p.y + SZ.z * p.z);
 }
 
 /** Keep a face square to a direction (the rig does too; this keeps the damping sane). */
@@ -288,6 +310,25 @@ class Base {
   protected walkVz = 0;
   protected walkPh = 0;
   protected tmp = V();
+  /** the phase and its clock last frame: a clock that runs backwards is a rewind (a late swing takes the ball back) */
+  private seenPhase = '';
+  private seenT = 0;
+  /** this frame's pose snaps to its targets instead of easing (after a rewind) */
+  protected snapNow = false;
+
+  /** Did the game just rewind this character's phase clock? (Then snap, don't ease back.) */
+  protected rewound(phase: string, t: number) {
+    const r = phase === this.seenPhase && t < this.seenT - 0.02;
+    this.seenPhase = phase;
+    this.seenT = t;
+    this.snapNow = r;
+    return r;
+  }
+
+  /** How far to ease towards a target this frame (all the way after a rewind). */
+  protected ease(lambda: number, dt: number) {
+    return this.snapNow ? 1 : 1 - Math.exp(-lambda * dt);
+  }
 
   constructor(public look: Look) {
     this.scale = CHAR_SCALE * (look.height || 1);
@@ -372,8 +413,9 @@ class Base {
     const hy = wrap(yaw - P.yaw - P.bodyYaw);
     const turn = clamp(hy, -maxTurn, maxTurn);
     const hp = pitch - P.bodyPitch * Math.cos(turn) + P.bodyRoll * Math.sin(turn);
-    this.headYaw = damp(this.headYaw, turn, lam, dt);
-    this.headPitch = damp(this.headPitch, clamp(hp, -1.1, 0.9), lam, dt);
+    const k = this.ease(lam, dt);
+    this.headYaw = lerp(this.headYaw, turn, k);
+    this.headPitch = lerp(this.headPitch, clamp(hp, -1.1, 0.9), k);
     P.headYaw = this.headYaw;
     P.headPitch = this.headPitch;
     P.headRoll = roll + Math.sin(t * 1.3) * 0.02;
@@ -556,6 +598,7 @@ export class BatterAnimator extends Base {
     if (!this.started) this.first(s);
     this.measureWalk(s.x, s.z, dt);
     if (s.phase !== this.phase) this.enter(s);
+    this.rewound(s.phase, s.t);
 
     // defaults: the stance in the box
     T.rootYaw = BatterAnimator.stanceYaw(h);
@@ -601,25 +644,29 @@ export class BatterAnimator extends Base {
     if (s.phase === 'idle') this.walk(T.feet, T.footPitch, T.body);
 
     // ------------------------------------------------ root and body
-    P.yaw = Number.isFinite(P.yaw) ? dampAngle(P.yaw, T.rootYaw, 9, dt) : T.rootYaw;
-    dampV(P.body, T.body, T.lam, dt);
-    P.bodyPitch = damp(P.bodyPitch, T.pitch, T.lam, dt);
-    P.bodyYaw = P.bodyYaw + angleDiff(P.bodyYaw, T.yaw) * (1 - Math.exp(-T.lam * dt));
-    P.bodyRoll = damp(P.bodyRoll, T.roll, T.lam, dt);
+    const kr = this.ease(9, dt),
+      kb = this.ease(T.lam, dt),
+      kf = this.ease(T.feetLam, dt),
+      ka = this.ease(T.armLam, dt);
+    P.yaw = Number.isFinite(P.yaw) ? P.yaw + angleDiff(P.yaw, T.rootYaw) * kr : T.rootYaw;
+    lerpV(P.body, P.body, T.body, kb);
+    P.bodyPitch = lerp(P.bodyPitch, T.pitch, kb);
+    P.bodyYaw = P.bodyYaw + angleDiff(P.bodyYaw, T.yaw) * kb;
+    P.bodyRoll = lerp(P.bodyRoll, T.roll, kb);
     P.hop = hop ?? T.hop;
     P.squash = this.spring(dt);
     for (let i = 0; i < 2; i++) {
-      dampV(P.feet[i], T.feet[i], T.feetLam, dt);
-      P.footPitch[i] = damp(P.footPitch[i], T.footPitch[i], T.feetLam, dt);
+      lerpV(P.feet[i], P.feet[i], T.feet[i], kf);
+      P.footPitch[i] = lerp(P.footPitch[i], T.footPitch[i], kf);
     }
 
     // ------------------------------------------------ the bat and the hands
-    dampV(this.grip, T.grip, T.armLam, dt);
-    lerpV(this.dir, this.dir, T.dir, 1 - Math.exp(-T.armLam * dt));
+    lerpV(this.grip, this.grip, T.grip, ka);
+    lerpV(this.dir, this.dir, T.dir, ka);
     if (!norm(this.dir)) cp(this.dir, T.dir);
     this.offTop = T.topOff;
-    this.both = damp(this.both, T.both, T.armLam, dt);
-    this.writeHands(T.top, T.bottom, T.armLam, dt);
+    this.both = lerp(this.both, T.both, ka);
+    this.writeHands(T.top, T.bottom, this.snapNow ? 0 : T.armLam, dt);
 
     this.aimHead(T.gaze, dt, 10, 1.8, T.headRoll, t);
     this.face(t, dt, T.eyes, T.mouth, T.brow);
@@ -1322,11 +1369,18 @@ interface PitchTargets {
   brow: number;
 }
 
-/** A pitcher's key pose, in the pitcher's frame (F towards the plate, R the throwing arm's side, U up). */
+/**
+ * A pitcher's key pose, in the pitcher's frame (F towards the plate, R the
+ * throwing arm's side, U up) — square to the plate, whatever the root's turn
+ * (the windup turns the whole root side-on for the leg kick, so the hips and the
+ * feet turn with the chest: `root`; positions stay in the square frame).
+ */
 interface PKey {
   t: number;
+  /** the root's turn from square (+ = side-on, glove side to the plate) */
+  root: number;
   /** body: F, R, U; the chest's turn from square (+ = closed, side-on at π/2), lean forward (+), tilt to the glove side (+) */
-  body: [number, number, number];
+  body: Tri;
   turn: number;
   lean: number;
   tilt: number;
@@ -1343,8 +1397,9 @@ interface PKey {
 }
 type Tri = [number, number, number];
 
-const PK = (t: number, body: Tri, turn: number, lean: number, tilt: number, stride: Tri, sp: number, pivot: Tri, pp: number, glove: Tri, gd: Tri, gf: Tri, hand: Tri): PKey => ({
+const PK = (t: number, root: number, body: Tri, turn: number, lean: number, tilt: number, stride: Tri, sp: number, pivot: Tri, pp: number, glove: Tri, gd: Tri, gf: Tri, hand: Tri): PKey => ({
   t,
+  root,
   body,
   turn,
   lean,
@@ -1388,7 +1443,7 @@ const GLOVE_FIELD: [Tri, Tri] = [
  * the mound is laid out from where the release pose stands (bf).
  */
 function windupKeys(kind: PitchKind | null, rel: PKey): PKey[] {
-  const kick = kind === 'changeup' ? 0.29 : kind === 'curve' ? 0.37 : 0.35;
+  const kick = kind === 'changeup' ? 0.36 : kind === 'curve' ? 0.46 : 0.43;
   // the curve comes over the top, the slider from a touch lower
   const slot = kind === 'curve' ? 0.06 : kind === 'slider' ? -0.06 : 0;
   const HB = HIP;
@@ -1399,26 +1454,27 @@ function windupKeys(kind: PitchKind | null, rel: PKey): PKey[] {
     [td, tf] = GLOVE_TUCK,
     [fd, ff] = GLOVE_FIELD;
   return [
-    PK(0, [0, 0, HB], 0.12, 0.05, 0, [0.02, -0.14, 0], 0, [0, 0.13, 0], 0, [0.25, -0.02, 0.92], sd, sf, [0.22, 0.03, 0.9]),
-    // rock back, hands up to the chin
-    PK(0.22, [-0.06, 0.02, HB + 0.01], 0.5, 0.02, 0, [-0.1, -0.12, 0.03], 0.1, [0, 0.13, 0], 0, [0.2, -0.02, 1.04], sd, sf, [0.17, 0.03, 1.02]),
-    // the leg kick up, turning side-on
-    PK(0.42, [-0.02, 0.05, HB + 0.03], 1.45, -0.02, -0.03, [0.02, -0.02, kick * 0.8], -0.25, [0, 0.13, 0], 0, [0.12, 0.0, 1.0], sd, sf, [0.1, 0.05, 0.99]),
-    // the balance point: knee at its highest, coiled a touch past side-on
-    PK(0.56, [-0.01, 0.06, HB + 0.035], 1.75, -0.05, -0.05, [0.03, 0.0, kick], -0.35, [0, 0.13, 0], 0, [0.1, 0.02, 0.98], sd, sf, [0.08, 0.07, 0.97]),
+    PK(0, 0, [0, 0, HB], 0.12, 0.05, 0, [0.02, -0.14, 0], 0, [0, 0.13, 0], 0, [0.27, -0.02, 0.84], sd, sf, [0.23, 0.03, 0.82]),
+    // rock back, the hands swung up over the head, starting to turn
+    PK(0.22, 0.3, [-0.07, 0.02, HB + 0.015], 0.4, -0.04, 0, [-0.12, -0.12, 0.04], 0.12, [-0.04, 0.08, 0], 0, [0.13, -0.03, 1.37], sd, sf, [0.11, 0.04, 1.35]),
+    // turned side-on on the rubber (the pivot foot along it), the knee coming up in front of the
+    // chest, the hands coming down to it
+    PK(0.42, 1.3, [-0.04, 0.03, HB + 0.03], 1.45, -0.03, -0.03, [0.1, 0.19, kick * 0.72], -0.45, [-0.08, 0.02, 0], 0, [0.12, 0.0, 1.06], sd, sf, [0.1, 0.05, 1.05]),
+    // the balance point: the knee at its highest, coiled a touch past side-on
+    PK(0.56, 1.45, [-0.03, 0.04, HB + 0.035], 1.75, -0.06, -0.05, [0.11, 0.3, kick], -0.7, [-0.08, 0.02, 0], 0, [0.1, 0.02, 0.96], sd, sf, [0.08, 0.07, 0.95]),
     // drop and drive: the stride reaches out, the hands break, the arm swings down and back
-    PK(0.74, [bf * 0.4, 0.03, HB - 0.05], 1.62, -0.06, -0.1, [land * 0.55, -0.04, 0.13], -0.2, [0, 0.13, 0], -0.1, [bf * 0.4 + 0.28, -0.28, 0.9], ad, af, [bf * 0.4 - 0.38, 0.34, 0.5]),
-    // foot strike: the glove reaching for the plate, the ball cocked up behind the head
-    PK(0.9, [bf * 0.76, 0.02, HB - 0.07], 1.3, 0.06, -0.12, [land, -0.07, 0], 0.05, [0.03, 0.13, 0.02], -0.4, [bf * 0.76 + 0.34, -0.24, 0.92], ad, af, [bf * 0.76 - 0.22 - slot, 0.34, 1.13 + slot]),
+    PK(0.74, 1.2, [bf * 0.4, 0.03, HB - 0.05], 1.62, -0.06, -0.1, [land * 0.55, -0.02, 0.13], -0.2, [-0.08, 0.02, 0], -0.1, [bf * 0.4 + 0.28, -0.28, 0.9], ad, af, [bf * 0.4 - 0.38, 0.34, 0.5]),
+    // foot strike, squaring up: the glove reaching for the plate, the ball cocked up behind the head
+    PK(0.9, 0.55, [bf * 0.76, 0.02, HB - 0.07], 1.3, 0.06, -0.12, [land, -0.07, 0], 0.05, [-0.06, 0.05, 0.02], -0.4, [bf * 0.76 + 0.34, -0.24, 0.92], ad, af, [bf * 0.76 - 0.42 - slot * 0.5, 0.4, 1.04 + slot]),
     // the hips and chest fire, the elbow leads, the glove tucks in
-    PK(1.02, [bf * 0.94, rel.body[1] * 0.6, HB - 0.055], 0.55, 0.2, 0.18 + slot, [land, -0.07, 0], 0.08, [0.1, 0.12, 0.04], -0.62, [bf + 0.1, -0.16, 0.86], td, tf, [bf * 0.94 + 0.02, 0.33, 1.3 + slot * 0.5]),
+    PK(1.02, 0.12, [bf * 0.94, rel.body[1] * 0.6, HB - 0.055], 0.55, 0.2, 0.18 + slot, [land, -0.07, 0], 0.08, [0.06, 0.08, 0.04], -0.62, [bf + 0.1, -0.16, 0.86], td, tf, [bf * 0.94 + 0.02, 0.33, 1.3 + slot * 0.5]),
     rel,
     // the follow-through: the arm down across the body, bent over, the back leg coming round
-    PK(1.3, [bf + 0.13, -0.06, HB - 0.1], -0.55, 0.62, 0.04, [land, -0.07, 0], 0.05, [bf - 0.05, 0.05, 0.28], -0.35, [bf + 0.02, -0.03, 0.74], td, tf, [bf + 0.4, -0.24, 0.42]),
+    PK(1.3, 0, [bf + 0.13, -0.06, HB - 0.1], -0.55, 0.62, 0.04, [land, -0.07, 0], 0.05, [bf - 0.05, 0.05, 0.28], -0.35, [bf + 0.02, -0.03, 0.74], td, tf, [bf + 0.4, -0.24, 0.42]),
     // the back foot lands beside the front, falling off to the glove side
-    PK(1.55, [bf + 0.12, -0.12, HB - 0.08], -0.3, 0.32, 0.02, [land, -0.08, 0], 0, [land - 0.1, 0.18, 0], 0, [bf + 0.33, -0.2, 0.86], fd, ff, [bf + 0.22, 0.22, 0.62]),
+    PK(1.55, 0, [bf + 0.12, -0.12, HB - 0.08], -0.3, 0.32, 0.02, [land, -0.08, 0], 0, [land - 0.1, 0.18, 0], 0, [bf + 0.33, -0.2, 0.86], fd, ff, [bf + 0.22, 0.22, 0.62]),
     // a fielder's crouch: square, knees bent, the glove up
-    PK(DELIVERY.end, [bf + 0.16, -0.03, HB - 0.07], 0, 0.22, 0, [land - 0.05, -0.16, 0], 0, [land - 0.1, 0.16, 0], 0, [bf + 0.45, -0.08, 0.86], fd, ff, [bf + 0.33, 0.2, 0.74]),
+    PK(DELIVERY.end, 0, [bf + 0.16, -0.03, HB - 0.07], 0, 0.22, 0, [land - 0.05, -0.16, 0], 0, [land - 0.1, 0.16, 0], 0, [bf + 0.45, -0.08, 0.86], fd, ff, [bf + 0.33, 0.2, 0.74]),
   ];
 }
 
@@ -1452,7 +1508,7 @@ export class PitcherAnimator extends Base {
   private kind: PitchKind | null = null;
   /** the pose when the phase began: the windup blends out of it, 'follow' out of the windup's end */
   private snap = { body: V(), pitch: 0, yaw: 0, roll: 0, feet: [V(), V()] as [V3, V3], footPitch: [0, 0] as [number, number], glove: V(), ball: V(), gloveDir: V(0, 1, 0), gloveFace: V(0, 0, -1), rootYaw: Math.PI };
-  private rel: PKey = PK(DELIVERY.release, [0.4, 0, HIP - 0.04], 0.06, 0.3, 0.2, [0.74, -0.07, 0], 0.08, [0.2, 0.12, 0.05], -0.75, [0.5, -0.12, 0.84], GLOVE_TUCK[0], GLOVE_TUCK[1], [0, 0, 0]);
+  private rel: PKey = PK(DELIVERY.release, 0, [0.4, 0, HIP - 0.04], 0.06, 0.3, 0.2, [0.74, -0.07, 0], 0.08, [0.2, 0.12, 0.05], -0.75, [0.5, -0.12, 0.84], GLOVE_TUCK[0], GLOVE_TUCK[1], [0, 0, 0]);
   private a = V();
   private b = V();
   private c = V();
@@ -1476,6 +1532,19 @@ export class PitcherAnimator extends Base {
     set(o, this.h * R, U, -F);
     norm(o);
     return o;
+  }
+
+  /** the root's turn from square in the windup (see PKey) */
+  private rho = 0;
+
+  /** pitcher frame (square to the plate) → the root as it's turned now (by rho, side-on for the kick) */
+  private qr(o: V3, F: number, R: number, U: number) {
+    const x = this.h * R,
+      z = -F;
+    const a = this.h * this.rho;
+    const c = Math.cos(a),
+      s = Math.sin(a);
+    return set(o, x * c + z * s, U, -x * s + z * c);
   }
 
   /** chest turned `turn` from square (+ closed towards side-on), leaning forward `lean`, tilted to the glove side `tilt` */
@@ -1504,6 +1573,7 @@ export class PitcherAnimator extends Base {
     if (!this.started) this.first(s);
     this.measureWalk(s.x, s.z, dt);
     if (s.phase !== this.phase) this.enter(s);
+    this.rewound(s.phase, s.t);
 
     T.rootYaw = Math.PI;
     T.lam = 9;
@@ -1534,27 +1604,83 @@ export class PitcherAnimator extends Base {
     }
     if (s.phase === 'idle') this.walk(T.feet, T.footPitch, T.body);
 
-    P.yaw = Number.isFinite(P.yaw) ? dampAngle(P.yaw, T.rootYaw, 7, dt) : T.rootYaw;
-    dampV(P.body, T.body, T.lam, dt);
-    P.bodyPitch = damp(P.bodyPitch, T.pitch, T.lam, dt);
-    P.bodyYaw = P.bodyYaw + angleDiff(P.bodyYaw, T.yaw) * (1 - Math.exp(-T.lam * dt));
-    P.bodyRoll = damp(P.bodyRoll, T.roll, T.lam, dt);
+    const kr = this.ease(7, dt),
+      kb = this.ease(T.lam, dt),
+      kf = this.ease(T.feetLam, dt);
+    P.yaw = Number.isFinite(P.yaw) ? P.yaw + angleDiff(P.yaw, T.rootYaw) * kr : T.rootYaw;
+    lerpV(P.body, P.body, T.body, kb);
+    P.bodyPitch = lerp(P.bodyPitch, T.pitch, kb);
+    P.bodyYaw = P.bodyYaw + angleDiff(P.bodyYaw, T.yaw) * kb;
+    P.bodyRoll = lerp(P.bodyRoll, T.roll, kb);
     P.hop = 0;
     P.squash = this.spring(dt);
     for (let i = 0; i < 2; i++) {
-      dampV(P.feet[i], T.feet[i], T.feetLam, dt);
-      P.footPitch[i] = damp(P.footPitch[i], T.footPitch[i], T.feetLam, dt);
+      lerpV(P.feet[i], P.feet[i], T.feet[i], kf);
+      P.footPitch[i] = lerp(P.footPitch[i], T.footPitch[i], kf);
     }
-    dampV(P.hands[0], T.glove, T.armLam, dt);
-    dampV(P.hands[1], T.ball, T.armLam, dt);
-    const k = 1 - Math.exp(-T.armLam * dt);
-    lerpV(P.racketDir, P.racketDir, T.gloveDir, k);
+    // the catcher's throw coming back: the glove up to meet it (right on it as it arrives)
+    const exact = s.toss ? this.catchToss(T, s.toss) : false;
+    const ka = exact ? 1 : this.ease(T.armLam, dt);
+    lerpV(P.hands[0], P.hands[0], T.glove, ka);
+    lerpV(P.hands[1], P.hands[1], T.ball, exact ? 1 : this.ease(T.armLam * (s.toss ? 1.6 : 1), dt));
+    lerpV(P.racketDir, P.racketDir, T.gloveDir, ka);
     if (!norm(P.racketDir)) cp(P.racketDir, T.gloveDir);
-    lerpV(P.racketFace, P.racketFace, T.gloveFace, k);
+    lerpV(P.racketFace, P.racketFace, T.gloveFace, ka);
     ortho(P.racketDir, P.racketFace);
     this.aimHead(T.gaze, dt, 9, 2.4, 0, t);
     this.face(t, dt, T.eyes, T.mouth, T.brow);
     return P;
+  }
+
+  /**
+   * Glove the catcher's throw: the glove comes up in front as it's thrown,
+   * its pocket exactly on the ball's arrival point at eta = 0 (set, not eased,
+   * from just before: it must be right there), gives a touch with it, and the
+   * throwing hand comes over to take it out. Returns whether the glove is set
+   * exactly this frame.
+   */
+  private catchToss(T: PitchTargets, toss: { x: number; y: number; z: number; eta: number }) {
+    const eta = toss.eta;
+    if (eta > 0.95 || eta < -0.45) return false;
+    const P = this.pose;
+    const sc = this.scale;
+    // the arrival point in the root (as it's turned now: square, normally)
+    const dx = toss.x - P.x,
+      dz = toss.z - P.z;
+    const c = Math.cos(P.yaw),
+      s = Math.sin(P.yaw);
+    const lx = (c * dx - s * dz) / sc,
+      ly = toss.y / sc,
+      lz = (s * dx + c * dz) / sc;
+    // fingers up, the pocket facing the throw (towards the catcher: forward)
+    this.qDir(T.gloveDir, 0.2, -0.12, 1);
+    this.qDir(T.gloveFace, 1, 0.05, 0.12);
+    ortho(T.gloveDir, T.gloveFace);
+    // after it's in: a give back and down, then in towards the chest
+    const after = Math.max(0, -eta);
+    const give = Math.sin(clamp(after / 0.14) * Math.PI * 0.5) * 0.06;
+    const tuck = smooth(clamp((after - 0.12) / 0.3));
+    slotAxesTo(T.gloveDir, T.gloveFace, GLOVE.pocket, this.a);
+    set(T.glove, lx - this.a.x, ly - this.a.y - give * 0.4, lz - this.a.z + give);
+    if (tuck > 0) {
+      this.qp(this.b, 0.3, -0.06, 0.86);
+      lerpV(T.glove, T.glove, this.b, tuck);
+    }
+    // the throwing hand comes over beside the pocket, to take it out
+    const reach = smooth(clamp((0.35 - eta) / 0.4));
+    set(this.c, T.glove.x + this.a.x, T.glove.y + this.a.y - 0.05, T.glove.z + this.a.z + 0.02);
+    this.c.x += this.h * 0.1;
+    lerpV(T.ball, T.ball, this.c, reach);
+    // before it's close, the glove rises into place (eased); from just before it lands it's set exactly
+    const up = smooth(clamp((0.95 - eta) / 0.45));
+    if (up < 1 && eta > 0.12) {
+      this.qp(this.b, 0.28, -0.1, 0.9);
+      lerpV(T.glove, this.b, T.glove, up);
+    }
+    T.armLam = 22;
+    T.eyes = eta > -0.1 ? 'focus' : 'open';
+    T.mouth = 'flat';
+    return eta <= 0.12 && eta >= -0.45;
   }
 
   private first(s: PitcherState) {
@@ -1649,11 +1775,15 @@ export class PitcherAnimator extends Base {
     // out of the set (or wherever it was), over the first moments
     const blend = smooth(clamp(u / 0.18));
 
-    P.yaw = Math.PI;
+    // the root turns side-on for the kick and squares up again by the release (exactly square then)
+    const rho = one((k) => k.root);
+    this.rho = rho;
+    P.yaw = Math.PI - this.h * rho;
     tri((k) => k.body, this.a);
-    this.qp(this.b, this.a.x, this.a.y, this.a.z);
+    this.qr(this.b, this.a.x, this.a.y, this.a.z);
     lerpV(P.body, this.snap.body, this.b, blend);
-    this.chest(T, one((k) => k.turn), one((k) => k.lean), one((k) => k.tilt));
+    // the chest's turn, less what the root's already turned
+    this.chest(T, one((k) => k.turn) - rho, one((k) => k.lean), one((k) => k.tilt));
     P.bodyYaw = lerp(this.snap.yaw, T.yaw, blend);
     P.bodyPitch = lerp(this.snap.pitch, T.pitch, blend);
     P.bodyRoll = lerp(this.snap.roll, T.roll, blend);
@@ -1661,10 +1791,10 @@ export class PitcherAnimator extends Base {
     P.squash = 1;
     const st = this.h > 0 ? 0 : 1;
     tri((k) => k.stride, this.a);
-    this.qp(this.b, this.a.x, this.a.y, this.a.z);
+    this.qr(this.b, this.a.x, this.a.y, this.a.z);
     lerpV(P.feet[st], this.snap.feet[st], this.b, blend);
     tri((k) => k.pivot, this.a);
-    this.qp(this.b, this.a.x, this.a.y, this.a.z);
+    this.qr(this.b, this.a.x, this.a.y, this.a.z);
     lerpV(P.feet[1 - st], this.snap.feet[1 - st], this.b, blend);
     P.footPitch[st] = lerp(this.snap.footPitch[st], one((k) => k.sp), blend);
     P.footPitch[1 - st] = lerp(this.snap.footPitch[1 - st], one((k) => k.pp), blend);
@@ -1673,13 +1803,15 @@ export class PitcherAnimator extends Base {
 
     // the glove
     tri((k) => k.glove, this.a);
-    this.qp(this.b, this.a.x, this.a.y, this.a.z);
+    this.qr(this.b, this.a.x, this.a.y, this.a.z);
     lerpV(P.hands[0], this.snap.glove, this.b, blend);
     // the glove turns as it goes (keyed): at the chest, reaching for the plate, tucked in, up to field
     tri((k) => k.gd, this.a);
-    this.qDir(this.c, this.a.x, this.a.y, this.a.z);
+    this.qr(this.c, this.a.x, this.a.y, this.a.z);
+    norm(this.c);
     tri((k) => k.gf, this.b);
-    this.qDir(this.a, this.b.x, this.b.y, this.b.z);
+    this.qr(this.a, this.b.x, this.b.y, this.b.z);
+    norm(this.a);
     ortho(this.c, this.a);
     lerpV(P.racketDir, this.snap.gloveDir, this.c, blend);
     norm(P.racketDir);
@@ -1688,7 +1820,7 @@ export class PitcherAnimator extends Base {
 
     // the throwing hand: through its keys, and exactly on the release point at DELIVERY.release
     tri((k) => k.hand, this.a);
-    this.qp(this.b, this.a.x, this.a.y, this.a.z);
+    this.qr(this.b, this.a.x, this.a.y, this.a.z);
     lerpV(P.hands[1], this.snap.ball, this.b, blend);
 
     // eyes on the catcher's mitt all the way, then after the pitch
@@ -1921,6 +2053,8 @@ export class CatcherAnimator extends Base {
   private snapMitt = V();
   private snapDir = V(0, 1, 0);
   private snapFace = V(0, 0, -1);
+  private snapBody = V();
+  private snapHand = V();
   private a = V();
   private b = V();
   private X = V();
@@ -1946,6 +2080,7 @@ export class CatcherAnimator extends Base {
     if (!this.started) this.first(s);
     this.measureWalk(s.x, s.z, dt);
     if (s.phase !== this.phase) this.enter(s);
+    this.rewound(s.phase, s.t);
 
     T.rootYaw = 0;
     T.lam = 9;
@@ -1956,13 +2091,15 @@ export class CatcherAnimator extends Base {
     T.brow = 0.4;
     if (!gazeAt(T.gaze, s.look)) gazeAt(T.gaze, { x: 0, y: 1.5, z: FIELD.releaseZ });
 
+    // the catch and the throw are set exactly (the pocket on the ball at `arrive`, the ball on
+    // the toss's starting point at THROW.release); the rest eases
     let exact = false;
     switch (s.phase) {
       case 'catch':
         exact = this.catchPose(T, t, s);
         break;
       case 'throw':
-        this.throwPose(T, t, s);
+        exact = this.throwPose(T, t, s);
         break;
       case 'watch':
         this.watch(T, t, s);
@@ -1972,40 +2109,27 @@ export class CatcherAnimator extends Base {
     }
     if (s.phase === 'watch') this.walk(T.feet, T.footPitch, T.body);
 
-    P.yaw = Number.isFinite(P.yaw) ? dampAngle(P.yaw, T.rootYaw, 7, dt) : T.rootYaw;
-    if (exact) {
-      // the catch: body and mitt set exactly (the pocket must be on the ball at `arrive`)
-      cp(P.body, T.body);
-      P.bodyPitch = T.pitch;
-      P.bodyYaw = T.yaw;
-      P.bodyRoll = T.roll;
-      P.yaw = T.rootYaw;
-    } else {
-      dampV(P.body, T.body, T.lam, dt);
-      P.bodyPitch = damp(P.bodyPitch, T.pitch, T.lam, dt);
-      P.bodyYaw = P.bodyYaw + angleDiff(P.bodyYaw, T.yaw) * (1 - Math.exp(-T.lam * dt));
-      P.bodyRoll = damp(P.bodyRoll, T.roll, T.lam, dt);
-    }
+    const kb = exact ? 1 : this.ease(T.lam, dt),
+      kf = exact ? 1 : this.ease(T.feetLam, dt),
+      ka = exact ? 1 : this.ease(T.armLam, dt);
+    P.yaw = exact || !Number.isFinite(P.yaw) ? T.rootYaw : P.yaw + angleDiff(P.yaw, T.rootYaw) * this.ease(7, dt);
+    lerpV(P.body, P.body, T.body, kb);
+    P.bodyPitch = lerp(P.bodyPitch, T.pitch, kb);
+    P.bodyYaw = P.bodyYaw + angleDiff(P.bodyYaw, T.yaw) * kb;
+    P.bodyRoll = lerp(P.bodyRoll, T.roll, kb);
     P.hop = 0;
     const sq = this.spring(dt);
     P.squash = exact ? 1 : sq;
     for (let i = 0; i < 2; i++) {
-      dampV(P.feet[i], T.feet[i], T.feetLam, dt);
-      P.footPitch[i] = damp(P.footPitch[i], T.footPitch[i], T.feetLam, dt);
+      lerpV(P.feet[i], P.feet[i], T.feet[i], kf);
+      P.footPitch[i] = lerp(P.footPitch[i], T.footPitch[i], kf);
     }
-    if (exact) {
-      cp(P.hands[0], T.mitt);
-      cp(P.racketDir, T.mittDir);
-      cp(P.racketFace, T.mittFace);
-    } else {
-      dampV(P.hands[0], T.mitt, T.armLam, dt);
-      const k = 1 - Math.exp(-T.armLam * dt);
-      lerpV(P.racketDir, P.racketDir, T.mittDir, k);
-      if (!norm(P.racketDir)) cp(P.racketDir, T.mittDir);
-      lerpV(P.racketFace, P.racketFace, T.mittFace, k);
-    }
+    lerpV(P.hands[0], P.hands[0], T.mitt, ka);
+    lerpV(P.racketDir, P.racketDir, T.mittDir, ka);
+    if (!norm(P.racketDir)) cp(P.racketDir, T.mittDir);
+    lerpV(P.racketFace, P.racketFace, T.mittFace, ka);
     ortho(P.racketDir, P.racketFace);
-    dampV(P.hands[1], T.hand, T.armLam * 1.2, dt);
+    lerpV(P.hands[1], P.hands[1], T.hand, s.phase === 'throw' ? 1 : this.ease(T.armLam * 1.2, dt));
     this.aimHead(T.gaze, dt, 10, 2.2, 0, t);
     this.face(t, dt, T.eyes, T.mouth, T.brow);
     return P;
@@ -2037,14 +2161,20 @@ export class CatcherAnimator extends Base {
     cp(this.snapMitt, P.hands[0]);
     cp(this.snapDir, P.racketDir);
     cp(this.snapFace, P.racketFace);
+    cp(this.snapBody, P.body);
+    cp(this.snapHand, P.hands[1]);
     if (s.phase === 'catch') this.squashV -= 0.1;
   }
 
-  /** The squat: feet wide, on the balls of the feet, leaning in behind the mitt. */
+  /**
+   * The squat: feet wide, up on the balls of the feet, the hips sat back behind
+   * the heels — the catch point's only 0.35 m out and the torso's chunky: the
+   * chest has to stay behind the mitt — leaning in over the knees.
+   */
   private squat(T: CatchTargets, t: number, lean = 1) {
     const br = Math.sin(t * 1.8) * 0.005;
-    set(T.body, 0, 0.17 + br, 0.02);
-    T.pitch = -0.2 * lean;
+    set(T.body, 0, 0.17 + br, 0.25);
+    T.pitch = -0.18 * lean;
     T.yaw = 0;
     T.roll = 0;
     set(T.feet[0], -0.3, 0.03, 0.06);
@@ -2088,6 +2218,11 @@ export class CatcherAnimator extends Base {
     return set(o, P.hands[0].x + this.X.x * p.x + this.Y.x * p.y + this.Z.x * p.z, P.hands[0].y + this.X.y * p.x + this.Y.y * p.y + this.Z.y * p.z, P.hands[0].z + this.X.z * p.x + this.Y.z * p.y + this.Z.z * p.z);
   }
 
+  /** Where the ball in the throwing hand is (root space): out along the arm from the hand, as the pitcher's. */
+  static ballAt(o: V3, hand: V3, shoulder: V3) {
+    return PitcherAnimator.ballAt(o, hand, shoulder);
+  }
+
   /** The throwing hand tucked behind the knee, out of the way of foul tips. */
   private tuck(T: CatchTargets) {
     set(T.hand, 0.3, 0.3, 0.12);
@@ -2095,9 +2230,10 @@ export class CatcherAnimator extends Base {
 
   private crouch(T: CatchTargets, t: number, s: CatcherState) {
     this.squat(T, t);
-    // the target: the middle of the zone (a little rhythm), or where it was asked for
-    const tx = s.targetX || TARGET.x,
-      ty = s.targetY || TARGET.y;
+    // the target the game asks for (where the pitch is meant to go), or the middle of the zone;
+    // a little rhythm in it
+    const tx = s.targetY > 0 ? s.targetX : TARGET.x,
+      ty = s.targetY > 0 ? s.targetY : TARGET.y;
     const bob = Math.sin(t * 2.4) * 0.008;
     this.mittOn(T, tx, ty + bob, FIELD.catcherZ - 0.35);
     // after a watch, the throwing hand pulls the mask back down first
@@ -2125,13 +2261,13 @@ export class CatcherAnimator extends Base {
     T.body.x = side * 0.06;
     T.roll = -side * 0.05;
     const z = FIELD.catcherZ - 0.35;
-    // from the presented target to the pitch's, late (a catcher waits on it); after it arrives, the pop
-    const go = smooth(clamp((u - (ar - 0.34)) / 0.26));
-    const tx = lerp(TARGET.x, s.targetX, go),
-      ty = lerp(TARGET.y, s.targetY, go);
-    if (u < ar) this.mittOn(T, tx, ty, z);
-    else {
-      // the pop: back with the ball, then a little stick (framing it)
+    // the target held (a touch relaxed while the ball's on its way, then up to meet it, exactly
+    // there at `arrive`); after it arrives, the pop
+    if (u < ar) {
+      const relax = Math.sin(Math.PI * clamp((u - 0.04) / Math.max(0.1, ar - 0.16))) * 0.045;
+      this.mittOn(T, s.targetX, s.targetY - relax, z);
+    } else {
+      // the pop: back with the ball, then a little stick towards the zone (framing it)
       const v = u - ar;
       const give = Math.sin(clamp(v / 0.16) * Math.PI * 0.5) * 0.085 * Math.exp(-Math.max(0, v - 0.16) * 4);
       const frame = smooth(clamp((v - 0.12) / 0.3)) * 0.03;
@@ -2153,45 +2289,119 @@ export class CatcherAnimator extends Base {
     return true;
   }
 
-  /** Up out of the crouch and a soft toss back to the pitcher (the gear flies the ball). */
-  private throwPose(T: CatchTargets, t: number, s: CatcherState) {
+  /**
+   * Up out of the crouch and a quick toss back to the pitcher, set exactly
+   * each frame (game.ts flies the ball from the hand at THROW.release): the
+   * mitt comes up to the chest and the throwing hand has the ball out of the
+   * pocket at THROW.take, back by the ear, and forward — the ball (BALL_OUT out
+   * along the arm) exactly on TOSS at THROW.release — then the follow-through
+   * and down again by THROW.end, when the game has him crouch.
+   */
+  private throwPose(T: CatchTargets, t: number, s: CatcherState): boolean {
     const u = s.t;
-    const rise = smooth(clamp(u / 0.3));
-    const sink = smooth(clamp((u - 0.9) / 0.4));
-    const up = rise * (1 - sink);
-    set(T.body, 0, lerp(0.17, HIP - 0.03, up), lerp(0.02, -0.02, up));
-    T.pitch = lerp(-0.2, 0.02, up);
-    T.yaw = lerp(0, 0.35, smooth(clamp((u - 0.2) / 0.25))) * (1 - smooth(clamp((u - THROW.release) / 0.25)));
+    const K = this.throwKeys();
+    const tk = K.t;
+    // the keys, Catmull-Rom over their times
+    let i = 0;
+    while (i < tk.length - 2 && u > tk[i + 1]) i++;
+    const i0 = Math.max(0, i - 1),
+      i3 = Math.min(tk.length - 1, i + 2);
+    const span = tk[i + 1] - tk[i];
+    const v = clamp((u - tk[i]) / span);
+    const cr = (a: number[]) => {
+      const m1 = ((a[i + 1] - a[i0]) / Math.max(1e-4, tk[i + 1] - tk[i0])) * span;
+      const m2 = ((a[i3] - a[i]) / Math.max(1e-4, tk[i3] - tk[i])) * span;
+      const v2 = v * v,
+        v3 = v2 * v;
+      return (2 * v3 - 3 * v2 + 1) * a[i] + (v3 - 2 * v2 + v) * m1 + (-2 * v3 + 3 * v2) * a[i + 1] + (v3 - v2) * m2;
+    };
+    const crV = (o: V3, a: V3[]) => {
+      const xs = a.map((p) => p.x),
+        ys = a.map((p) => p.y),
+        zs = a.map((p) => p.z);
+      return set(o, cr(xs), cr(ys), cr(zs));
+    };
+    crV(T.body, K.body);
+    T.pitch = cr(K.pitch);
+    T.yaw = cr(K.yaw);
     T.roll = 0;
-    set(T.feet[0], lerp(-0.3, -0.2, up), lerp(0.03, 0, up), lerp(0.06, -0.06 * up, up));
-    set(T.feet[1], lerp(0.3, 0.2, up), lerp(0.03, 0, up), lerp(0.06, 0.08, up));
-    T.footPitch[0] = T.footPitch[1] = lerp(-0.45, 0, up);
-    // the mitt comes up to the chest, the hand takes the ball, back by the ear, and the toss
-    set(this.a, -0.12, T.body.y + 0.62, -0.3);
-    lerpV(T.mitt, this.snapMitt, this.a, smooth(clamp(u / 0.2)));
-    set(T.mittDir, 0.1, 0.9, -0.2);
+    crV(T.feet[0], K.feet0);
+    crV(T.feet[1], K.feet1);
+    T.footPitch[0] = T.footPitch[1] = cr(K.footPitch);
+    crV(T.mitt, K.mitt);
+    crV(T.mittDir, K.mittDir);
     norm(T.mittDir);
-    set(T.mittFace, 0.9, 0, -0.35);
+    crV(T.mittFace, K.mittFace);
     ortho(T.mittDir, T.mittFace);
-    const take = THROW.take,
-      rel = THROW.release;
-    if (u < take) {
-      set(T.hand, lerp(0.3, T.mitt.x + 0.08, smooth(u / take)), lerp(0.3, T.mitt.y + 0.02, smooth(u / take)), lerp(0.12, T.mitt.z + 0.05, smooth(u / take)));
-    } else if (u < rel - 0.1) {
-      const k = smooth((u - take) / (rel - 0.1 - take));
-      set(T.hand, lerp(T.mitt.x + 0.08, 0.3, k), lerp(T.mitt.y + 0.02, T.body.y + 0.9, k), lerp(T.mitt.z + 0.05, 0.14, k));
-    } else {
-      const k = smooth(clamp((u - (rel - 0.1)) / 0.22));
-      const back = smooth(clamp((u - 0.9) / 0.4));
-      set(T.hand, lerp(lerp(0.3, 0.12, k), 0.3, back), lerp(lerp(T.body.y + 0.9, T.body.y + 0.72, k), 0.3, back), lerp(lerp(0.14, -0.42, k), 0.12, back));
+    crV(T.hand, K.hand);
+    // out of the catch it was in, over the first moments
+    const b = smooth(clamp(u / 0.08));
+    if (b < 1) {
+      lerpV(T.mitt, this.snapMitt, T.mitt, b);
+      lerpV(T.mittDir, this.snapDir, T.mittDir, b);
+      norm(T.mittDir);
+      lerpV(T.mittFace, this.snapFace, T.mittFace, b);
+      ortho(T.mittDir, T.mittFace);
+      lerpV(T.body, this.snapBody, T.body, b);
+      lerpV(T.hand, this.snapHand, T.hand, b);
     }
     gazeAt(T.gaze, { x: 0, y: 1.2, z: FIELD.moundZ });
-    T.lam = 9;
-    T.armLam = u > rel - 0.14 && u < rel + 0.12 ? 26 : 14;
-    T.feetLam = 12;
     T.eyes = 'open';
     T.mouth = 'flat';
     T.brow = 0.2;
+    return true;
+  }
+
+  /** the throw's keys, built once (they depend only on the character) */
+  private tk: { t: number[]; body: V3[]; pitch: number[]; yaw: number[]; feet0: V3[]; feet1: V3[]; footPitch: number[]; mitt: V3[]; mittDir: V3[]; mittFace: V3[]; hand: V3[] } | null = null;
+
+  private throwKeys() {
+    if (this.tk) return this.tk;
+    const sc = this.scale;
+    const g = this.girth;
+    const t = [0, THROW.take, 0.2, THROW.release, 0.46, THROW.end];
+    const body = [V(0, 0.17, 0.25), V(0, 0.24, 0.17), V(0, HIP - 0.035, 0.1), V(0, HIP - 0.03, 0.08), V(0, HIP - 0.04, 0.08), V(0, 0.24, 0.2)];
+    const pitch = [-0.18, -0.1, -0.02, -0.16, -0.12, -0.16];
+    // the throwing shoulder back (the chest turned right) as the ball's cocked, square as it goes
+    const yaw = [0, -0.2, -0.5, 0.1, 0.15, 0];
+    const feet0 = [V(-0.3, 0.03, 0.06), V(-0.24, 0.015, 0.05), V(-0.18, 0, 0.02), V(-0.18, 0, -0.02), V(-0.18, 0, -0.02), V(-0.26, 0.02, 0.05)];
+    const feet1 = [V(0.3, 0.03, 0.06), V(0.24, 0.015, 0.07), V(0.18, 0, 0.1), V(0.18, 0, 0.1), V(0.18, 0, 0.08), V(0.26, 0.02, 0.06)];
+    const footPitch = [-0.45, -0.25, 0, 0, 0, -0.3];
+    // the mitt: from the catch up to the chest (the ball's taken out of it at `take`), then out
+    // in front pointing the way, then down
+    const mitt = [V(-0.05, 0.62, -0.26), V(-0.1, 0.24 + 0.52, -0.14), V(-0.2, HIP + 0.55, -0.24), V(-0.24, HIP + 0.5, -0.2), V(-0.3, HIP + 0.3, -0.1), V(-0.2, 0.55, -0.2)];
+    const up = V(0.05, 1, -0.1),
+      fwd = V(0.1, 0.1, -1);
+    const mittDir = [V(0, 1, 0.1), V(0.2, 0.9, 0.2), up, up, V(-0.2, -0.3, -0.9), V(0, 1, 0.1)];
+    const mittFace = [V(0, 0.05, -1), V(0.9, 0.1, -0.3), fwd, fwd, V(1, 0, 0), V(0, 0.05, -1)];
+    const hand = [V(0.3, 0.3, 0.12), V(), V(0.26, HIP - 0.035 + 0.83, 0.16), V(), V(0.06, HIP - 0.04 + 0.5, -0.36), V(0.3, 0.3, 0.12)];
+    const S = V(),
+      Q = V(),
+      o = V();
+    // at `take`: the ball on the mitt's pocket
+    rot(o, 0.2 * g, SH_Y, 0, pitch[1], yaw[1], 0);
+    set(S, o.x + body[1].x, o.y + body[1].y, o.z + body[1].z);
+    const dir = norm(set(o, mittDir[1].x, mittDir[1].y, mittDir[1].z)) ? o : up;
+    const face = V(mittFace[1].x, mittFace[1].y, mittFace[1].z);
+    norm(face);
+    ortho(dir, face);
+    slotAxesTo(dir, face, MITT.pocket, Q);
+    set(Q, Q.x + mitt[1].x, Q.y + mitt[1].y, Q.z + mitt[1].z);
+    this.handFor(hand[1], S, Q);
+    // at `release`: the ball on the toss's starting point
+    rot(o, 0.2 * g, SH_Y, 0, pitch[3], yaw[3], 0);
+    set(S, o.x + body[3].x, o.y + body[3].y, o.z + body[3].z);
+    set(Q, TOSS.x / sc, TOSS.y / sc, TOSS.z / sc);
+    this.handFor(hand[3], S, Q);
+    this.tk = { t, body, pitch, yaw, feet0, feet1, footPitch, mitt, mittDir, mittFace, hand };
+    return this.tk;
+  }
+
+  /** The hand that puts the ball (BALL_OUT on along the arm from shoulder S) at Q. */
+  private handFor(o: V3, S: V3, Q: V3) {
+    const d = dist(Q, S);
+    const k = 1 - BALL_OUT / Math.max(BALL_OUT * 1.5, d);
+    return set(o, S.x + (Q.x - S.x) * k, S.y + (Q.y - S.y) * k, S.z + (Q.z - S.z) * k);
   }
 
   /** A ball in play: stand up, the mask off, and follow it. */

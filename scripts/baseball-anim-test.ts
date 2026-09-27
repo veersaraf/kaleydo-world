@@ -8,7 +8,7 @@
 // - the pitcher's ball is on the release point at t = DELIVERY.release;
 // - the catcher's pocket is on the ball at t = arrive.
 
-import { BatterAnimator, PitcherAnimator, CatcherAnimator, BAT, BALL_OUT } from '../src/tv/baseball/anim';
+import { BatterAnimator, PitcherAnimator, CatcherAnimator, BAT, BALL_OUT, THROW, TOSS, GLOVE } from '../src/tv/baseball/anim';
 import { FIELD, SWING, DELIVERY } from '../src/tv/baseball/field';
 import type { BatterState, PitcherState, CatcherState } from '../src/tv/baseball/types';
 import type { Look } from '../src/tv/chars/look';
@@ -259,6 +259,113 @@ console.log(`pitcher: ball on the release point (${fails ? 'see failures' : 'all
       }
   if (worstC > 1e-6) fail(`catcher: pocket ${(worstC * 100).toFixed(2)} cm off the ball`);
   console.log(`catcher: pocket error ≤ ${(worstC * 1000).toFixed(4)} mm`);
+}
+
+// ---------------------------------------------------------------- the throw back: out of the catcher's hand, into the pitcher's glove
+
+{
+  let worstT = 0,
+    worstG = 0;
+  for (const height of [0.94, 1.0, 1.06])
+    for (const h of [1, -1] as const) {
+      // the catcher lets it go on game.ts's TOSS_FROM at THROW.release
+      const a = new CatcherAnimator(look(height, 1));
+      const sc = CHAR_SCALE * height;
+      const s: CatcherState = { x: 0, z: FIELD.catcherZ, phase: 'catch', t: 0, targetX: 0.1, targetY: 0.7, arrive: 0.55, look: null };
+      let t = 0;
+      for (let u = 0; u < 0.9; u += 1 / 60) a.update((t += 1 / 60), 1 / 60, { ...s, t: u });
+      s.phase = 'throw';
+      const steps: number[] = [];
+      for (let u = 0; u < THROW.end; u += 1 / 60) steps.push(u);
+      steps.push(THROW.release);
+      steps.sort((x, y) => x - y);
+      let last = 0;
+      for (const u of steps) {
+        const p = a.update((t += Math.max(1e-3, u - last)), Math.max(1e-3, u - last), { ...s, t: u });
+        last = u;
+        if (Math.abs(u - THROW.release) < 1e-9) {
+          const b = CatcherAnimator.ballAt({ x: 0, y: 0, z: 0 }, p.hands[1], shoulder(p, 1, 1));
+          const w = world(p, sc, b);
+          worstT = Math.max(worstT, len(sub(w, { x: TOSS.x, y: TOSS.y, z: FIELD.catcherZ + TOSS.z })));
+        }
+      }
+      // the pitcher gloves it: the pocket on the arrival point at eta = 0
+      const pa = new PitcherAnimator(h, look(height, 1));
+      const ps: PitcherState = { x: 0, z: FIELD.moundZ, handed: h, phase: 'idle', t: 0, kind: null, look: null, toss: null };
+      const to = { x: 0.3 * h, y: 1.3, z: FIELD.moundZ + 0.45 };
+      for (let u = 0; u < 1; u += 1 / 60) pa.update((t += 1 / 60), 1 / 60, { ...ps, t: u });
+      for (const eta of [0.9, 0.7, 0.5, 0.3, 0.2, 0.1, 0.05, 1 / 60, 0]) {
+        const p = pa.update((t += 1 / 60), 1 / 60, { ...ps, t: 1 + (0.9 - eta), toss: { ...to, eta } });
+        if (eta === 0) {
+          const gp = slotPoint(p, GLOVE.pocket);
+          worstG = Math.max(worstG, len(sub(world(p, sc, gp), to)));
+        }
+      }
+    }
+  if (worstT > 1e-6) fail(`catcher: the throw leaves ${(worstT * 100).toFixed(2)} cm off TOSS`);
+  if (worstG > 1e-6) fail(`pitcher: the glove's pocket ${(worstG * 100).toFixed(2)} cm off the throw`);
+  console.log(`throw back: out of the catcher's hand on TOSS ≤ ${(worstT * 1000).toFixed(4)} mm; into the pitcher's pocket ≤ ${(worstG * 1000).toFixed(4)} mm`);
+}
+
+// ---------------------------------------------------------------- a rewind snaps (no easing back)
+
+{
+  const a = new BatterAnimator(1, look(1, 1));
+  const s: BatterState = { x: -FIELD.boxX, z: FIELD.homeZ - 0.2, handed: 1, phase: 'stance', t: 0, lift: 0.2, power: 0.7, aimX: 0, aimY: 0.8, yaw: 0, look: null };
+  let t = 0;
+  for (let u = 0; u < 1; u += 1 / 60) a.update((t += 1 / 60), 1 / 60, { ...s, t: u });
+  s.phase = 'load';
+  for (let u = 0; u < 0.62; u += 1 / 60) a.update((t += 1 / 60), 1 / 60, { ...s, t: u });
+  // a late swing: straight to the contact frame (the hitstop's dt is tiny)
+  s.phase = 'swing';
+  const p = a.update(t, 1e-4, { ...s, t: SWING.contact });
+  const sw = a.sweetSpot({ x: 0, y: 0, z: 0 });
+  const tip = { x: sw.x + p.racketDir.x, y: sw.y + p.racketDir.y, z: sw.z + p.racketDir.z };
+  const sc = CHAR_SCALE;
+  const w = world(p, sc, sw),
+    wt = world(p, sc, tip);
+  const dW = sub(wt, w);
+  const off = sub({ x: 0, y: 0.8, z: FIELD.contactZ }, w);
+  const along = (off.x * dW.x + off.y * dW.y + off.z * dW.z) / len(dW);
+  const err = Math.hypot(along, len(off) - (FIELD.ballR + BAT.barrelR * sc));
+  if (err > 1e-6) fail(`batter: rewound to the contact frame, the ball's ${(err * 100).toFixed(2)} cm off the barrel`);
+  // and the pitcher, its windup clock put back: straight there
+  const pa = new PitcherAnimator(1, look(1, 1));
+  const ps: PitcherState = { x: 0, z: FIELD.moundZ, handed: 1, phase: 'set', t: 0, kind: 'fastball', look: null };
+  for (let u = 0; u < 0.6; u += 1 / 60) pa.update((t += 1 / 60), 1 / 60, { ...ps, t: u });
+  ps.phase = 'windup';
+  let q = pa.update(t, 1 / 60, { ...ps, t: 0 });
+  for (let u = 1 / 60; u < 1.72; u += 1 / 60) q = pa.update((t += 1 / 60), 1 / 60, { ...ps, t: u });
+  const back = pa.update(t, 1e-4, { ...ps, t: 1.6 }).hands[1];
+  const fresh = new PitcherAnimator(1, look(1, 1));
+  for (let u = 0; u < 0.6; u += 1 / 60) fresh.update(u, 1 / 60, { ...ps, phase: 'set', t: u });
+  let f = fresh.update(0.6, 1 / 60, { ...ps, t: 0 });
+  for (let u = 1 / 60; u <= 1.6 + 1e-9; u += 1 / 60) f = fresh.update(0.6 + u, 1 / 60, { ...ps, t: Math.min(u, 1.6) });
+  f = fresh.update(3, 1e-4, { ...ps, t: 1.6 });
+  const pe = len(sub(back, f.hands[1]));
+  if (pe > 1e-6) fail(`pitcher: rewound, the throwing hand's ${(pe * 100).toFixed(2)} cm from where the windup puts it`);
+  void q;
+  console.log(`rewind: batter at the contact frame at once (${(err * 1000).toFixed(4)} mm), the pitcher's windup back exactly (${(pe * 1000).toFixed(4)} mm)`);
+}
+
+/** a point in the racket slot's space → root, for a pose (as Rig.apply builds the slot) */
+function slotPoint(p: Pose, q: { x: number; y: number; z: number }) {
+  const Y = { ...p.racketDir };
+  const yl = len(Y);
+  Y.x /= yl;
+  Y.y /= yl;
+  Y.z /= yl;
+  const Z = { ...p.racketFace };
+  const k = Z.x * Y.x + Z.y * Y.y + Z.z * Y.z;
+  Z.x -= Y.x * k;
+  Z.y -= Y.y * k;
+  Z.z -= Y.z * k;
+  const zl = len(Z);
+  Z.x /= zl;
+  Z.y /= zl;
+  Z.z /= zl;
+  const X = { x: Y.y * Z.z - Y.z * Z.y, y: Y.z * Z.x - Y.x * Z.z, z: Y.x * Z.y - Y.y * Z.x };
+  return { x: p.hands[0].x + X.x * q.x + Y.x * q.y + Z.x * q.z, y: p.hands[0].y + X.y * q.x + Y.y * q.y + Z.y * q.z, z: p.hands[0].z + X.z * q.x + Y.z * q.y + Z.z * q.z };
 }
 
 console.log(fails ? `${fails} failures` : 'all good');

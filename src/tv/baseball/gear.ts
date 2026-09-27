@@ -26,7 +26,7 @@ import { outlineMaterial } from '../render/outline';
 import { SwordTrail, trailStyle, SWORD } from '../duel/sword';
 import { FIELD } from './field';
 import type { BatterState, PitcherState, CatcherState, FieldBall } from './types';
-import { BAT, BALL_OUT, MITT, THROW, MASK, FLIP, oneHanded, topHandOff, flipsBat } from './anim';
+import { BAT, BALL_OUT, MITT, GLOVE, THROW, MASK, FLIP, oneHanded, topHandOff, flipsBat } from './anim';
 
 // ---------------------------------------------------------------- per-world colours
 
@@ -675,12 +675,12 @@ interface CatcherKit {
   from: string;
 }
 
-/** The ball being tossed back to the pitcher. */
-interface Toss {
-  from: THREE.Vector3;
-  t: number;
-  done: boolean;
-}
+/** seconds a throw back sits in the pitcher's glove before it's in the throwing hand */
+const GLOVED = 0.35;
+const smooth01 = (u: number) => {
+  const x = Math.min(1, Math.max(0, u));
+  return x * x * (3 - 2 * x);
+};
 
 const UP = new THREE.Vector3(0, 1, 0);
 const vA = new THREE.Vector3();
@@ -703,8 +703,9 @@ export class BaseballGear {
   private st: GearStyle;
   private ball: THREE.Mesh;
   private ballMat: THREE.Material;
-  private toss: Toss | null = null;
-  /** where the ball was last drawn by us (a toss starts from the throwing hand) */
+  /** the ball's phase last frame, and how long since a throw came into the pitcher's glove (−1: not now) */
+  private ballPhase: FieldBall['phase'] | '' = '';
+  private gloved = -1;
   private mats: THREE.Material[] = [];
   private geos: THREE.BufferGeometry[] = [];
 
@@ -1142,47 +1143,39 @@ export class BaseballGear {
     }
   }
 
-  /** The ball while it's the characters': in the pitcher's hand, in the mitt, on its way back to the mound. */
+  /**
+   * The ball while it's the characters': in the pitcher's throwing hand
+   * ('hand'), in the mitt ('mitt') — and out of it into the catcher's throwing
+   * hand for the throw back, until the game lets it fly (a 'pitch' ball again,
+   * the venue's) — and, as the throw comes into the pitcher's glove (back to
+   * 'hand'), in the glove's pocket a moment till the throwing hand has it.
+   */
   private updateBall(c: BaseballChars, dt: number) {
     const b = c.ball;
     const ball = this.ball;
     const P = this.pitcher,
       K = this.catcher;
     const at = vC;
-    // the catcher lets the toss go (the gear flies it: the game's ball is still 'mitt', or already 'hand')
-    const s = c.catcher;
-    if (K && b.phase === 'mitt' && s.phase === 'throw' && s.t >= THROW.release && !this.toss) {
-      K.rig.root.updateMatrixWorld(true);
-      this.toss = { from: K.rig.hands[1].getWorldPosition(new THREE.Vector3()), t: Math.max(0, s.t - THROW.release - dt), done: false };
-    }
-    let shown = true;
-    if (b.phase === 'pitch' || b.phase === 'play' || b.phase === 'gone' || !P || !K) {
-      this.toss = null;
-      shown = false;
-    } else if (this.toss && !this.toss.done) {
-      // on its way back to the mound, into the pitcher's glove
-      const T = this.toss;
-      T.t += dt;
-      const u = Math.min(1, T.t / THROW.flight);
-      this.glovePocket(P, vB);
-      at.lerpVectors(T.from, vB, u);
-      at.y += Math.sin(u * Math.PI) * 1.35;
-      if (u >= 1) T.done = true;
+    const prev = this.ballPhase;
+    this.ballPhase = b.phase;
+    // a throw from the catcher just came into the glove (a pitch never goes back to 'hand' otherwise)
+    if (b.phase === 'hand' && prev === 'pitch') this.gloved = 0;
+    else if (b.phase !== 'hand') this.gloved = -1;
+    let shown = !!P && !!K;
+    if (!P || !K) {
+      // nobody to hold it
     } else if (b.phase === 'hand') {
-      // in the throwing hand (or, just back from the catcher, in the glove until the pitcher starts again)
-      if (this.toss?.done && c.pitcher.phase !== 'windup' && c.pitcher.phase !== 'set') this.glovePocket(P, at);
-      else {
-        this.toss = null;
-        this.throwingHand(P, at);
+      this.throwingHand(P, at);
+      if (this.gloved >= 0 && this.gloved < GLOVED) {
+        // just caught: in the pocket, then into the throwing hand as it comes over
+        this.gloved += dt;
+        this.glovePocket(P, vB);
+        at.lerpVectors(vB, at, smooth01(this.gloved / GLOVED));
       }
     } else if (b.phase === 'mitt') {
-      if (this.toss?.done) this.glovePocket(P, at);
-      else if (s.phase === 'throw' && s.t >= THROW.take) {
-        // in the throwing hand, out of the mitt
-        K.rig.root.updateMatrixWorld(true);
-        K.rig.hands[1].getWorldPosition(at);
-        at.y += 0.02;
-      } else this.pocket(K, at);
+      const s = c.catcher;
+      if (s.phase === 'throw' && s.t >= THROW.take) this.catcherHand(K, at);
+      else this.pocket(K, at);
     } else shown = false;
     ball.visible = shown;
     if (!shown) return;
@@ -1191,18 +1184,27 @@ export class BaseballGear {
     ball.scale.setScalar(c.eye ? ballDrawScale(Math.hypot(at.x - c.eye.x, at.y - c.eye.y, at.z - c.eye.z)) : 1);
   }
 
-  /** The ball in the pitcher's throwing hand: out along the arm from the hand (as anim.ts puts it on the release point). */
-  private throwingHand(k: PitcherKit, o: THREE.Vector3) {
-    const rig = k.rig;
+  /** The ball in a throwing hand (hands[1], on the `side` shoulder): out along the arm from the hand, as anim.ts puts it. */
+  private inHand(rig: Rig, side: number, o: THREE.Vector3) {
     rig.root.updateMatrixWorld(true);
-    // the throwing shoulder, as Rig.apply places it (hands[1] is on the throwing side)
+    // the shoulder, as Rig.apply places it
     rig.body.updateMatrix();
-    vA.set(k.hs * 0.2 * (rig.look.girth || 1), 0.47 * TORSO, 0).applyMatrix4(rig.body.matrix);
+    vA.set(side * 0.2 * (rig.look.girth || 1), 0.47 * TORSO, 0).applyMatrix4(rig.body.matrix);
     const hand = rig.hands[1].position;
     vB.subVectors(hand, vA);
     const l = vB.length() || 1;
     o.copy(hand).addScaledVector(vB, BALL_OUT / l);
     return o.applyMatrix4(rig.root.matrixWorld);
+  }
+
+  /** The ball in the pitcher's throwing hand (on the release point at DELIVERY.release). */
+  private throwingHand(k: PitcherKit, o: THREE.Vector3) {
+    return this.inHand(k.rig, k.hs, o);
+  }
+
+  /** The ball in the catcher's throwing hand, his right (on TOSS at THROW.release). */
+  private catcherHand(k: CatcherKit, o: THREE.Vector3) {
+    return this.inHand(k.rig, 1, o);
   }
 
   /** The catcher's pocket (world). */
@@ -1215,7 +1217,7 @@ export class BaseballGear {
   /** The pitcher's glove pocket (world). */
   private glovePocket(k: PitcherKit, o: THREE.Vector3) {
     k.rig.root.updateMatrixWorld(true);
-    o.set(0, 0.09, 0.07);
+    o.set(GLOVE.pocket.x, GLOVE.pocket.y, GLOVE.pocket.z);
     return o.applyMatrix4(k.glove.matrixWorld);
   }
 

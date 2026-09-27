@@ -28,7 +28,7 @@ import { randomLook, type Hair } from '../chars/look';
 import { Rng } from '../core/math';
 import { FIELD, DELIVERY, SWING } from './field';
 import type { BatterState, PitcherState, CatcherState, FieldBall, PitchKind, LookAt } from './types';
-import { BatterAnimator, PitcherAnimator, CatcherAnimator, THROW, FLIP, BAT } from './anim';
+import { BatterAnimator, PitcherAnimator, CatcherAnimator, THROW, TOSS, BAT } from './anim';
 import { BaseballGear, ballDrawScale } from './gear';
 
 const q = new URLSearchParams(location.search);
@@ -153,7 +153,15 @@ const flyBall = new THREE.Mesh(new THREE.SphereGeometry(FIELD.ballR, 20, 14), ne
 flyBall.visible = false;
 w.scene.add(flyBall);
 
-// ---------------------------------------------------------------- the pitches
+// ---------------------------------------------------------------- the pitches, paced as game.ts paces them
+
+/** game.ts's BASEBALL_TIMING (what the characters feel of it), its hitstops, and its toss back */
+const TM = { ready: 1.2, follow: 0.6, catchHold: 0.1, celebrate: 1.8, beat: 0.7, hrResult: 0.4, strikeResult: 0.3 };
+const HITSTOP = { hit: 0.07, sweet: 0.11 };
+/** a take's a strike once no swing can still be on its way (game.ts: SWING_OPEN after the ball crosses) */
+const SWING_OPEN = 0.3;
+const TOSS_FROM = new THREE.Vector3(TOSS.x, TOSS.y, FIELD.catcherZ + TOSS.z);
+const TOSS_TO = new THREE.Vector3(0.3 * phand, 1.3, FIELD.moundZ + 0.45);
 
 interface PlayDef {
   name: string;
@@ -163,51 +171,67 @@ interface PlayDef {
   py: number;
   /** world m/s */
   speed: number;
-  swing: 'hit' | 'miss' | 'take';
-  /** a miss is early (−) or late (+), seconds */
+  /**
+   * hit: met on time · late: the swing's heard after the ball's in the mitt, and
+   * the game rewinds everyone to the contact · miss: swung early · take
+   */
+  swing: 'hit' | 'late' | 'miss' | 'take';
+  /** a miss is early (−), seconds */
   early?: number;
   power: number;
   lift: number;
   /** a batted ball: speed (world m/s), up (radians), spray (radians, + to the batter's pull side) */
   exit?: [number, number, number];
-  react: 'cheer' | 'sad' | 'none';
+  /** a home run: 'flip' a no-doubter (sweet: cheer and the bat flip as soon as the swing's done), 'fence' cheer as it clears the fence */
+  hr?: 'flip' | 'fence';
 }
 
 const PLAYS: PlayDef[] = [
-  { name: 'homer', kind: 'fastball', away: -0.06, py: 0.86, speed: 29, swing: 'hit', power: 0.7, lift: 0.45, exit: [27, 0.58, 0.12], react: 'cheer' },
-  { name: 'whiff', kind: 'curve', away: 0.2, py: 0.56, speed: 23, swing: 'miss', early: -0.1, power: 0.75, lift: 0.2, react: 'sad' },
-  { name: 'take', kind: 'slider', away: 0.5, py: 0.72, speed: 27, swing: 'take', power: 0, lift: 0, react: 'none' },
-  { name: 'liner', kind: 'changeup', away: 0.02, py: 1.06, speed: 21, swing: 'hit', power: 0.55, lift: -0.25, exit: [19, 0.2, -0.1], react: 'sad' },
-  { name: 'bomb', kind: 'fastball', away: -0.2, py: 0.62, speed: 31, swing: 'hit', power: 0.95, lift: 0.85, exit: [29, 0.66, 0.2], react: 'cheer' },
+  { name: 'homer', kind: 'fastball', away: -0.06, py: 0.86, speed: 29, swing: 'hit', power: 0.7, lift: 0.45, exit: [27, 0.58, 0.12], hr: 'flip' },
+  { name: 'whiff', kind: 'curve', away: 0.2, py: 0.62, speed: 23, swing: 'miss', early: -0.1, power: 0.75, lift: 0.2 },
+  { name: 'take', kind: 'slider', away: 0.22, py: 0.72, speed: 27, swing: 'take', power: 0, lift: 0 },
+  { name: 'late', kind: 'fastball', away: 0.04, py: 0.8, speed: 30, swing: 'late', power: 0.85, lift: 0.3, exit: [28, 0.6, -0.05], hr: 'fence' },
+  { name: 'liner', kind: 'changeup', away: 0.02, py: 1.06, speed: 21, swing: 'hit', power: 0.55, lift: -0.25, exit: [19, 0.2, -0.1] },
+  { name: 'bomb', kind: 'fastball', away: -0.2, py: 0.62, speed: 31, swing: 'hit', power: 0.95, lift: 0.85, exit: [29, 0.66, 0.2], hr: 'fence' },
 ];
 
-const SET = 1.2;
 const G = FIELD.gravity;
 
+/**
+ * A pitch's moments. Game-clock moments (g…) run as game.ts's clock does; real
+ * moments (the cycle's) differ after a contact by the hitstop, and — a late
+ * swing — by the stretch replayed after the rewind.
+ */
 interface Play extends PlayDef {
+  /** real: the play starts, and ends */
   t0: number;
-  /** windup, release, crossing the contact plane, into the mitt (∞: hit) */
+  tend: number;
+  /** game clock: the windup, the release, the crossing, into the mitt */
   tw: number;
   tr: number;
   tc: number;
   tca: number;
-  /** load, swing, watch, react (∞ if none), end */
-  tl: number;
+  /** real: the late swing's heard (everything rewinds to tc); the hitstop's length */
+  tR: number;
+  stop: number;
+  /** game clock: the swing starts; a strike settles; the throw back starts; the ball clears the fence, lands */
   ts: number;
-  twatch: number;
-  treact: number;
-  tend: number;
-  /** the throw back (∞ if none); the ball in the pitcher's hands again */
-  tthrow: number;
-  tback: number;
-  /** the batted ball: lands */
-  tland: number;
+  settle: number;
+  toss: number;
+  fence: number;
+  land: number;
+  /** game clock: the batter's reaction, and what it is */
+  react: number;
+  reaction: 'cheer' | 'sad' | '';
+  /** game clock: the play's over */
+  gend: number;
   px: number;
   release: THREE.Vector3;
   v0: THREE.Vector3;
   catchP: THREE.Vector3;
   hitV: THREE.Vector3;
   cross: THREE.Vector3;
+  tossV: THREE.Vector3;
 }
 
 const X0 = -handed * FIELD.boxX;
@@ -218,7 +242,8 @@ const plays: Play[] = [];
 let CYCLE = 0.6;
 for (const d of PLAYS) {
   const t0 = CYCLE;
-  const tw = t0 + SET;
+  // (the game clock runs from t0 with the real one until a contact)
+  const tw = t0 + TM.ready;
   const tr = tw + DELIVERY.release;
   const px = handed * d.away;
   const R = new THREE.Vector3(-phand * FIELD.releaseSide, FIELD.releaseY, FIELD.releaseZ);
@@ -228,32 +253,47 @@ for (const d of PLAYS) {
   const v0 = Cp.clone().sub(R).divideScalar(T1);
   v0.y += 0.5 * G * T1;
   const tc = tr + T1;
-  // where it reaches the catcher's mitt plane
+  // where it reaches the catcher's mitt
   const zc = FIELD.catcherZ - 0.35;
   const Tc = (zc - R.z) / v0.z;
   const catchP = R.clone().addScaledVector(v0, Tc);
   catchP.y -= 0.5 * G * Tc * Tc;
-  const hit = d.swing === 'hit';
-  const tca = hit ? Infinity : tr + Tc;
+  const tca = tr + Tc;
+  const hit = d.swing === 'hit' || d.swing === 'late';
   const ts = d.swing === 'take' ? Infinity : tc - SWING.contact + (d.early ?? 0);
-  const tl = Math.max(tr - 0.25, (Number.isFinite(ts) ? ts : tc - SWING.contact) - 0.5);
-  const twatch = Number.isFinite(ts) ? ts + SWING.end : tc + 0.2;
+  const sweet = d.hr === 'flip';
+  const stop = hit ? (sweet ? HITSTOP.sweet : HITSTOP.hit) : 0;
+  // a late swing's heard once the ball's in the mitt: everything goes back to tc
+  const tR = d.swing === 'late' ? tca + 0.07 : Infinity;
   // the batted ball
   const hitV = new THREE.Vector3();
-  let tland = Infinity;
+  let land = Infinity,
+    fence = Infinity;
   if (hit && d.exit) {
     const [v, up, spray] = d.exit;
     const a = -handed * spray; // pull side: a right-hander pulls to −x
     hitV.set(Math.sin(a) * Math.cos(up) * v, Math.sin(up) * v, -Math.cos(a) * Math.cos(up) * v);
-    // lands: y = 0
-    const T = (hitV.y + Math.sqrt(hitV.y * hitV.y + 2 * G * d.py)) / G;
-    tland = tc + T;
+    land = tc + (hitV.y + Math.sqrt(hitV.y * hitV.y + 2 * G * d.py)) / G;
+    if (d.hr) fence = tc + 19 / Math.hypot(hitV.x, hitV.z);
   }
-  const treact = d.react === 'none' ? Infinity : hit ? (d.react === 'cheer' ? tc + 1.25 : tland + 0.25) : tca + 0.5;
-  const tthrow = hit ? Infinity : tca + 0.7;
-  const tback = tthrow + THROW.release + THROW.flight;
-  const tend = Math.max(Number.isFinite(treact) ? treact + (d.react === 'cheer' ? 3.4 : 2.0) : twatch + 1.2, Number.isFinite(tback) ? tback + 0.6 : 0, Number.isFinite(tland) ? tland + 1 : 0);
-  plays.push({ ...d, t0, tw, tr, tc, tca, tl, ts, twatch, treact, tend, tthrow, tback, tland, px, release: R, v0, catchP, hitV, cross: Cp });
+  // strikes: settled, then the catcher throws it back
+  const settle = hit ? Infinity : d.swing === 'take' ? tc + SWING_OPEN : tca;
+  const toss = settle + TM.catchHold;
+  // the batter's reaction (game.ts's reaction() / verdict())
+  let react = Infinity,
+    reaction: Play['reaction'] = '';
+  if (d.swing === 'miss') (react = ts + SWING.end), (reaction = 'sad');
+  else if (d.swing === 'take') (react = settle), (reaction = 'sad');
+  else if (d.hr === 'flip') (react = ts + SWING.end), (reaction = 'cheer');
+  else if (d.hr === 'fence') (react = Math.max(ts + SWING.end, fence)), (reaction = 'cheer');
+  else if (hit) (react = land), (reaction = 'sad');
+  const gend = hit ? land + (d.hr ? TM.celebrate + TM.hrResult : TM.beat + 0.4) : toss + THROW.release + THROW.flight + 0.4;
+  const tossV = new THREE.Vector3().subVectors(TOSS_TO, TOSS_FROM).divideScalar(THROW.flight);
+  tossV.y += 0.5 * G * THROW.flight;
+  // real time: the game clock plus the hitstop (and the replayed stretch after a rewind)
+  const shift = d.swing === 'late' ? tR - tc + stop : stop;
+  const tend = gend + shift;
+  plays.push({ ...d, t0, tend, tw, tr, tc, tca, tR, stop, ts, settle, toss, fence, land, react, reaction, gend, px, release: R, v0, catchP, hitV, cross: Cp, tossV });
   CYCLE = tend;
 }
 CYCLE += 0.4;
@@ -263,55 +303,98 @@ function playAt(tc: number) {
   return plays[plays.length - 1];
 }
 
-/** seconds into the cycle for a play's moment, plus an offset */
-function at(name: string, moment: 'set' | 'windup' | 'release' | 'cross' | 'catch' | 'swing' | 'watch' | 'react' | 'throw' | 'land' | 'load' = 'set', off = 0) {
+/**
+ * The game clock at real time `r` in play p, and which story it's in: before a
+ * late swing is heard the pitch is on its way to the mitt as if taken; from
+ * then, it's the hit (the clock back at the contact, frozen for the hitstop).
+ */
+function clockAt(p: Play, r: number): { g: number; hitNow: boolean } {
+  if (p.swing === 'late') {
+    if (r < p.tR) return { g: r, hitNow: false };
+    return { g: p.tc + Math.max(0, r - p.tR - p.stop), hitNow: true };
+  }
+  if (p.swing === 'hit') return { g: r < p.tc ? r : Math.max(p.tc, r - p.stop), hitNow: true };
+  return { g: r, hitNow: false };
+}
+
+/** real seconds into the cycle for a play's moment (a game-clock one, mapped to the real clock), plus an offset */
+function at(name: string, moment: 'set' | 'windup' | 'release' | 'load' | 'cross' | 'catch' | 'swing' | 'watch' | 'react' | 'throw' | 'land' | 'fence' | 'rewind' | 'contact' = 'set', off = 0) {
   const p = plays.find((x) => x.name === name);
   if (!p) return 0;
-  const m = { set: p.t0, windup: p.tw, release: p.tr, cross: p.tc, catch: p.tca, swing: p.ts, watch: p.twatch, react: p.treact, throw: p.tthrow, land: p.tland, load: p.tl }[moment];
-  return (Number.isFinite(m) ? m : p.t0) + off;
+  const g: Record<string, number> = { windup: p.tw, release: p.tr, load: p.tr, cross: p.tc, catch: p.tca, swing: p.ts, watch: p.ts + SWING.end, react: p.react, throw: p.toss, land: p.land, fence: p.fence };
+  if (moment === 'set') return p.t0 + off;
+  if (moment === 'rewind') return (Number.isFinite(p.tR) ? p.tR : p.tc) + off;
+  // the contact as shown: at tc on time, at the rewind for a late swing
+  if (moment === 'contact') return (Number.isFinite(p.tR) ? p.tR : p.tc) + off;
+  const m = g[moment];
+  if (!Number.isFinite(m)) return p.t0 + off;
+  // game → real: past the contact, add the hitstop (and a late swing's replay)
+  const real = m <= p.tc || !(p.swing === 'hit' || p.swing === 'late') ? m : m + (p.swing === 'late' ? p.tR - p.tc + p.stop : p.stop);
+  // (a late swing's catch is before the rewind, as it happened)
+  if (p.swing === 'late' && moment === 'catch') return p.tca + off;
+  return real + off;
 }
 
 // ---------------------------------------------------------------- the fake game's states
 
 const batter: BatterState = { x: X0, z: Z0, handed, phase: 'stance', t: 0, lift: 0, power: 0, aimX: 0, aimY: 0.8, yaw: 0, look: null };
 const waiter: BatterState = { x: WAIT.x, z: WAIT.z, handed, phase: 'idle', t: 0, lift: 0, power: 0, aimX: 0, aimY: 0.8, yaw: Math.atan2(WAIT.x - 0, WAIT.z - FIELD.homeZ + 0.8), look: null };
-const pitcher: PitcherState = { x: 0, z: FIELD.moundZ, handed: phand, phase: 'set', t: 0, kind: null, look: null };
-const catcher: CatcherState = { x: 0, z: FIELD.catcherZ, phase: 'crouch', t: 0, targetX: 0, targetY: 0, arrive: 0.5, look: null };
+const pitcher: PitcherState = { x: 0, z: FIELD.moundZ, handed: phand, phase: 'set', t: 0, kind: null, look: null, toss: null };
+const catcher: CatcherState = { x: 0, z: FIELD.catcherZ, phase: 'crouch', t: 0, targetX: 0, targetY: 0.8, arrive: 0.5, look: null };
 const ball: FieldBall = { x: 0, y: 0, z: 0, phase: 'hand', speed: 0 };
 const ballP = new THREE.Vector3();
 
-function pitchPos(p: Play, t: number, o: THREE.Vector3) {
-  const u = t - p.tr;
+function pitchPos(p: Play, g: number, o: THREE.Vector3) {
+  const u = Math.min(g, p.tca) - p.tr;
   return o.copy(p.release).addScaledVector(p.v0, u).setY(p.release.y + p.v0.y * u - 0.5 * G * u * u);
 }
 
-function hitPos(p: Play, t: number, o: THREE.Vector3) {
-  const u = Math.min(t, p.tland) - p.tc;
+function hitPos(p: Play, g: number, o: THREE.Vector3) {
+  const u = Math.min(g, p.land) - p.tc;
   o.copy(p.cross).addScaledVector(p.hitV, u);
   o.y = p.cross.y + p.hitV.y * u - 0.5 * G * u * u;
   return o;
 }
 
-function fake(tc: number) {
-  const p = playAt(tc);
-  const hit = p.swing === 'hit';
+function tossPos(p: Play, g: number, o: THREE.Vector3) {
+  const u = Math.max(0, Math.min(THROW.flight, g - p.toss - THROW.release));
+  o.copy(TOSS_FROM).addScaledVector(p.tossV, u);
+  o.y = TOSS_FROM.y + p.tossV.y * u - 0.5 * G * u * u;
+  return o;
+}
+
+/** Everyone's state at real cycle time r (and the game clock it maps to). */
+function fake(r: number) {
+  const p = playAt(r);
+  const { g, hitNow } = clockAt(p, r);
+  const hit = hitNow;
+  const launched = hit && g >= p.tc && r >= (p.swing === 'late' ? p.tR : p.tc) + p.stop;
   // the ball
   let look: LookAt = null;
-  if (tc < p.tr) {
+  if (g < p.tr) {
     ball.phase = 'hand';
-    // looking in at the pitcher's hand
+    ballP.set(-phand * FIELD.releaseSide, FIELD.releaseY, FIELD.releaseZ);
     look = { x: -phand * 0.3, y: 1.4, z: FIELD.moundZ + 0.6 };
-  } else if (hit && tc >= p.tc) {
-    ball.phase = tc < p.tland + 1.2 ? 'play' : 'gone';
-    hitPos(p, tc, ballP);
+  } else if (hit && g >= p.tc) {
+    ball.phase = g < p.land + 1.2 ? 'play' : 'gone';
+    hitPos(p, g, ballP);
     look = { x: ballP.x, y: ballP.y, z: ballP.z };
-  } else if (!hit && tc >= p.tca) {
-    ball.phase = tc < p.tback ? 'mitt' : 'hand';
-    ballP.copy(p.catchP);
-    look = tc < p.tthrow + 0.3 ? { x: p.catchP.x, y: p.catchP.y, z: p.catchP.z } : { x: 0, y: 1.2, z: FIELD.moundZ };
+  } else if (!hit && g >= p.tca) {
+    if (g < p.toss + THROW.release) {
+      ball.phase = 'mitt';
+      ballP.copy(p.catchP);
+    } else if (g < p.toss + THROW.release + THROW.flight) {
+      // the throw back: a thrown ball, like a pitch
+      ball.phase = 'pitch';
+      tossPos(p, g, ballP);
+    } else {
+      ball.phase = 'hand';
+      ballP.set(-phand * FIELD.releaseSide, FIELD.releaseY, FIELD.releaseZ);
+    }
+    look = { x: ballP.x, y: ballP.y, z: ballP.z };
   } else {
     ball.phase = 'pitch';
-    pitchPos(p, tc, ballP);
+    pitchPos(p, g, ballP);
     look = { x: ballP.x, y: ballP.y, z: ballP.z };
   }
   ball.x = ballP.x;
@@ -319,78 +402,85 @@ function fake(tc: number) {
   ball.z = ballP.z;
   ball.speed = ball.phase === 'pitch' ? p.speed : ball.phase === 'play' ? p.hitV.length() : 0;
 
-  // the batter
+  // the batter (game.ts: stance → load at the release → swing → the reaction)
   const b = batter;
   b.aimX = p.px;
   b.aimY = p.py;
   b.power = p.power;
   b.lift = p.lift;
   b.look = look;
-  const B = (phase: BatterState['phase'], since: number) => ((b.phase = phase), (b.t = tc - since));
-  if (tc < p.tl) B('stance', p.t0);
-  else if (tc < p.ts) B(Number.isFinite(p.ts) || tc < p.twatch ? 'load' : 'watch', p.tl);
-  else if (tc < p.twatch) B('swing', p.ts);
-  else if (tc < p.treact) B('watch', p.twatch);
-  else B(p.react === 'cheer' ? 'cheer' : 'sad', p.treact);
-  if (p.swing === 'take' && tc >= p.twatch && tc < p.treact) B('watch', p.twatch);
+  const B = (phase: BatterState['phase'], since: number) => ((b.phase = phase), (b.t = Math.max(0, g - since)));
+  const swingAt = hit ? p.tc - SWING.contact : p.ts;
+  if (g < p.tr) B('stance', p.t0);
+  else if (g >= p.react) B(p.reaction || 'watch', p.react);
+  else if (Number.isFinite(swingAt) && g >= swingAt && (hit || p.swing === 'miss')) B(g < swingAt + SWING.end ? 'swing' : 'watch', g < swingAt + SWING.end ? swingAt : swingAt + SWING.end);
+  else B('load', p.tr);
+  if (b.phase === 'watch' || b.phase === 'cheer') b.look = look;
 
-  // the waiting hitter: watches the ball, cheers with the batter
+  // the waiting hitter: watches the ball, cheers a home run as it clears the fence
   const wt = waiter;
-  wt.look = look ?? { x: X0, y: 1.2, z: Z0 };
-  if (p.react === 'cheer' && tc >= p.treact && tc < p.treact + 2.2) {
+  wt.look = ball.phase === 'play' || ball.phase === 'pitch' ? look : null;
+  if (hit && p.hr && g >= p.fence) {
     wt.phase = 'cheer';
-    wt.t = tc - p.treact;
+    wt.t = g - p.fence;
   } else {
     wt.phase = 'idle';
-    wt.t = tc;
+    wt.t = r;
   }
 
-  // the pitcher
+  // the pitcher (the delivery, the follow-through, then idle — or watching a ball in play)
   const P = pitcher;
   P.kind = p.kind;
-  P.look = hit && tc >= p.tc + 0.3 ? look : null;
   const endW = p.tw + DELIVERY.end;
-  if (tc < p.tw) {
-    P.phase = tc < p.t0 + 0.2 && plays.indexOf(p) > 0 ? 'idle' : 'set';
-    P.t = tc - p.t0;
-  } else if (tc < endW) {
+  P.look = null;
+  P.toss = null;
+  if (g < p.tw) {
+    P.phase = 'set';
+    P.t = g - p.t0;
+  } else if (g < endW) {
     P.phase = 'windup';
-    P.t = tc - p.tw;
-  } else if (hit) {
+    P.t = g - p.tw;
+  } else if (hit && launched) {
     P.phase = 'watch';
-    P.t = tc - endW;
-  } else if (tc < p.tback) {
+    P.t = g - Math.max(endW, p.tc);
+    P.look = look;
+  } else if (g < endW + TM.follow) {
     P.phase = 'follow';
-    P.t = tc - endW;
+    P.t = g - endW;
   } else {
     P.phase = 'idle';
-    P.t = tc - p.tback;
+    P.t = g - endW - TM.follow;
+  }
+  // the throw back coming: from when the catcher starts it till it's in the glove
+  if (!hit && Number.isFinite(p.toss) && g >= p.toss) {
+    const eta = p.toss + THROW.release + THROW.flight - g;
+    if (eta > -0.5) P.toss = { x: TOSS_TO.x, y: TOSS_TO.y, z: TOSS_TO.z, eta };
   }
 
-  // the catcher
+  // the catcher (the target set as the pitch is chosen; catch from the release; throw back; watch a ball in play)
   const K = catcher;
   K.targetX = p.catchP.x;
   K.targetY = p.catchP.y;
-  K.arrive = (FIELD.catcherZ - 0.35 - p.release.z) / p.v0.z;
-  K.look = look;
-  if (tc < p.tr) {
+  K.arrive = p.tca - p.tr;
+  K.look = null;
+  if (g < p.tr) {
     K.phase = 'crouch';
-    K.t = tc - p.t0;
-    K.targetX = 0;
-    K.targetY = 0;
-  } else if (hit && tc >= p.tc + 0.2) {
+    K.t = g - p.t0;
+  } else if (launched) {
     K.phase = 'watch';
-    K.t = tc - p.tc - 0.2;
-  } else if (tc < p.tthrow) {
+    K.t = g - p.tc;
+    K.look = look;
+  } else if (hit || g < p.toss) {
     K.phase = 'catch';
-    K.t = tc - p.tr;
-  } else if (tc < p.tthrow + 1.4) {
+    K.t = g - p.tr;
+  } else if (g < p.toss + THROW.end) {
     K.phase = 'throw';
-    K.t = tc - p.tthrow;
+    K.t = g - p.toss;
   } else {
     K.phase = 'crouch';
-    K.t = tc - p.tthrow - 1.4;
+    K.t = g - p.toss - THROW.end;
   }
+  return g;
 }
 
 // ---------------------------------------------------------------- cameras
@@ -451,9 +541,15 @@ const CAMS: Record<string, CamFn> = {
   },
   // the pitcher from the first-base side (the throwing arm's side for a right-hander)
   pitcher: (c) => {
-    c.position.set(-phand * 4.6, 1.35, FIELD.moundZ + 0.9);
-    c.lookAt(0, 1.05, FIELD.moundZ + 0.55);
+    c.position.set(-phand * 3.9, 1.3, FIELD.moundZ + 0.75);
+    c.lookAt(0, 1.0, FIELD.moundZ + 0.55);
     c.fov = 40;
+  },
+  // the pitcher from in front, a little to the side: roughly the batter's view, closer
+  pitchfront: (c) => {
+    c.position.set(phand * 1.4, 1.45, FIELD.moundZ + 5.2);
+    c.lookAt(0, 1.05, FIELD.moundZ + 0.4);
+    c.fov = 34;
   },
   // behind the pitcher: the television's view in
   mound: (c) => {
@@ -461,10 +557,17 @@ const CAMS: Record<string, CamFn> = {
     c.lookAt(0, 1.0, FIELD.homeZ - 1);
     c.fov = 26;
   },
+  // the catcher from in front, off to the side away from the batter
   catcher: (c) => {
-    c.position.set(2.3, 1.05, FIELD.catcherZ - 0.9);
-    c.lookAt(0, 0.62, FIELD.catcherZ - 0.25);
-    c.fov = 38;
+    c.position.set(h * 2.1, 1.15, FIELD.catcherZ - 2.6);
+    c.lookAt(0, 0.62, FIELD.catcherZ - 0.1);
+    c.fov = 36;
+  },
+  // the catcher side-on (the squat's silhouette)
+  catchside: (c) => {
+    c.position.set(h * 3.2, 0.8, FIELD.catcherZ - 0.2);
+    c.lookAt(0, 0.62, FIELD.catcherZ - 0.2);
+    c.fov = 36;
   },
   wait: (c) => {
     c.position.set(WAIT.x - h * 1.6, 1.4, WAIT.z - 2.8);
@@ -499,13 +602,20 @@ let clock = 0;
 let total = 0;
 let paused = still;
 const noBall = { x: 0, y: -20, z: 0 };
+/** the game clock last frame: the animators run on its steps (frozen in a hitstop), the gear on real time */
+let lastG = 0;
 
 function step(dt: number) {
   clock += dt;
   total += dt;
   if (clock >= CYCLE) clock -= CYCLE;
-  fake(clock);
-  const poses = [batterA.update(total, dt, batter), waiterA.update(total, dt, waiter), pitcherA.update(total, dt, pitcher), catcherA.update(total, dt, catcher)];
+  const g = fake(clock);
+  // a hitstop: the game clock stands still; a rewind: it jumps back (the states snap)
+  let gdt = g - lastG;
+  lastG = g;
+  if (!(gdt > 1e-4)) gdt = 1e-4;
+  gdt = Math.min(gdt, 0.1);
+  const poses = [batterA.update(total, gdt, batter), waiterA.update(total, gdt, waiter), pitcherA.update(total, gdt, pitcher), catcherA.update(total, gdt, catcher)];
   placeCam();
   const fv: FrameView = { t: total, dt, realT: total, realDt: dt, ball: noBall, ballSpeed: 0, ballVisible: false, holder: -1, poses, excitement: 0.4, state: 'play', cam, beat: 0 };
   w.update(fv);
@@ -529,6 +639,7 @@ function seek(t: number, camera?: string) {
   if (camera) camName = camera;
   clock = 0;
   total = 0;
+  lastG = 0;
   const dt = 1 / 60;
   // replay at 60 Hz, landing exactly on t
   while (clock + dt <= t + 1e-9) step(dt);
@@ -656,8 +767,10 @@ function probe() {
   };
 }
 
+/** each play's moments, real seconds into the cycle */
 function timings() {
-  return Object.fromEntries(plays.map((p) => [p.name, { set: p.t0, windup: p.tw, release: p.tr, cross: p.tc, catch: p.tca, load: p.tl, swing: p.ts, watch: p.twatch, react: p.treact, throw: p.tthrow, land: p.tland, end: p.tend }]));
+  const names = ['set', 'windup', 'release', 'cross', 'contact', 'catch', 'swing', 'watch', 'react', 'throw', 'fence', 'land', 'rewind'] as const;
+  return Object.fromEntries(plays.map((p) => [p.name, { ...Object.fromEntries(names.map((m) => [m, +at(p.name, m).toFixed(3)])), end: +p.tend.toFixed(3) }]));
 }
 
 (window as unknown as { bb: unknown }).bb = { ready: false, seek, capture, strip, stats, perf, probe, at, timings, cycle: CYCLE, gear, world: w, batter, pitcher, catcher, ball, anims: { batterA, waiterA, pitcherA, catcherA } };
@@ -667,5 +780,3 @@ else seek(0);
 paused = still;
 (window as unknown as { bb: { ready: boolean } }).bb.ready = true;
 requestAnimationFrame(frame);
-
-void FLIP;
