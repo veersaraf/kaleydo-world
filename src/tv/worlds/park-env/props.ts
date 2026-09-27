@@ -153,12 +153,19 @@ function flagAtlas(colors: string[]) {
 
 /**
  * Flags flying downwind from their poles (one instanced cloth, one shadow draw);
- * the poles themselves are plain static meshes, returned for the scene.
+ * the poles themselves are plain static meshes, returned for the scene. `cloth`
+ * makes the flags' material in the world's own style (standard by default).
  */
-export function flags(wind: Wind, poles: Pole[], colors: string[], o: { pole: THREE.Material; finial: THREE.Material }) {
+export function flags(
+  wind: Wind,
+  poles: Pole[],
+  colors: string[],
+  o: { pole: THREE.Material; finial: THREE.Material; cloth?: (p: { map: THREE.Texture; side: THREE.Side }) => THREE.Material; shadow?: boolean },
+) {
   const n = colors.length;
   const opts = { amp: 0.16, height: 0, flutter: 0.05 };
-  const mat = sway(new THREE.MeshStandardMaterial({ map: flagAtlas(colors), roughness: 0.85, side: THREE.DoubleSide }), wind, 'cloth', opts, {
+  const make = o.cloth ?? ((p) => new THREE.MeshStandardMaterial({ ...p, roughness: 0.85 }));
+  const mat = sway(make({ map: flagAtlas(colors), side: THREE.DoubleSide }), wind, 'cloth', opts, {
     key: `flag${n}`,
     patch: (sh) => {
       sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float aCell;').replace('#include <uv_vertex>', `#include <uv_vertex>\nvMapUv.x = (vMapUv.x + aCell) / ${n.toFixed(1)};`);
@@ -184,7 +191,7 @@ export function flags(wind: Wind, poles: Pole[], colors: string[], o: { pole: TH
     ball.position.set(p.x, p.h + 0.05, p.z);
     out.push(pole, ball);
   });
-  cloth.castShadow = true;
+  cloth.castShadow = o.shadow ?? true;
   cloth.customDepthMaterial = swayDepth(wind, 'cloth', opts);
   cloth.computeBoundingSphere();
   cloth.boundingSphere!.radius += 1;

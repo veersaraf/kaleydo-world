@@ -61,9 +61,12 @@ export interface SwayOpts {
  * instance's origin; 'cloth' ripples along its normal, most at its free edge.
  */
 function projectChunk(kind: SwayKind) {
-  const bend =
-    kind === 'cloth'
-      ? /* glsl */ `
+  return moveChunk(swayBend(kind));
+}
+
+function swayBend(kind: SwayKind) {
+  return kind === 'cloth'
+    ? /* glsl */ `
     // uv.x runs from the pole (or the left edge) out, uv.y from the bottom up;
     // uSway.y picks what holds it: 1 = hung from the top edge (a banner), 0 = a pole
     float free = mix(uv.x, 1.0 - uv.y, uSway.y);
@@ -73,7 +76,7 @@ function projectChunk(kind: SwayKind) {
     float gust = length(windPush(wp.xz, ph));
     mvPosition.xyz += normalize(nrm) * wave * free * uSway.x * (0.6 + 0.5 * gust);
     mvPosition.y += wave * free * uSway.z;`
-      : /* glsl */ `
+    : /* glsl */ `
     float h = clamp((mvPosition.y - io.y) / uSway.y, 0.0, 1.5);
     float ph = windHash(wp.xz) * 6.2831;
     vec2 push = windPush(wp.xz, ph) * uSway.x * h * h;
@@ -86,6 +89,10 @@ function projectChunk(kind: SwayKind) {
         ? 'mvPosition.xz += vec2(sin(uTime * 5.3 + ph + position.x * 9.0), cos(uTime * 4.1 + ph * 1.3 + position.z * 9.0)) * uSway.z * h;'
         : 'mvPosition.xyz += nrm * sin(uTime * 2.7 + dot(position, vec3(3.1, 2.3, 2.7)) + ph) * uSway.z * min(h, 1.0);'
     }`;
+}
+
+/** project_vertex with `bend` run on the instanced vertex (mvPosition, in the mesh's own space) first. */
+function moveChunk(bend: string) {
   return /* glsl */ `
   vec4 mvPosition = vec4(transformed, 1.0);
   vec3 io = vec3(0.0);
@@ -130,4 +137,48 @@ export function sway<M extends THREE.Material>(m: M, wind: Wind, kind: SwayKind,
 /** A shadow-casting material for something that sways: the same bend, so the shadow moves with it. */
 export function swayDepth(wind: Wind, kind: SwayKind, o: SwayOpts) {
   return sway(new THREE.MeshDepthMaterial(), wind, kind, o);
+}
+
+/**
+ * Any other motion done in the vertex shader (a drift, a bob, a swing on a
+ * string…), spliced in where sway() bends: `glsl` moves `mvPosition` (the vertex
+ * after instancing, in the mesh's own space), with `io` the instance's origin
+ * there, `wp` its world position and `nrm` the normal; `decl` declares the
+ * uniforms passed in `u` and any helpers. Give a shadow caster's depth material
+ * the same motion so its shadow follows.
+ */
+export function motion<M extends THREE.Material>(m: M, key: string, u: Record<string, THREE.IUniform>, decl: string, glsl: string): M {
+  const prev = m.onBeforeCompile.bind(m);
+  m.onBeforeCompile = (sh, r) => {
+    prev(sh, r);
+    Object.assign(sh.uniforms, u);
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', `#include <common>\n${decl}`).replace('#include <project_vertex>', moveChunk(glsl));
+  };
+  const prevKey = m.customProgramCacheKey.bind(m);
+  m.customProgramCacheKey = () => `${prevKey()}|motion-${key}`;
+  return m;
+}
+
+/**
+ * An inverted-hull outline (cel-shaded worlds, as render/outline.ts): the back
+ * faces pushed out along their normals in view space, `width` metres near the
+ * camera and a little more far off. Chain it after sway() or motion() on the
+ * outline's own material, so the outline bends with what it outlines.
+ */
+export function hull<M extends THREE.Material>(m: M, width: number): M {
+  const prev = m.onBeforeCompile.bind(m);
+  const w = { value: width };
+  m.side = THREE.BackSide;
+  m.onBeforeCompile = (sh, r) => {
+    prev(sh, r);
+    sh.uniforms.uHull = w;
+    // (nothing bent it: the plain chunk, with the normal the push needs)
+    if (!sh.vertexShader.includes('vec3 nrm = normal;')) sh.vertexShader = sh.vertexShader.replace('#include <project_vertex>', moveChunk(''));
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform float uHull;')
+      .replace('gl_Position = projectionMatrix * mvPosition;', 'mvPosition.xyz += normalize(normalMatrix * nrm) * uHull * (1.0 + 0.035 * max(0.0, -mvPosition.z - 6.0));\n  gl_Position = projectionMatrix * mvPosition;');
+  };
+  const prevKey = m.customProgramCacheKey.bind(m);
+  m.customProgramCacheKey = () => `${prevKey()}|hull`;
+  return m;
 }
