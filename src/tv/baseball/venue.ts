@@ -9,8 +9,10 @@
 // The park, from home plate out:
 //   - home plate's dirt circle (the "skin") with the batter's boxes, the
 //     catcher's box and the plate in chalk; a low padded backstop behind the
-//     catcher (z ≈ 14.3, 0.95 m: under the batting camera's view) with HOME RUN
-//     DERBY on it; an on-deck circle either side (FIELD.onDeckX/Z).
+//     catcher (z ≈ 14.8, 0.95 m: below the batting camera's view, and low enough
+//     that a camera as low as 1.7 m and as far back as 16.8 m still sees the whole
+//     plate over it) with HOME RUN DERBY on it; an on-deck circle either side
+//     (FIELD.onDeckX/Z).
 //   - a raised mound round the rubber (FIELD.moundH, moundY() in field.ts);
 //     grass between it and the plate, so a pitch is seen against the lawn.
 //   - an outfield lawn with a crosshatch mown into it along the foul lines, and
@@ -66,7 +68,7 @@ const LAWN = { halfX: 10.35, back: 18.9 };
 /** the dirt round home plate: its centre and radius (the backstop cuts off the back of it) */
 const SKIN = { z: 11.85, r: 3.3 };
 /** the backstop: a low padded arc behind the catcher (radius about a centre in front of it) */
-const BACKSTOP = { z: 14.3, halfX: 4.3, R: 9, h: 0.95, t: 0.25 };
+const BACKSTOP = { z: 14.8, halfX: 4.3, R: 9, h: 0.95, t: 0.25 };
 /** the batter's boxes (4 × 6 ft, 6 in off the plate), the catcher's box behind them */
 const BOX = { x0: 0.368, x1: 1.588, z0: 10.87, z1: 12.7 };
 const CBOX = { halfX: 0.546, z1: 13.95 };
@@ -1818,12 +1820,12 @@ export class FieldVenue implements FieldVenueLike {
       // pop in with an overshoot
       const pop = age >= 0.6 ? 1 : elastic(age / 0.6);
       const d = Math.hypot(m.x - eye.x, m.y - eye.y, m.z - eye.z);
-      const s = THREE.MathUtils.clamp(1 + (d - g.from) * g.rate * 0.7, 1, g.max) * pop;
-      const hgt = 1.7 * Math.max(1, s * 0.75);
+      const s = THREE.MathUtils.clamp(1 + (d - g.from) * g.rate * 0.55, 1, 2.2) * pop;
+      const hgt = 1.5 * Math.max(1, s * 0.75);
       const bob = Math.sin(this.time * 2.2 + i * 1.7) * 0.06;
       tmpQ.setFromAxisAngle(UPV, this.time * 1.8 + i * 0.9);
       tmpP.set(m.x, m.y + hgt + bob, m.z);
-      const k = S.push(tmpM.compose(tmpP, tmpQ, tmpS.setScalar(0.5 * s)));
+      const k = S.push(tmpM.compose(tmpP, tmpQ, tmpS.setScalar(0.4 * s)));
       if (k >= 0) S.mesh.setColorAt(k, this.color);
       // the stick, from where it came down up to the star
       if (pop > 0.05) {

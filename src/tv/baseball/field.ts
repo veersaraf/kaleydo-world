@@ -59,9 +59,9 @@ export const FIELD = {
   moundCZ: -4.5 + 0.45,
   moundTop: 1.15,
   moundR: 2.7,
-  /** the on-deck circles (either side of home, in foul ground): a hitter waiting their turn stands in one */
-  onDeckX: 5.3,
-  onDeckZ: 13.2,
+  /** the on-deck circles (either side of home, in foul ground; where BaseballGame's first two WAITING_SPOTS are): a hitter waiting their turn stands in one */
+  onDeckX: 5.6,
+  onDeckZ: 13.8,
 };
 
 /** The height of the ground at (x, z): the mound's dome, or 0. */
