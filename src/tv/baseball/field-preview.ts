@@ -136,12 +136,18 @@ interface PitchDef {
 
 const PITCHES: PitchDef[] = [
   { name: 'take', px: 0.16, py: 0.74, speed: 34 },
-  { name: 'homer', px: -0.04, py: 0.86, speed: 33, hit: { spray: -14, dist: 30, y1: 1.4, apex: 12.5, hang: 3.8, power: 0.95, sweet: true, hr: true } },
+  { name: 'homer', px: -0.04, py: 0.86, speed: 33, hit: { spray: -14, dist: 30, y1: 2.8, apex: 12.5, hang: 3.8, power: 0.95, sweet: true, hr: true } },
   { name: 'fly', px: 0.1, py: 0.95, speed: 32, hit: { spray: 7, dist: 20.5, y1: 0, apex: 11.5, hang: 3.5, power: 0.7, sweet: false } },
-  { name: 'foul', px: -0.2, py: 0.8, speed: 33, hit: { spray: -41, dist: 24, y1: 2.2, apex: 8, hang: 2.7, power: 0.8, sweet: false } },
+  { name: 'foul', px: -0.2, py: 0.8, speed: 33, hit: { spray: -41, dist: 20.3, y1: 2.1, apex: 7.5, hang: 2.5, power: 0.8, sweet: false } },
+  { name: 'back', px: 0.12, py: 0.7, speed: 34, hit: { spray: 172, dist: 4.4, y1: 0, apex: 6.8, hang: 2.3, power: 0.4, sweet: false } },
   { name: 'wall', px: 0.08, py: 0.9, speed: 33, hit: { spray: 21, dist: 'wall', y1: 1.35, apex: 7.2, hang: 2.4, power: 0.85, sweet: false } },
   { name: 'bomb', px: 0.02, py: 0.9, speed: 35, hit: { spray: 23, dist: 46, y1: 0, apex: 18.5, hang: 5.0, power: 1, sweet: true, hr: true } },
 ];
+
+/** game time stops this long at contact (the hitstop: the ball waits at the bat, real frames go on) */
+const HITSTOP = 0.09;
+/** the catcher's toss back to the pitcher after a take: from the mitt, when, how long, how high */
+const TOSS = { hold: 0.7, T: 1.05, apex: 3.2, from: new THREE.Vector3(0.05, 1.25, FIELD.catcherZ - 0.3), to: new THREE.Vector3(-0.25, 1.35, FIELD.moundZ + 0.45) };
 
 const REL = { x: -FIELD.releaseSide, y: FIELD.releaseY, z: FIELD.releaseZ };
 const MITT_Z = FIELD.catcherZ - 0.35;
@@ -164,6 +170,8 @@ interface Pitch extends PitchDef {
   tOut: number;
   tLand: number;
   end: number;
+  /** a take: the catcher's toss back starts */
+  toss: number;
   out: THREE.Vector3;
   land: THREE.Vector3;
 }
@@ -177,8 +185,9 @@ function pitchAt(p: Pitch, t: number, o: THREE.Vector3) {
 
 const contactPt = (p: Pitch, o: THREE.Vector3) => pitchAt(p, p.T, o);
 
-/** The batted ball t seconds after contact (to its landing; then a bounce and a roll, or it stays in the stands). */
+/** The batted ball t seconds after contact (held at the bat through the hitstop; to its landing; then a bounce and a roll, or it stays in the stands). */
 function battedAt(p: Pitch, t: number, o: THREE.Vector3) {
+  t = Math.max(0, t - HITSTOP);
   const c = contactPt(p, tmpC);
   const h = p.hit!;
   const Tl = h.hang;
@@ -221,7 +230,7 @@ let CYCLE = 0.8;
     const release = t0 + DELIVERY.release;
     const T = (FIELD.contactZ - REL.z) / d.speed;
     const vz = d.speed;
-    const p: Pitch = { ...d, t0, release, tc: release + T, tm: release + T + (MITT_Z - FIELD.contactZ) / vz, T, lx: 0, lz: 0, g: 0, vy: 0, k: 0.45, tOut: -1, tLand: 0, end: 0, out: new THREE.Vector3(), land: new THREE.Vector3() };
+    const p: Pitch = { ...d, t0, release, tc: release + T, tm: release + T + (MITT_Z - FIELD.contactZ) / vz, T, lx: 0, lz: 0, g: 0, vy: 0, k: 0.45, tOut: -1, tLand: 0, end: 0, toss: 0, out: new THREE.Vector3(), land: new THREE.Vector3() };
     if (d.hit) {
       const h = d.hit;
       const a = (h.spray * Math.PI) / 180;
@@ -233,21 +242,24 @@ let CYCLE = 0.8;
       const s = (Math.sqrt(2 * (h.apex - y0)) + Math.sqrt(2 * (h.apex - h.y1))) / h.hang;
       p.g = s * s;
       p.vy = Math.sqrt(2 * p.g * (h.apex - y0));
-      p.tLand = p.tc + h.hang;
+      p.tLand = p.tc + HITSTOP + h.hang;
       p.land.set(L.x, h.y1, L.z);
       // where it crosses the fence
       if (h.hr)
         for (let t = 0; t < h.hang; t += 1 / 480) {
-          battedAt(p, t, o);
+          battedAt(p, HITSTOP + t, o);
           const sp = sprayOf(o.x, o.z);
           if (sp.r >= fenceAt(sp.a)) {
-            p.tOut = p.tc + t;
+            p.tOut = p.tc + HITSTOP + t;
             p.out.copy(o);
             break;
           }
         }
       p.end = p.tLand + (h.hr ? 2.6 : 2.0);
-    } else p.end = p.tm + 1.2;
+    } else {
+      p.toss = p.tm + TOSS.hold;
+      p.end = p.toss + TOSS.T + 0.5;
+    }
     pitches.push(p);
     CYCLE = p.end;
   }
@@ -265,6 +277,14 @@ function at(name: string, moment: 'windup' | 'release' | 'contact' | 'flight' | 
   if (!p) return 0;
   const m = { windup: p.t0, release: p.release, contact: p.tc, flight: p.tc + (p.hit ? p.hit.hang * 0.5 : 0), out: p.tOut >= 0 ? p.tOut : p.tLand, land: p.hit ? p.tLand : p.tm, end: p.end }[moment];
   return m + off;
+}
+
+/** The catcher's toss back to the mound, t seconds after it leaves the hand (a lob). */
+function tossAt(t: number, o: THREE.Vector3) {
+  const u = THREE.MathUtils.clamp(t / TOSS.T, 0, 1);
+  o.lerpVectors(TOSS.from, TOSS.to, u);
+  o.y += 4 * (TOSS.apex - Math.max(TOSS.from.y, TOSS.to.y)) * u * (1 - u);
+  return o;
 }
 
 // ---------------------------------------------------------------- the fake game's view
@@ -289,9 +309,16 @@ function fake(tc: number, dt: number) {
     if (tc < p.tm) {
       ball.phase = 'pitch';
       pitchAt(p, tc - p.release, tmpP);
-    } else {
+    } else if (tc < p.toss) {
       ball.phase = 'mitt';
       pitchAt(p, p.tm - p.release, tmpP);
+    } else if (tc < p.toss + TOSS.T) {
+      // the toss back: 'pitch', like the game's
+      ball.phase = 'pitch';
+      tossAt(tc - p.toss, tmpP);
+    } else {
+      ball.phase = 'hand';
+      tmpP.set(REL.x, REL.y, REL.z);
     }
     ball.x = tmpP.x;
     ball.y = tmpP.y;
@@ -307,8 +334,12 @@ function fake(tc: number, dt: number) {
     ball.x = tmpP.x;
     ball.y = tmpP.y;
     ball.z = tmpP.z;
-    // a home run's ball is gone once it's down in the stands (or out); a played one after its roll
-    const gone = p.hit.hr ? tc > p.tLand + 0.35 : tc > p.tLand + 1.6;
+    // gone (as the game has it): half a second after it's down in the stands, at once out of the
+    // stadium or fouled back behind home, a played one after its roll
+    const h = p.hit;
+    const back = Math.abs(h.spray) > 90;
+    const after = back || (h.hr && typeof h.dist === 'number' && h.dist > 40) ? 0.15 : h.hr || (h.dist !== 'wall' && h.y1 > 0.3) ? 0.5 : 1.6;
+    const gone = tc > p.tLand + after;
     ball.phase = gone ? 'gone' : 'play';
   }
   ball.speed = dt > 0 ? prevBall.distanceTo(tmpP.set(ball.x, ball.y, ball.z)) / dt : 0;

@@ -20,8 +20,9 @@ export interface RibbonStyle {
   mode: number;
   additive: boolean;
   opacity: number;
-  /** the half-width is never under this many pixels of a 1080-row picture */
+  /** the half-width is never under this many pixels of a 1080-row picture (nor over maxPx, when given) */
   minPx: number;
+  maxPx?: number;
   /** also draw the parts hidden behind scenery, this faintly (0 = not at all) */
   xray: number;
   /** how much of the width is the core, 0..1 */
@@ -32,7 +33,7 @@ export interface RibbonStyle {
 
 const RIBBON_VERT = /* glsl */ `
 attribute vec3 aTan; attribute vec4 aS; attribute float aL;
-uniform float uMinPx;
+uniform float uMinPx; uniform float uMaxPx;
 varying vec4 vS; varying float vL;
 #include <common>
 #include <fog_pars_vertex>
@@ -45,7 +46,7 @@ void main() {
   side = sl > 1e-4 ? side / sl : vec3(0.0, 1.0, 0.0);
   // never thinner than uMinPx pixels (of 1080 rows) either side: metres per pixel grow with distance
   float perPx = 2.0 * dist / (projectionMatrix[1][1] * 1080.0);
-  float w = max(aS.z, uMinPx * perPx);
+  float w = min(max(aS.z, uMinPx * perPx), uMaxPx * perPx);
   wp.xyz += side * aS.x * w;
   vS = aS; vL = aL;
   vec4 mvPosition = viewMatrix * wp;
@@ -139,6 +140,7 @@ export class Ribbon {
             uOpacity: { value: opacity },
             uMode: { value: style.mode },
             uMinPx: { value: style.minPx },
+            uMaxPx: { value: style.maxPx ?? 14 },
             uCoreW: { value: style.coreW },
             uCoreMix: { value: style.coreMix },
           },
@@ -591,6 +593,89 @@ export class Fireworks {
 }
 
 const WHITE = new THREE.Color('#ffffff');
+
+// ---------------------------------------------------------------- the ball's shadow
+
+/**
+ * The ball's shadow on the ground: a soft dark disc (or, on the glowing
+ * worlds' dark floors, a ring of light) that never gets smaller than `minPx`
+ * pixels across a 1080-row picture, so it still marks where a high ball is
+ * over the field from a long way off. `set()` places it each frame.
+ */
+export class Spot {
+  readonly mesh: THREE.Mesh;
+  private mat: THREE.ShaderMaterial;
+  constructor(color: THREE.Color, o: { ring: boolean; additive: boolean; minPx: number }) {
+    this.mat = new THREE.ShaderMaterial({
+      uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uColor: { value: color.clone() }, uOpacity: { value: 0 }, uR: { value: 0.2 }, uMinPx: { value: o.minPx } }]),
+      vertexShader: /* glsl */ `
+        uniform float uR; uniform float uMinPx;
+        varying vec2 vQ;
+        #include <common>
+        #include <fog_pars_vertex>
+        void main() {
+          vQ = position.xz * 2.0;
+          vec3 c = (modelMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+          float d = max(-(viewMatrix * vec4(c, 1.0)).z, 0.1);
+          float perPx = 2.0 * d / (projectionMatrix[1][1] * 1080.0);
+          float r = max(uR, uMinPx * 0.5 * perPx);
+          vec4 mvPosition = viewMatrix * vec4(c + vec3(position.x, 0.0, position.z) * 2.0 * r, 1.0);
+          gl_Position = projectionMatrix * mvPosition;
+          #include <fog_vertex>
+        }`,
+      fragmentShader: /* glsl */ `
+        uniform vec3 uColor; uniform float uOpacity;
+        varying vec2 vQ;
+        #include <common>
+        #include <fog_pars_fragment>
+        void main() {
+          float r = length(vQ);
+          ${
+            o.ring
+              ? 'float a = smoothstep(0.12, 0.0, abs(r - 0.72)) + 0.25 * (1.0 - smoothstep(0.0, 0.7, r));'
+              : 'float a = (1.0 - smoothstep(0.35, 1.0, r)) * (0.75 + 0.25 * (1.0 - smoothstep(0.0, 0.45, r)));'
+          }
+          if (a < 0.01) discard;
+          gl_FragColor = vec4(uColor, a * uOpacity);
+          #include <fog_fragment>
+        }`,
+      transparent: true,
+      depthWrite: false,
+      blending: o.additive ? THREE.AdditiveBlending : THREE.NormalBlending,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -8,
+      fog: true,
+    });
+    const g = new THREE.PlaneGeometry(1, 1);
+    g.rotateX(-Math.PI / 2);
+    this.mesh = new THREE.Mesh(g, this.mat);
+    this.mesh.name = 'ball-shadow';
+    this.mesh.renderOrder = 2;
+    this.mesh.frustumCulled = false;
+    this.mesh.visible = false;
+    this.mesh.userData.noOutline = true;
+    this.mesh.userData.noNormals = true;
+  }
+
+  /** On the ground at (x, y, z), radius r (m), this dark (0 hides it). */
+  set(x: number, y: number, z: number, r: number, opacity: number) {
+    this.mesh.visible = opacity > 0.01;
+    if (!this.mesh.visible) return;
+    this.mesh.position.set(x, y, z);
+    this.mat.uniforms.uR.value = r;
+    this.mat.uniforms.uOpacity.value = opacity;
+  }
+
+  hide() {
+    this.mesh.visible = false;
+  }
+
+  dispose() {
+    this.mesh.geometry.dispose();
+    this.mat.dispose();
+  }
+}
 
 // ---------------------------------------------------------------- the ball's edge and halo
 

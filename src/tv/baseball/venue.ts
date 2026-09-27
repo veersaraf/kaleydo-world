@@ -48,12 +48,11 @@ import type { FieldVenueLike } from '../worlds/base';
 import { Particles, type Shape } from '../render/particles';
 import { outlineTree } from '../render/outline';
 import { canvasTex } from '../worlds/mats';
-import { blobShadowTexture } from '../chars/rig';
 import { Rng } from '../core/math';
 import { Inst, Flags } from '../archery/parts';
 import { FIELD, fenceAt, realFenceAt, fieldPoint, sprayOf, moundY } from './field';
 import type { FieldView, FieldFx, FieldBall } from './types';
-import { Ribbon, Fireworks, Halo, hullMaterial, type RibbonStyle, type FireworkStyle, type Shell, type ShellKind } from './venue-parts';
+import { Ribbon, Fireworks, Halo, Spot, hullMaterial, type RibbonStyle, type FireworkStyle, type Shell, type ShellKind } from './venue-parts';
 
 // ---------------------------------------------------------------- layout (world metres)
 
@@ -84,6 +83,8 @@ const POLE = { h: 9.2, r: 0.09, screen: 0.42 };
 const FLAG_POLE = { h: 4.7, r: 0.04, at: [-24, -12, 0, 12, 24] };
 /** floor layers (y), lowest first */
 const Y = { lawn: 0.006, dirt: 0.01, chalk: 0.014, deck: 0.016, plate: 0.024 };
+/** the ball's radius on screen at most (radians): a ball that comes close to the eye stops growing */
+const MAX_ANG = 0.022;
 /** limits */
 const MAX_MARKS = 24;
 const TRACER_MAX = 480;
@@ -1410,8 +1411,7 @@ export class FieldVenue implements FieldVenueLike {
   private halo: Halo;
   /** how strongly the halo shows (it fades in after contact) */
   private haloK = 0;
-  private shadow: THREE.Mesh;
-  private shadowMat: THREE.MeshBasicMaterial;
+  private shadow: Spot;
   private streak: Ribbon;
   /** recent positions for the streak: x, y, z, time */
   private trail: Float32Array = new Float32Array(STREAK_N * 4);
@@ -1420,7 +1420,7 @@ export class FieldVenue implements FieldVenueLike {
   private last = new THREE.Vector3();
   private spinAxis = new THREE.Vector3(1, 0, 0);
   /** far things drawn bigger: from this distance, by this much per metre, up to this */
-  private grow = { from: 6, rate: 0.06, max: 2.4 };
+  private grow = { from: 4, rate: 0.07, max: 2.4 };
   // the tracer
   private tracer: Ribbon;
   private tr = { state: 'off' as 'off' | 'live' | 'done', n: 0, age: 0, fade: 0 };
@@ -1454,7 +1454,7 @@ export class FieldVenue implements FieldVenueLike {
     this.pal = PAL[this.world] ?? PAL.park;
     this.fx = FX[this.world] ?? FX.park;
     this.particles = opts.particles;
-    if (this.world === 'pixel') this.grow = { from: 5, rate: 0.09, max: 3.2 };
+    if (this.world === 'pixel') this.grow = { from: 4, rate: 0.1, max: 3.2 };
     this.group.name = 'baseball';
     this.wallLen = this.fence[this.fence.length - 1].s;
 
@@ -1513,33 +1513,18 @@ export class FieldVenue implements FieldVenueLike {
     // and a ring in the hitter's colour round it in flight
     this.halo = new Halo(this.fx.hot);
     this.group.add(this.halo.mesh);
-    // its shadow: a soft dark blob (a glowing spot on the dark floors, where a shadow wouldn't show)
+    // its shadow: a soft dark disc (a ring of light on the glowing worlds' dark floors, where a
+    // shadow wouldn't show), never under a few pixels across however far off it is
     const glowSpot = this.pal.glow;
-    this.shadowMat = new THREE.MeshBasicMaterial({
-      map: glowSpot ? this.own(spotTexture()) : blobShadowTexture(),
-      color: glowSpot ? new THREE.Color(this.pal.chalk).multiplyScalar(0.9) : kit.shadowColor,
-      transparent: true,
-      opacity: 0.6,
-      depthWrite: false,
-      blending: glowSpot ? THREE.AdditiveBlending : THREE.NormalBlending,
-      polygonOffset: true,
-      polygonOffsetFactor: -1,
-      polygonOffsetUnits: -8,
-    });
-    this.disposables.push(this.shadowMat);
-    this.shadow = new THREE.Mesh(this.own(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2)), this.shadowMat);
-    this.shadow.name = 'ball-shadow';
-    this.shadow.renderOrder = 2;
-    this.shadow.frustumCulled = false;
-    this.shadow.userData.noOutline = true;
-    this.shadow.userData.noNormals = true;
-    this.group.add(this.shadow);
+    this.shadow = new Spot(glowSpot ? new THREE.Color(this.pal.chalk).multiplyScalar(1.4) : kit.shadowColor, { ring: glowSpot, additive: glowSpot, minPx: this.world === 'pixel' ? 9 : 7 });
+    this.group.add(this.shadow.mesh);
     this.streak = new Ribbon(STREAK_N + 1, this.fx.streak, 'ball-streak');
     this.streak.color(new THREE.Color(this.fx.streakColor).multiplyScalar(this.fx.streakHdr));
     this.group.add(this.streak.mesh);
 
     // ---- the tracer
-    this.tracer = new Ribbon(TRACER_MAX + 2, this.fx.tracer, 'tracer');
+    // (about constant on screen, TV-style: a few pixels far off, capped close up — the plate, a foul back past the eye)
+    this.tracer = new Ribbon(TRACER_MAX + 2, { ...this.fx.tracer, maxPx: Math.max(9, this.fx.tracer.minPx * 1.6) }, 'tracer');
     this.group.add(this.tracer.mesh);
     if (this.tracer.xray) this.group.add(this.tracer.xray);
 
@@ -1622,6 +1607,7 @@ export class FieldVenue implements FieldVenueLike {
     this.flags.dispose();
     this.streak.dispose();
     this.halo.dispose();
+    this.shadow.dispose();
     this.tracer.dispose();
     this.fireworks.dispose();
   }
@@ -1631,7 +1617,7 @@ export class FieldVenue implements FieldVenueLike {
   private placeBall(b: FieldBall, eye: { x: number; y: number; z: number }, dt: number) {
     const show = b.phase === 'pitch' || b.phase === 'play';
     this.ball.visible = show;
-    this.shadow.visible = show;
+    if (!show) this.shadow.hide();
     const fresh = b.phase !== this.lastPhase;
     this.lastPhase = b.phase;
     if (!show) {
@@ -1653,28 +1639,30 @@ export class FieldVenue implements FieldVenueLike {
       this.ball.rotateOnWorldAxis(this.spinAxis, (b.phase === 'pitch' ? 26 : 38) * dt);
     }
     this.last.copy(p);
-    // bigger far away, so it never shrinks to a speck
+    // bigger far away, so it never shrinks to a speck; close to the eye (a foul straight back
+    // passes right over the camera) no bigger on screen than MAX_ANG radians across its radius
     const de = Math.hypot(b.x - eye.x, b.y - eye.y, b.z - eye.z);
     const g = this.grow;
-    const s = THREE.MathUtils.clamp(1 + (de - g.from) * g.rate, 1, g.max);
-    this.ball.scale.setScalar(s);
+    // (it grows only once it's left the pitcher's hand, so it doesn't pop from the gear's ball to
+    // a bigger one at the release — or back as the catcher's toss comes into the glove)
+    const hand = THREE.MathUtils.smoothstep(Math.hypot(b.x, b.y - FIELD.releaseY, b.z - FIELD.releaseZ), 0.6, 4);
+    const s = Math.min(1 + (THREE.MathUtils.clamp(1 + (de - g.from) * g.rate, 1, g.max) - 1) * hand, (MAX_ANG * de) / FIELD.ballR);
+    this.ball.scale.setScalar(Math.max(1e-3, s));
     // the halo: a batted ball in the air, once it's a few metres off (close up it only gets in the way)
     const flying = b.phase === 'play' && b.speed > 3 && this.world !== 'pixel';
     this.haloK += ((flying ? 1 : 0) - this.haloK) * Math.min(1, dt * (flying ? 6 : 3));
-    this.halo.set(p, FIELD.ballR * s, eye, this.haloK * THREE.MathUtils.smoothstep(de, 5, 10) * 0.9);
+    this.halo.set(p, FIELD.ballR * s, eye, this.haloK * THREE.MathUtils.smoothstep(de, 3.5, 7));
     // the shadow on the ground under it (on the mound's dome where it's over it)
     const gy = moundY(b.x, b.z) + 0.02;
     const h = Math.max(0, b.y - FIELD.ballR - gy);
     const sp = sprayOf(b.x, b.z);
     const beyond = sp.r - fenceAt(sp.a) - this.pal.thick;
     // out past the wall the ground is the world's (stands, gaps): let it go
-    const out = THREE.MathUtils.clamp(1 - beyond / 1.2, 0, 1);
-    const ss = FIELD.ballR * 3.4 * s * (1 + h * 0.07);
-    this.shadow.position.set(b.x, gy, b.z);
-    this.shadow.scale.set(ss, 1, ss);
-    const base = this.pal.glow ? 0.9 : Math.min(0.85, this.kit.shadowOpacity * 2.6);
-    this.shadowMat.opacity = Math.max(base * 0.45, base - h * 0.03) * out;
-    this.shadow.visible = out > 0.01;
+    // (and over the side stands, behind the batting camera: the world's ground again)
+    const out = THREE.MathUtils.clamp(1 - beyond / 1.2, 0, 1) * THREE.MathUtils.clamp(1 - (Math.abs(b.x) - LAWN.halfX) / 0.6, 0, 1) * THREE.MathUtils.clamp(1 - (b.z - LAWN.back) / 0.6, 0, 1);
+    const ss = FIELD.ballR * 1.7 * Math.max(1, s) * (1 + h * 0.045);
+    const base = this.pal.glow ? 0.9 : Math.min(0.85, this.kit.shadowOpacity * 2.8);
+    this.shadow.set(b.x, gy, b.z, ss, Math.max(base * 0.7, base - h * 0.02) * out);
     // the streak: where it has been over the last few hundredths of a second
     if (fresh) this.trailN = 0;
     const T = this.trail;
@@ -1690,7 +1678,7 @@ export class FieldVenue implements FieldVenueLike {
     T[2] = b.z;
     T[3] = this.time;
     this.trailN = n;
-    const k = THREE.MathUtils.smoothstep(b.speed, 9, 22);
+    const k = THREE.MathUtils.smoothstep(b.speed, 14, 26);
     if (k < 0.02 || n < 2) {
       this.streak.hide();
       return;
@@ -1941,9 +1929,15 @@ export class FieldVenue implements FieldVenueLike {
     const F = this.fx;
     const c = this.cols;
     const sp = sprayOf(x, z);
-    if (homeRun || !onField(x, y, z)) {
-      P.burst({ x, y: y + 0.2, z, count: homeRun ? 46 : 24, speed: [2.5, 6], dir: [0, 1, 0], spread: 0.6, life: [1.1, 1.9], size: [0.09, 0.17], colors: c.party, shape: F.confetti, gravity: 4, drag: 1.4, spin: 10 });
+    if (homeRun) {
+      P.burst({ x, y: y + 0.2, z, count: 46, speed: [2.5, 6], dir: [0, 1, 0], spread: 0.6, life: [1.1, 1.9], size: [0.09, 0.17], colors: c.party, shape: F.confetti, gravity: 4, drag: 1.4, spin: 10 });
       P.burst({ x, y: y + 0.2, z, count: 1, speed: [0, 0], life: [0.35, 0.35], size: [0.5, 0.5], shrink: 5, colors: c.white, shape: 'ring', alpha: 0.8 });
+      return;
+    }
+    if (!onField(x, y, z)) {
+      // a foul into the stands (or out beyond the park): the fans scramble — a little pop, no party
+      P.burst({ x, y: y + 0.15, z, count: 12, speed: [1.5, 3.5], dir: [0, 1, 0], spread: 0.7, life: [0.7, 1.2], size: [0.07, 0.13], colors: c.party, shape: F.confetti, gravity: 5, drag: 1.6, spin: 10 });
+      P.burst({ x, y: y + 0.1, z, count: 5, speed: [0.4, 1.2], dir: [0, 1, 0], spread: 0.9, life: [0.4, 0.8], size: [0.16, 0.3], shrink: 1.6, colors: c.dust, shape: F.dustShape, alpha: F.hot ? 0.7 : 0.45, drag: 3.5, gravity: -0.2 });
       return;
     }
     const onTrack = sp.r > fenceAt(sp.a) - TRACK - 0.05;
@@ -2708,19 +2702,4 @@ function starGeometry(blocky: boolean) {
   g.center();
   g.deleteAttribute('uv');
   return g;
-}
-
-/** A soft glowing ring (the ball's spot on the dark glowing floors). */
-function spotTexture() {
-  const t = canvasTex(128, 128, (x) => {
-    const g = x.createRadialGradient(64, 64, 0, 64, 64, 64);
-    g.addColorStop(0, 'rgba(255,255,255,0.55)');
-    g.addColorStop(0.45, 'rgba(255,255,255,0.25)');
-    g.addColorStop(0.7, 'rgba(255,255,255,0.7)');
-    g.addColorStop(0.8, 'rgba(255,255,255,0.15)');
-    g.addColorStop(1, 'rgba(255,255,255,0)');
-    x.fillStyle = g;
-    x.fillRect(0, 0, 128, 128);
-  });
-  return t;
 }

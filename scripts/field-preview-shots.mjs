@@ -39,6 +39,14 @@ const SHOTS = {
   'bat-fly': ['bat', 'fly', 'land', 0.1],
   'bat-foul': ['bat', 'foul', 'land', 0.2],
   'bat-bomb': ['bat', 'bomb', 'out', 1.2],
+  // the catcher's toss back to the mound after a take ('pitch', slow: no streak)
+  'bat-toss': ['bat', 'take', 'land', 1.2],
+  // the hitstop: the ball held at the bat for 90 ms (the burst goes on)
+  'bat-hitstop': ['bat', 'homer', 'contact', 0.06],
+  // a foul straight back: up over the catcher and down past the batting camera
+  'back-up': ['bat', 'back', 'contact', 0.7],
+  'back-near': ['bat', 'back', 'land', -0.2],
+  'back-side': ['side', 'back', 'contact', 1.2],
   'bat-marks': ['bat', 'bomb', 'end', -0.3],
   // following the ball out
   'flight-early': ['flight', 'homer', 'contact', 0.7],
