@@ -51,7 +51,29 @@ export const FIELD = {
   /** ball radius (exaggerated so it reads — a real one is 3.7 cm) */
   ballR: 0.06,
   gravity: 9.81,
+  /**
+   * the pitcher's mound: a dome of dirt this high, flat on top out to `moundTop`
+   * round its centre (a real one's is 18 in in front of the rubber) — the rubber
+   * and the pitcher's stride are on the flat — falling to the grass at `moundR`.
+   * Stand the pitcher on it: moundY(x, z) is the ground's height there.
+   */
+  moundH: 0.2,
+  moundCZ: -4.5 + 0.45,
+  moundTop: 1.15,
+  moundR: 2.7,
+  /** the on-deck circles (either side of home, in foul ground; where BaseballGame's first two WAITING_SPOTS are): a hitter waiting their turn stands in one */
+  onDeckX: 5.6,
+  onDeckZ: 13.8,
 };
+
+/** The height of the ground at (x, z): the mound's dome, or 0. */
+export function moundY(x: number, z: number) {
+  const d = Math.hypot(x, z - FIELD.moundCZ);
+  if (d >= FIELD.moundR) return 0;
+  if (d <= FIELD.moundTop) return FIELD.moundH;
+  const u = (d - FIELD.moundTop) / (FIELD.moundR - FIELD.moundTop);
+  return FIELD.moundH * (1 - u * u * (3 - 2 * u));
+}
 
 /** The pitcher's delivery, seconds from the start of the windup: the ball leaves the hand at `release`. */
 export const DELIVERY = { release: 1.1, end: 1.75 };
