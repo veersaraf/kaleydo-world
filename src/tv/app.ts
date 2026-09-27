@@ -26,6 +26,12 @@ import { ArcherAnimator } from './archery/anim';
 import { ArcheryGear } from './archery/bow';
 import { RANGE } from './archery/range';
 import type { Archer, ArcheryEvent, ArcherState } from './archery/types';
+import { BaseballGame, type BaseballOptions } from './baseball/game';
+import { BaseballCamera } from './baseball/camera';
+import { FieldVenue } from './baseball/venue';
+import { BatterAnimator, PitcherAnimator, CatcherAnimator } from './baseball/anim';
+import { BaseballGear } from './baseball/gear';
+import type { BaseballEvent, Hitter } from './baseball/types';
 import type { World } from './worlds/base';
 import { hashStr } from '../shared/hash';
 import { PLAYER_COLORS } from '../shared/protocol';
@@ -72,7 +78,7 @@ export class App {
   beat: () => number = () => 0;
   worldId = 'plaza';
   // ---- bowling
-  sport: 'tennis' | 'bowling' | 'duel' | 'archery' = 'tennis';
+  sport: 'tennis' | 'bowling' | 'duel' | 'archery' | 'baseball' = 'tennis';
   bowl: BowlingGame | null = null;
   bowlCam = new BowlCamera();
   private bowlAnims: BowlAnimator[] = [];
@@ -94,6 +100,17 @@ export class App {
   private archAnims: ArcherAnimator[] = [];
   private archGear = new Map<World, ArcheryGear>();
   onArcheryEvent: (e: ArcheryEvent) => void = () => {};
+  // ---- baseball
+  baseball: BaseballGame | null = null;
+  ballCam = new BaseballCamera();
+  private batAnims: BatterAnimator[] = [];
+  private pitcherAnim: PitcherAnimator | null = null;
+  private catcherAnim: CatcherAnimator | null = null;
+  /** per world: the bats, helmets, gloves and the ball in hand */
+  private batGear = new Map<World, BaseballGear>();
+  /** the fielding side's colours (the pitcher and catcher) */
+  private fieldColors: string[] = [];
+  onBaseballEvent: (e: BaseballEvent) => void = () => {};
   /** a phone's pose when the draw began, and the aim it started from (the aim follows the turn since) */
   private aimFrom: { q: THREE.Quaternion; yaw: number; pitch: number } | null = null;
   /** how much of the phone's turn the aim takes: well under 1:1 keeps a steady hand's
@@ -170,6 +187,7 @@ export class App {
     this.bowlCam.aspect = this.stage.w / this.stage.h;
     this.duelCam.aspect = a;
     this.archCam.aspect = this.stage.w / this.stage.h;
+    this.ballCam.aspect = this.stage.w / this.stage.h;
     this.duelCam.split = this.splitOn;
     this.rig.aspect = a;
     this.rig2.aspect = a;
@@ -180,7 +198,7 @@ export class App {
   // ---------------------------------------------------------------- matches
 
   /** which sport the menu's background is showing */
-  attractSport: 'tennis' | 'bowling' | 'duel' | 'archery' = 'tennis';
+  attractSport: 'tennis' | 'bowling' | 'duel' | 'archery' | 'baseball' = 'tennis';
 
   /** CPUs to fill a showcase game: random looks, the player colours */
   private attractCpus(n: number) {
@@ -210,6 +228,10 @@ export class App {
       this.startArchery(this.attractCpus(2), worldId, true);
       return;
     }
+    if (sport === 'baseball') {
+      this.startBaseball(this.attractCpus(2), worldId, true, { pitches: 4 });
+      return;
+    }
     const doubles = this.rng.chance(0.3);
     const players: PlayerSpec[] = [];
     for (const team of [0, 1] as const) {
@@ -236,6 +258,7 @@ export class App {
     this.stopBowling();
     this.stopDuel();
     this.stopArchery();
+    this.stopBaseball();
     this.replay = null;
     for (const f of this.rec) this.recPool.push(f);
     this.rec.length = 0;
@@ -273,6 +296,15 @@ export class App {
   }
 
   private swing(e: SwingEv) {
+    if (this.sport === 'baseball') {
+      const g = this.baseball;
+      if (!g || this.paused || this.attract) return;
+      if (e.source === 'mouse' && !this.input.mouseSwings) return;
+      // the swing's plane: the phone's attack angle (+ = an uppercut); a flick of the mouse, its direction
+      const lift = e.attack !== undefined ? clamp(e.attack / 35, -1, 1) : clamp(e.spin, -1, 1);
+      g.swing(e.slot, { power: e.power, lift, age: clamp(e.age, 0, 0.2) });
+      return;
+    }
     const m = this.match;
     if (!m || this.paused || this.attract) return;
     if (e.source === 'mouse' && !this.input.mouseSwings) return;
@@ -418,6 +450,16 @@ export class App {
       }
       return;
     }
+    if (this.sport === 'baseball') {
+      const g = this.baseball;
+      if (!g || !this.stage.current) return;
+      this.quality.beginFrame();
+      this.baseballFrame(realDt);
+      this.quality.endFrame();
+      // resizing costs a frame: not while a pitch is on its way or a ball in the air
+      if (!document.hidden && this.quality.update(now, gapMs, this.paused || (g.state !== 'windup' && g.state !== 'pitch' && g.state !== 'flight')) !== null) this.applyQuality();
+      return;
+    }
     if (this.sport === 'archery') {
       const g = this.archery;
       if (!g || !this.stage.current) return;
@@ -452,6 +494,105 @@ export class App {
     }
   }
 
+  // ---------------------------------------------------------------- baseball
+
+  /** Turn the current world's court into a ballpark and start a home run derby. */
+  startBaseball(hitters: Hitter[], worldId: string, attract = false, opts: BaseballOptions = {}) {
+    this.stopBowling();
+    this.stopDuel();
+    this.stopArchery();
+    this.stopBaseball();
+    this.match = null;
+    this.replay = null;
+    this.attract = attract;
+    this.paused = false;
+    this.sport = 'baseball';
+    this.worldId = worldId;
+    this.stage.setWorld(worldId);
+    const g = new BaseballGame(hitters, { seed: this.rng.int(1, 1 << 30), ...opts });
+    this.baseball = g;
+    g.onEvent = (e) => {
+      if (e.type === 'contact') this.ballCam.kick(e.ball.sweet ? 0.75 : 0.22 + Math.min(0.4, e.ball.exitSpeed / 110));
+      else if (e.type === 'catch') this.ballCam.kick(0.08);
+      this.onBaseballEvent(e);
+    };
+    this.batAnims = hitters.map((h) => new BatterAnimator(h.handed, h.look));
+    // the fielders: the home side in navy, caps on
+    const uniform = (look: Look): Look => ({ ...look, shirt: '#2c4a8c', shorts: '#f3f1ea', shoes: '#1d1b2a', hair: 'cap', hat: '#1f3366', racket: '#c8a27a' });
+    const pitcherLook = uniform(randomLook(this.rng));
+    const catcherLook = uniform(randomLook(this.rng));
+    this.fieldColors = ['#2c4a8c', '#2c4a8c'];
+    this.pitcherAnim = new PitcherAnimator(g.pitcher.handed, pitcherLook);
+    this.catcherAnim = new CatcherAnimator(catcherLook);
+    this.stage.setPlayers([...hitters.map((h) => h.look), pitcherLook, catcherLook]);
+    this.ballCam.snap();
+    this.prepareBaseballWorld();
+  }
+
+  /** The world on screen shows the ballpark; its characters carry bats and gloves. */
+  private prepareBaseballWorld() {
+    const w = this.stage.current;
+    const g = this.baseball;
+    if (!w || !g) return;
+    if (w.sport !== 'baseball') w.setSport('baseball', (kit) => new FieldVenue(kit, { particles: w.particles, world: w.def.id }));
+    if (!this.batGear.has(w)) this.batGear.set(w, new BaseballGear(w, [...g.hitters.map((h) => h.color), ...this.fieldColors]));
+  }
+
+  stopBaseball() {
+    if (this.sport !== 'baseball') return;
+    this.setDof(null);
+    this.sport = 'tennis';
+    this.baseball = null;
+    for (const gear of this.batGear.values()) gear.dispose();
+    this.batGear.clear();
+    this.stage.forEachWorld((w) => {
+      if (w.sport === 'baseball') w.setSport('tennis');
+    });
+  }
+
+  private baseballFrame(realDt: number) {
+    const g = this.baseball!;
+    const w = this.stage.current!;
+    this.prepareBaseballWorld();
+    const dt = this.paused ? 0 : Math.min(0.05, realDt);
+    // the last moments of a home run's flight go by a touch slower
+    let gdt = dt;
+    const hit = g.hit;
+    if (g.state === 'flight' && hit && hit.homeRun && !hit.foul) {
+      const left = hit.hang - (g.t - g.hitT);
+      if (left > 0 && left < 0.9) gdt = dt * (0.55 + 0.45 * (1 - Math.min(1, (0.9 - left) / 0.5)));
+    }
+    if (gdt > 0) g.step(gdt);
+    const cam = this.ballCam.cam;
+    const view = g.view({ x: cam.position.x, y: cam.position.y, z: cam.position.z });
+    this.ballCam.update(g, view, realDt, this.realT);
+    this.setDof(this.ballCam.focus, this.ballCam.aperture);
+    const hitters = g.hitters.map((_, i) => g.hitterState(i));
+    const poses: Pose[] = hitters.map((s, i) => this.batAnims[i].update(g.t, Math.max(1e-4, gdt), s));
+    poses.push(this.pitcherAnim!.update(g.t, Math.max(1e-4, gdt), g.pitcher));
+    poses.push(this.catcherAnim!.update(g.t, Math.max(1e-4, gdt), g.catcher));
+    const fv: FrameView = {
+      t: g.t,
+      dt,
+      realT: this.realT,
+      realDt,
+      ball: { x: 0, y: -10, z: 0 },
+      ballSpeed: 0,
+      ballVisible: false,
+      holder: -1,
+      poses,
+      excitement: g.state === 'flight' ? (hit?.homeRun ? 1 : 0.6) : g.state === 'pitch' || g.state === 'windup' ? 0.45 : 0.3,
+      state: 'play',
+      cam,
+      beat: this.beat(),
+      field: view,
+    };
+    this.stage.update(fv);
+    this.batGear.get(w)?.update({ hitters, pitcher: g.pitcher, catcher: g.catcher, ball: view.ball }, realDt);
+    this.stage.render(cam);
+    this.onFrame(realDt);
+  }
+
   // ---------------------------------------------------------------- archery
 
   /** Turn the current world's court into a range and start a round. */
@@ -459,6 +600,7 @@ export class App {
     this.stopBowling();
     this.stopDuel();
     this.stopArchery();
+    this.stopBaseball();
     this.match = null;
     this.replay = null;
     this.attract = attract;
@@ -622,6 +764,7 @@ export class App {
     this.stopBowling();
     this.stopDuel();
     this.stopArchery();
+    this.stopBaseball();
     this.match = null;
     this.replay = null;
     this.attract = attract;
@@ -756,6 +899,7 @@ export class App {
     this.phys ??= await BowlPhysics.load();
     this.stopDuel();
     this.stopArchery();
+    this.stopBaseball();
     this.match = null;
     this.replay = null;
     this.attract = attract;

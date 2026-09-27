@@ -193,9 +193,10 @@ export function phone() {
         }, releaseAt),
       );
     },
-    tennis() {
-      sw = { kind: 'tennis', tp: now() + 0.6 };
-      return new Promise((done) => setTimeout(() => ((sw = null), done()), 1300));
+    /** a forehand (or a bat swing: the same turn) whose fastest moment is `inMs` from now */
+    tennis({ inMs = 600 } = {}) {
+      sw = { kind: 'tennis', tp: now() + inMs / 1000 };
+      return new Promise((done) => setTimeout(() => ((sw = null), done()), inMs + 700));
     },
     /** turn the phone (smoothly, over `ms`) to hold its top along `top`, screen facing `screen` */
     hold({ top = [0, 0.8, 0.6], screen = [0, -1, 0], ms = 900 } = {}) {

@@ -20,6 +20,9 @@ import { TOUR, loadTour, saveTour, type Champion } from './tour';
 import { BowlHud } from './ui/bowlhud';
 import { DuelHud } from './ui/duelhud';
 import { ArcheryHud } from './ui/archeryhud';
+import { BaseballHud } from './ui/baseballhud';
+import type { BaseballEvent, Hitter } from './baseball/types';
+import { realFenceAt } from './baseball/field';
 import type { Archer, ArcheryEvent } from './archery/types';
 import { RANGE } from './archery/range';
 
@@ -146,6 +149,7 @@ export class Flow {
       if (this.app.sport === 'bowling' && !this.screen && this.bowlButton(slot, b, down)) return;
       if (this.app.sport === 'duel' && !this.screen && this.duelButton(slot, b, down)) return;
       if (this.app.sport === 'archery' && !this.screen && this.archeryButton(slot, b, down)) return;
+      if (this.app.sport === 'baseball' && !this.screen && this.baseballButton(slot, b, down)) return;
       if (down) this.button(slot, b);
     };
     app.input.onGuard = (slot, down) => {
@@ -159,6 +163,7 @@ export class Flow {
       if (!this.screen) this.app.archery?.draw(slot, down);
     };
     app.onArcheryEvent = (e) => this.archeryEvent(e);
+    app.onBaseballEvent = (e) => this.baseballEvent(e);
     app.input.onGrip = (slot, down) => {
       if (!this.screen) this.app.bowl?.grip(slot, down);
     };
@@ -412,17 +417,19 @@ export class Flow {
     const kal = item('◆', 'linear-gradient(135deg,#ff5a8a,#ffb13d,#4be3a2,#52a7ff)', 'Kaleido Rally', 'The world shatters as you play');
     const tb = loadTour().beaten;
     const tour = item('🏆', '#ffb13d', 'World Tour', tb >= TOUR.length ? 'The Prism is whole — play again' : `${Math.min(tb, 8)} of 8 shards restored`);
-    const help = item('?', '#35d49a', 'How to Play', 'Tennis, bowling, duels & archery');
+    const help = item('?', '#35d49a', 'How to Play', 'Tennis, bowling, duels, archery & baseball');
     const set = item('⚙', '#8a7dff', 'Settings', 'Sound, voice, controls');
     const labItem = item('🎯', '#ff5a8a', 'Swing Lab', 'Ball machine + a read-out of every swing');
     const bowlItem = item('🎳', '#ff8a3d', 'Bowling', 'Grip, swing, let go — ten frames');
     const duelItem = item('⚔', '#ff5a6e', 'Sword Duel', 'Swing to strike, hold to guard — knock them off');
     const archItem = item('🏹', '#35c46a', 'Archery', 'Point, draw, let go — mind the wind');
+    const hrItem = item('⚾', '#5b7cff', 'Home Run Derby', 'Swing for the fences — ten pitches each');
     const nav = new Nav([
       { el: quick, onSelect: () => this.go(this.setupScreen('quick')) },
       { el: bowlItem, onSelect: () => this.go(this.bowlSetup()) },
       { el: duelItem, onSelect: () => this.go(this.duelSetup()) },
       { el: archItem, onSelect: () => this.go(this.archerySetup()) },
+      { el: hrItem, onSelect: () => this.go(this.baseballSetup()) },
       { el: tour, onSelect: () => this.go(this.tourScreen()) },
       { el: kal, onSelect: () => this.go(this.setupScreen('kaleido')) },
       { el: labItem, onSelect: () => this.beginSwingLab() },
@@ -667,6 +674,18 @@ export class Flow {
         ],
         keys: kbd('No phone? Hold the mouse (or ', ['Space'], ') to draw, the cursor aims, let go to shoot · arrows fine-tune'),
       },
+      {
+        name: 'Baseball',
+        tips: [
+          tip('⚾', 'Your phone is the bat', 'Hold it in both hands like a bat and swing through as the ball reaches the plate.'),
+          tip('⏱️', 'Timing is everything', 'Right on time goes to centre field. Early pulls it, late pushes it the other way — too early or too late is foul.'),
+          tip('💪', 'Swing hard', 'A fast swing hits it further. A little uppercut lifts it; a chop beats it into the ground.'),
+          tip('👀', 'Read the pitch', 'Fastballs come in hot, curveballs drop, changeups float in slow. Watch it out of the pitcher’s hand.'),
+          tip('🏟️', 'Clear the fence', '100 m down the lines, 122 m to centre. Every home run counts — ten pitches each.'),
+          tip('👥', 'Take turns', 'Everyone bats on their own phone, one after another. Add a CPU slugger if you like.'),
+        ],
+        keys: kbd('No phone? ', ['Space'], ' swings · or flick the mouse (up = an uppercut)'),
+      },
     ];
     const page = pages[sport];
     const tabs = h('div', { class: 'row help-tabs' }, h('span', { class: 'k' }, 'Sport'), h('span', { class: 'v' }, h('span', { class: 'arrow' }, '◀'), h('span', null, page.name), h('span', { class: 'arrow' }, '▶')));
@@ -739,7 +758,9 @@ export class Flow {
               ? this.duelCfg && this.beginDuel(this.duelCfg.world, this.duelCfg.cpu)
               : this.app.sport === 'archery'
                 ? this.archCfg && this.beginArchery(this.archCfg.world, this.archCfg.cpu)
-                : this.lastCfg && this.beginMatch(this.lastCfg.world, true),
+                : this.app.sport === 'baseball'
+                  ? this.hrCfg && this.beginBaseball(this.hrCfg)
+                  : this.lastCfg && this.beginMatch(this.lastCfg.world, true),
       },
       { el: quit, onSelect: () => this.quitToMenu() },
     ]);
@@ -909,10 +930,12 @@ export class Flow {
       ag.cancelDraw(slot);
       if (ag.archers[ag.current]?.slot === slot) this.pause();
     }
+    const hg = this.app.baseball;
+    if (hg && hg.state !== 'over' && hg.hitters[hg.current]?.slot === slot && hg.hitters[hg.current].cpu === null) this.pause();
   }
 
   private pause() {
-    if ((!this.app.match && !this.app.bowl && !this.app.duel && !this.app.archery) || this.app.attract || this.screen) return;
+    if ((!this.app.match && !this.app.bowl && !this.app.duel && !this.app.archery && !this.app.baseball) || this.app.attract || this.screen) return;
     this.app.paused = true;
     // a string pulled back when the game stops is let down, not loosed
     const ag = this.app.archery;
@@ -939,15 +962,301 @@ export class Flow {
     this.duelHud = null;
     this.archHud?.el.remove();
     this.archHud = null;
+    this.hrHud?.dispose();
+    this.hrHud = null;
     this.audio?.sfx.roll(0);
     this.app.stopBowling();
     this.app.stopDuel();
     this.app.stopArchery();
+    this.app.stopBaseball();
     this.app.startAttract(this.app.stage.current?.def.id ?? 'plaza');
     this.app.stage.setTeamColors('#3aa8ff', '#ff5a8c');
     this.app.input.prune();
     this.go(this.mainMenu());
     this.audio?.music.setIntensity(3);
+  }
+
+  // ---------------------------------------------------------------- baseball
+
+  private hrHud: BaseballHud | null = null;
+  private hrCfg: { world: string; cpu: number; pitching: number; pitches: number } | null = null;
+  /** the distance ticker runs while a fair ball is in the air */
+  private hrTicking = false;
+
+  /** Who's batting (every phone, plus an optional CPU), how tough the pitcher is, how many pitches, where. */
+  private baseballSetup(): Screen {
+    const S = this.settings;
+    const cpuLevels = [
+      { label: 'No CPU', skill: -1 },
+      { label: 'CPU · Rookie', skill: 0.3 },
+      { label: 'CPU · Pro', skill: 0.6 },
+      { label: 'CPU · Ace', skill: 0.9 },
+    ];
+    const pitchers = [
+      { label: 'Friendly', v: 0.2 },
+      { label: 'Tricky', v: 0.55 },
+      { label: 'Nasty', v: 0.9 },
+    ];
+    const counts = [5, 10, 15];
+    const c = this.hrCfg;
+    let cpu = c ? Math.max(0, cpuLevels.findIndex((l) => l.skill === c.cpu)) : this.app.input.activeSeats.length > 1 ? 0 : 2;
+    let pi = c ? Math.max(0, pitchers.findIndex((p) => p.v === c.pitching)) : 1;
+    let ci = c ? Math.max(0, counts.indexOf(c.pitches)) : 1;
+    let wi = Math.max(0, WORLDS.findIndex((w) => w.id === (c?.world ?? S.world)));
+    const row = (k: string) => {
+      const v = h('span');
+      const r = h('div', { class: 'row' }, h('span', { class: 'k' }, k), h('span', { class: 'v' }, h('span', { class: 'arrow' }, '◀'), v, h('span', { class: 'arrow' }, '▶')));
+      return { r, v };
+    };
+    const who = h('div', { class: 'hintline' });
+    const cpuRow = row('Opponent');
+    const pitchRow = row('Pitcher');
+    const countRow = row('Pitches');
+    const worldRow = row('World');
+    const go = h('div', { class: 'row go' }, 'Play ball!');
+    const refresh = () => {
+      const names = this.app.input.activeSeats.map((st) => st.name);
+      who.textContent = names.length ? `Batting: ${names.join(', ')}` : 'Batting: Player 1';
+      cpuRow.v.textContent = cpuLevels[cpu].label;
+      pitchRow.v.textContent = pitchers[pi].label;
+      countRow.v.textContent = `${counts[ci]} each`;
+      worldRow.v.textContent = WORLDS[wi].name;
+    };
+    const cycle = (d: number) => {
+      wi = (wi + d + WORLDS.length) % WORLDS.length;
+      this.app.stage.setWorld(WORLDS[wi].id, { transition: true });
+      refresh();
+    };
+    const step = (n: number, d: number, len: number) => (n + d + len) % len;
+    const begin = () => this.beginBaseball({ world: WORLDS[wi].id, cpu: cpuLevels[cpu].skill, pitching: pitchers[pi].v, pitches: counts[ci] });
+    const nav = new Nav([
+      { el: cpuRow.r, onLeft: () => ((cpu = step(cpu, -1, 4)), refresh()), onRight: () => ((cpu = step(cpu, 1, 4)), refresh()), onSelect: () => ((cpu = step(cpu, 1, 4)), refresh()) },
+      { el: pitchRow.r, onLeft: () => ((pi = step(pi, -1, 3)), refresh()), onRight: () => ((pi = step(pi, 1, 3)), refresh()), onSelect: () => ((pi = step(pi, 1, 3)), refresh()) },
+      { el: countRow.r, onLeft: () => ((ci = step(ci, -1, 3)), refresh()), onRight: () => ((ci = step(ci, 1, 3)), refresh()), onSelect: () => ((ci = step(ci, 1, 3)), refresh()) },
+      { el: worldRow.r, onLeft: () => cycle(-1), onRight: () => cycle(1), onSelect: () => cycle(1) },
+      { el: go, onSelect: begin },
+    ]);
+    refresh();
+    const sheet = h(
+      'div',
+      { class: 'sheet panel' },
+      h('h2', null, 'Home Run Derby'),
+      h('div', { class: 'hintline' }, 'Hold your phone like a bat and swing as the ball reaches the plate. Early pulls it, late pushes it the other way — time it right and swing hard to clear the fence. Most home runs wins.'),
+      who,
+      cpuRow.r,
+      pitchRow.r,
+      countRow.r,
+      worldRow.r,
+      go,
+    );
+    return this.navScreen('hrsetup', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Home Run Derby', hint: '◀ ▶ to change · A to play' });
+  }
+
+  beginBaseball(cfg: { world: string; cpu: number; pitching: number; pitches: number }) {
+    this.hrCfg = cfg;
+    this.go(null);
+    this.hud?.el.remove();
+    this.hud = null;
+    this.bowlHud?.el.remove();
+    this.bowlHud = null;
+    this.duelHud?.el.remove();
+    this.duelHud = null;
+    this.archHud?.el.remove();
+    this.archHud = null;
+    this.hrHud?.dispose();
+    this.hrHud = null;
+    const seats = this.app.input.activeSeats.length ? this.app.input.activeSeats : [this.app.input.seats[0]!];
+    const hitters: Hitter[] = seats.map((st) => {
+      const sp = this.app.humanSpec(st.slot, 0);
+      return { name: sp.name, color: st.color, look: sp.look, handed: sp.handed, slot: st.slot, cpu: null };
+    });
+    if (cfg.cpu >= 0) hitters.push({ name: 'CPU', color: '#6c6a84', look: randomLook(this.rng), handed: this.rng.chance(0.25) ? -1 : 1, slot: -1, cpu: cfg.cpu });
+    this.app.startBaseball(hitters, cfg.world, false, { pitches: cfg.pitches, pitching: cfg.pitching });
+    const g = this.app.baseball!;
+    this.hrHud = new BaseballHud(hitters, g.pitchesPer);
+    this.hudLayer.append(this.hrHud.el);
+    this.hrHud.update(g.log, g.current, hitters.map((_, i) => g.homeRuns(i)));
+    this.hrHud.setHint(this.baseballHint());
+    this.hrTicking = false;
+    const def = worldDef(cfg.world);
+    if (this.audio) {
+      this.audio.playSong(def.song);
+      this.audio.music.setIntensity(1);
+      this.audio.sfx.cheer(0.3);
+    }
+    this.syncPads(true);
+  }
+
+  private baseballHint() {
+    const g = this.app.baseball;
+    const p = g?.hitters[g.current];
+    if (!g || !p || p.cpu !== null) return '';
+    const seat = this.app.input.seats[p.slot];
+    return seat && !seat.local
+      ? 'Hold the phone like a bat · <b>swing</b> as the ball reaches the plate'
+      : '<b>Space</b> or a flick of the <b>mouse</b> swings · time it as the ball reaches the plate';
+  }
+
+  /** A skips the intro. */
+  private baseballButton(_slot: number, b: Btn, down: boolean) {
+    const g = this.app.baseball;
+    if (!g) return false;
+    if (b === 'a' && down && g.state === 'intro') {
+      g.skip();
+      return true;
+    }
+    return false;
+  }
+
+  private baseballEvent(e: BaseballEvent) {
+    const a = this.audio;
+    // behind the menu (a showcase game) the play sounds, the crowd doesn't
+    const crowd = this.app.attract ? null : this.audio;
+    const hud = this.hrHud;
+    const g = this.app.baseball;
+    if (!g) return;
+    const padOf = (i: number) => {
+      const who = g.hitters[i];
+      return who && who.slot >= 0 && who.cpu === null ? this.app.input.seats[who.slot]?.pid : undefined;
+    };
+    const hrs = () => g.hitters.map((_, i) => g.homeRuns(i));
+    const pan = (x: number) => Math.max(-1, Math.min(1, x / 14));
+    switch (e.type) {
+      case 'turn':
+        hud?.update(g.log, e.who, hrs());
+        hud?.showTurn(g.hitters[e.who], e.pitches);
+        hud?.setHint(this.baseballHint());
+        hud?.setDistance(null);
+        crowd?.sfx.applause(0.35, 1.6);
+        this.syncPads(true);
+        break;
+      case 'windup':
+        hud?.showPitch(null);
+        hud?.setDistance(null);
+        this.hrTicking = false;
+        break;
+      case 'pitch':
+        hud?.showPitch(e.pitch);
+        hud?.setCount(g.hitters[g.current], g.pitchNo + 1, g.pitchesPer);
+        a?.sfx.swish(0.3, 0);
+        this.syncPads();
+        break;
+      case 'swing': {
+        const p = g.hitters[e.who];
+        if (p?.cpu === null) hud?.showTiming(e.timing, e.contact);
+        // (a person's swing already made its swish when it arrived)
+        else a?.sfx.swish(0.5 + e.power * 0.5, 0);
+        break;
+      }
+      case 'contact': {
+        const b = e.ball;
+        a?.sfx.crack(Math.min(1, b.exitSpeed / 48), b.sweet, 0);
+        this.hrTicking = !b.foul;
+        if (!b.foul) hud?.setDistance(0);
+        if (!b.foul && b.exitSpeed > 38 && b.launch > 0.3 && b.launch < 0.75) crowd?.sfx.ooh();
+        hud?.setHint('');
+        const pid = padOf(e.who);
+        if (pid) this.app.link.toPad(pid, { type: 'fx', fx: b.sweet ? 'perfect' : 'hit', power: Math.min(1, b.exitSpeed / 48), label: b.sweet ? 'CRUSHED!' : 'CRACK!', detail: `${Math.round(b.exitSpeed * 3.6)} km/h off the bat` });
+        break;
+      }
+      case 'catch':
+        a?.sfx.mitt(0);
+        break;
+      case 'land': {
+        const b = e.ball;
+        this.hrTicking = false;
+        if (b.homeRun && !b.foul) {
+          hud?.setDistance(b.distance, true);
+          hud?.say('HOME RUN!', `${Math.round(b.distance)} m`, 'hr');
+          crowd?.sfx.cheer(1);
+          crowd?.music.jingle('point');
+          if (a) for (let k = 0; k < 3; k++) window.setTimeout(() => this.app.baseball === g && a.sfx.firework(pan(b.landX) + (k - 1) * 0.3, k === 2), 200 + k * 380);
+        } else if (b.foul) {
+          hud?.setDistance(null);
+          hud?.say('FOUL', b.timing < 0 ? 'a touch early' : 'a touch late', 'bad');
+        } else {
+          hud?.setDistance(b.distance);
+          const short = realFenceAt(b.spray) - b.distance;
+          hud?.say(`${Math.round(b.distance)} m`, b.wall ? 'off the wall!' : short < 12 ? 'so close!' : b.launch < 0.15 ? 'a grounder' : b.launch > 0.9 ? 'a pop-up' : '', '');
+          if (b.wall || short < 12) crowd?.sfx.aww();
+        }
+        break;
+      }
+      case 'result': {
+        hud?.update(g.log, g.current, hrs());
+        if (e.outcome === 'strike') hud?.say('STRIKE', '', 'bad');
+        const pid = padOf(e.who);
+        if (pid) {
+          const left = e.pitchesLeft > 0 ? `${e.pitchesLeft} to go` : 'that’s your turn';
+          const label = e.outcome === 'homerun' ? 'HOME RUN!' : e.outcome === 'foul' ? 'FOUL' : e.outcome === 'hit' ? `${Math.round(e.distance)} m` : 'STRIKE';
+          const detail = [e.outcome === 'homerun' ? `${Math.round(e.distance)} m` : '', `${e.homeRuns} HR`, left].filter(Boolean).join(' · ');
+          this.app.link.toPad(pid, { type: 'fx', fx: e.outcome === 'homerun' ? 'point-won' : 'whiff', label, detail });
+        }
+        this.syncPads();
+        break;
+      }
+      case 'over': {
+        crowd?.sfx.cheer(1);
+        hud?.hideTurn();
+        hud?.showPitch(null);
+        hud?.setDistance(null);
+        hud?.update(g.log, -1, hrs());
+        this.syncPads(true);
+        window.setTimeout(() => {
+          if (this.app.sport !== 'baseball' || this.app.baseball !== g) return;
+          if (this.app.attract) this.app.startAttract(this.app.stage.current?.def.id ?? 'park', 'baseball');
+          else this.go(this.baseballResults(e.ranking));
+        }, 1800);
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  /** Per frame at bat: the distance ticks up while the ball flies; the crowd hushes for the pitch. */
+  private baseballFrame(_dt: number) {
+    const g = this.app.baseball;
+    const hud = this.hrHud;
+    if (!g) return;
+    if (hud && this.hrTicking && g.state === 'flight') hud.setDistance(g.liveDistance());
+    this.audio?.sfx.setCrowd(g.state === 'flight' ? 0.55 : g.state === 'windup' || g.state === 'pitch' ? 0.16 : 0.3);
+    this.syncPads();
+  }
+
+  private baseballResults(ranking: number[]): Screen {
+    const g = this.app.baseball!;
+    const again = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Play again')));
+    const other = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Another world')));
+    const menu = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Main menu')));
+    const cfg = this.hrCfg;
+    const nav = new Nav([
+      { el: again, onSelect: () => cfg && this.beginBaseball(cfg) },
+      { el: other, onSelect: () => cfg && this.beginBaseball({ ...cfg, world: this.shuffledWorlds().find((w) => w !== cfg.world) ?? 'park' }) },
+      { el: menu, onSelect: () => this.quitToMenu() },
+    ]);
+    const hr = (i: number) => g.homeRuns(i);
+    const tot = (i: number) => Math.round(g.total(i));
+    const ahead = (q: number, i: number) => hr(q) > hr(i) || (hr(q) === hr(i) && tot(q) > tot(i));
+    const place = (i: number) => 1 + ranking.filter((q) => ahead(q, i)).length;
+    const tied = ranking.filter((i) => place(i) === 1);
+    const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
+    const rows = ranking.map((i) => {
+      const n = hr(i);
+      const stats = n ? `longest ${Math.round(g.longest(i))} m · ${tot(i)} m in all` : g.longest(i) > 0 ? `longest hit ${Math.round(g.longest(i))} m` : 'no hits this time';
+      return this.rankRow(place(i), g.hitters[i].color, g.hitters[i].name, stats, `${n} HR`);
+    });
+    const top = hr(ranking[0]);
+    const title = ranking.length === 1 ? `${plural(top, 'home run')}!` : tied.length === ranking.length ? "It's a tie!" : tied.length > 1 ? `${tied.map((i) => g.hitters[i].name).join(' & ')} tie for first!` : `${g.hitters[ranking[0]].name} wins!`;
+    const sheet = h(
+      'div',
+      { class: 'sheet panel results' },
+      h('h2', null, title),
+      h('div', { class: 'hintline' }, ranking.length > 1 ? 'Most home runs wins · a tie goes to the longer total' : top ? `Longest: ${Math.round(g.longest(ranking[0]))} m` : 'Swing as the ball reaches the plate — and swing hard'),
+      ...rows,
+      h('div', { class: 'menu' }, again, other, menu),
+    );
+    return this.navScreen('hrresults', h('div', { class: 'screen center results' }, sheet), nav, () => this.quitToMenu(), { title: 'Derby over', hint: 'A to choose' });
   }
 
   // ---------------------------------------------------------------- archery
@@ -1016,6 +1325,8 @@ export class Flow {
     this.duelHud = null;
     this.archHud?.el.remove();
     this.archHud = null;
+    this.hrHud?.dispose();
+    this.hrHud = null;
     const seats = this.app.input.activeSeats.length ? this.app.input.activeSeats : [this.app.input.seats[0]!];
     const archers: Archer[] = seats.map((st) => {
       const sp = this.app.humanSpec(st.slot, 0);
@@ -1240,6 +1551,8 @@ export class Flow {
     this.duelHud = null;
     this.archHud?.el.remove();
     this.archHud = null;
+    this.hrHud?.dispose();
+    this.hrHud = null;
     const seats = this.app.input.activeSeats.length ? this.app.input.activeSeats : [this.app.input.seats[0]!];
     const person = (st: (typeof seats)[number]): Duelist => {
       const sp = this.app.humanSpec(st.slot, 0);
@@ -1484,6 +1797,8 @@ export class Flow {
     this.duelHud = null;
     this.archHud?.el.remove();
     this.archHud = null;
+    this.hrHud?.dispose();
+    this.hrHud = null;
     const seats = this.app.input.activeSeats.length ? this.app.input.activeSeats : [this.app.input.seats[0]!];
     const specs = seats.map((st) => {
       const sp = this.app.humanSpec(st.slot, 0);
@@ -2152,6 +2467,20 @@ export class Flow {
           title = mine ? 'Flying…' : up ? `${up.name} is shooting` : 'Archery';
           hint = mine ? 'watch the target' : 'you’re next soon';
         }
+      } else if (!this.screen && this.app.sport === 'baseball' && this.app.baseball) {
+        const hg = this.app.baseball;
+        const up = hg.hitters[hg.current];
+        const mine = up?.slot === seat.slot && up.cpu === null;
+        if (mine && hg.state !== 'over') {
+          mode = 'bat';
+          title = hg.state === 'switch' || hg.state === 'intro' ? 'You’re up!' : `At bat · pitch ${Math.min(hg.pitchNo + 1, hg.pitchesPer)} of ${hg.pitchesPer}`;
+          hint = undefined;
+        } else {
+          mode = 'watch';
+          const me = hg.hitters.findIndex((p) => p.slot === seat.slot && p.cpu === null);
+          title = up && hg.state !== 'over' ? `${up.name} is batting` : 'Home Run Derby';
+          hint = me > hg.current ? 'you’re up soon' : me >= 0 ? `you hit ${hg.homeRuns(me)} home run${hg.homeRuns(me) === 1 ? '' : 's'}` : 'look at the screen';
+        }
       } else if (!this.screen && this.app.sport === 'duel' && dg) {
         const mine = dg.duelists.find((d) => d.slot === seat.slot && d.cpu === null);
         if (mine && dg.state !== 'over') {
@@ -2217,6 +2546,7 @@ export class Flow {
     if (this.app.sport === 'bowling') this.bowlFrame(dt);
     else if (this.app.sport === 'duel') this.duelFrame(dt);
     else if (this.app.sport === 'archery') this.archeryFrame(dt);
+    else if (this.app.sport === 'baseball') this.baseballFrame(dt);
     const m = this.app.match;
     if (m && !this.app.attract && this.hud) {
       // serve hint
@@ -2241,7 +2571,7 @@ export class Flow {
     // attract mode showcases the worlds — and the sports, one after another
     if (this.app.attract && this.screen && (this.screen.name === 'title' || this.screen.name === 'menu')) {
       if (this.time > this.attractSportAt) {
-        const order = ['tennis', 'bowling', 'duel', 'archery'] as const;
+        const order = ['tennis', 'bowling', 'duel', 'archery', 'baseball'] as const;
         const next = order[(order.indexOf(this.app.attractSport) + 1) % order.length];
         this.attractSportAt = this.time + (next === 'tennis' ? 44 : 30);
         this.attractShiftAt = this.time + 14;
