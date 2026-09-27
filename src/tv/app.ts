@@ -109,6 +109,7 @@ export class App {
     this.quality = new Quality(this.renderer, window.devicePixelRatio || 1);
     this.pr = this.quality.current.pr;
     this.stage.msaa = this.quality.current.msaa;
+    this.stage.fx = this.quality.current.fx;
     this.input = new Input(this.link);
     this.input.onSwing = (e) => this.swing(e);
     this.input.onToss = (slot) => this.match && !this.paused && this.match.humanToss(slot);
@@ -252,13 +253,32 @@ export class App {
     requestAnimationFrame(tick);
   }
 
-  /** Apply the quality controller's level: render scale + MSAA. */
+  /** Apply the quality controller's level: render scale, MSAA and effects tier. */
   private applyQuality() {
     const L = LEVELS[this.quality.level];
     this.pr = L.pr;
     this.stage.msaa = L.msaa;
+    this.stage.fx = L.fx;
     this.resize();
   }
+
+  /** Force an effects tier (benchmarks, screenshots); the quality controller sets it otherwise. */
+  setEffects(tier: number) {
+    this.stage.setFx(tier);
+  }
+
+  /**
+   * Depth of field for cutscenes and replays: focus on something `focus` metres
+   * in front of the camera (along its view axis); null turns it off. Worlds that
+   * offer it (effects.dof) blur; it costs nothing while off.
+   */
+  setDof(focus: number | null, aperture = 1) {
+    // one object, updated in place: a replay may refocus every frame
+    this.dofState.focus = focus ?? 0;
+    this.dofState.aperture = aperture;
+    this.stage.dof = focus === null ? null : this.dofState;
+  }
+  private dofState = { focus: 10, aperture: 1 };
 
   /** Replay the recorded sim-time window [from, to] in slow motion. */
   startReplay(from: number, to: number): boolean {

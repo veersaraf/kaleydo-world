@@ -1,7 +1,7 @@
 // A small post-processing toolkit: fullscreen passes, render targets, bloom.
 
 import * as THREE from 'three';
-import { FULLSCREEN_VERT, COLOR, NOISE } from './glsl';
+import { FULLSCREEN_VERT, COLOR, NOISE, TONEMAP, FXAA } from './glsl';
 
 const tri = new THREE.BufferGeometry();
 tri.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
@@ -37,6 +37,8 @@ export class Pass {
 
 export interface RTOpts {
   type?: THREE.TextureDataType;
+  /** RGBA by default; one- and two-channel buffers halve or quarter the bandwidth */
+  format?: THREE.PixelFormat;
   depth?: boolean;
   samples?: number;
   filter?: THREE.MagnificationTextureFilter;
@@ -45,7 +47,7 @@ export interface RTOpts {
 export function makeRT(w: number, h: number, o: RTOpts = {}) {
   const rt = new THREE.WebGLRenderTarget(Math.max(1, w), Math.max(1, h), {
     type: o.type ?? THREE.HalfFloatType,
-    format: THREE.RGBAFormat,
+    format: o.format ?? THREE.RGBAFormat,
     minFilter: o.filter ?? THREE.LinearFilter,
     magFilter: o.filter ?? THREE.LinearFilter,
     depthBuffer: !!o.depth,
@@ -216,19 +218,86 @@ uniform sampler2D tScene; uniform sampler2D tBloom; uniform float uBloom; unifor
 uniform float uSat; uniform float uContrast; uniform vec3 uLift; uniform vec3 uGain; uniform float uVignette;
 uniform float uGrain; uniform float uTime; uniform vec2 uRes; uniform float uAberration; uniform int uTonemap;
 uniform float uFlash; uniform vec3 uFlashColor; uniform float uScan; uniform float uPaper;
+// opt-in effects (render/effects.ts) — each off (0) unless a world asks for it
+uniform sampler2D tDepth; uniform sampler2D tZ; uniform vec2 uClip;
+uniform sampler2D tAO; uniform float uAO; uniform vec2 uAORes; uniform float uAOProtect;
+uniform sampler2D tShafts; uniform float uShafts; uniform vec3 uSun; uniform vec3 uSunColor; uniform float uFlare;
+uniform sampler2D tDof; uniform float uDof; uniform vec2 uDofFocus;
+uniform highp sampler3D tLut; uniform float uLut;
+uniform float uFxaa;
 varying vec2 vUv;
 ${COLOR}
 ${NOISE}
+${TONEMAP}
+${FXAA}
+float linZ(float d) { return (uClip.x * uClip.y) / (uClip.y - (uClip.y - uClip.x) * d); }
+// glare around the sun and soft ghosts along the line through the centre, when
+// the sun itself is in open sky (the half-res depth, around its spot)
+vec3 sunFlare(vec2 uv) {
+  vec2 asp = vec2(uRes.x / uRes.y, 1.0);
+  vec2 sun = uSun.xy;
+  float edge = smoothstep(0.0, 0.06, min(min(sun.x, 1.0 - sun.x), min(sun.y, 1.0 - sun.y)));
+  if (edge <= 0.0) return vec3(0.0);
+  float vis = 0.0;
+  for (int i = 0; i < 5; i++) {
+    vec2 o = (i == 0 ? vec2(0.0) : vec2(i == 1 ? 1.0 : i == 2 ? -1.0 : 0.0, i == 3 ? 1.0 : i == 4 ? -1.0 : 0.0)) * 0.012;
+    vis += step(uClip.y * 0.98, texture2D(tZ, sun + o / asp).r);
+  }
+  vis *= 0.2 * edge * uSun.z;
+  if (vis <= 0.0) return vec3(0.0);
+  vec2 dv = (uv - sun) * asp;
+  float d = length(dv);
+  float ang = atan(dv.y, dv.x);
+  float rays = pow(max(0.0, cos(ang * 6.0 + 0.4)), 40.0) * 0.6 + pow(max(0.0, cos(ang * 5.0 - 1.1)), 80.0) * 0.4;
+  vec3 c = uSunColor * (exp(-d * 16.0) * 0.35 + rays * exp(-d * 7.0) * 0.3);
+  vec2 axis = vec2(0.5) - sun;
+  c += vec3(1.0, 0.75, 0.45) * smoothstep(0.075, 0.03, length((uv - (sun + axis * 0.7)) * asp)) * 0.05;
+  c += vec3(0.5, 0.9, 1.0) * smoothstep(0.045, 0.02, length((uv - (sun + axis * 1.25)) * asp)) * 0.07;
+  c += vec3(0.7, 1.0, 0.6) * smoothstep(0.12, 0.08, length((uv - (sun + axis * 1.6)) * asp)) * 0.035;
+  c += vec3(1.0, 0.55, 0.8) * smoothstep(0.03, 0.012, length((uv - (sun + axis * 2.05)) * asp)) * 0.08;
+  float halo = length((uv - sun - axis * 1.0) * asp);
+  c += vec3(0.6, 0.8, 1.0) * smoothstep(0.03, 0.0, abs(halo - 0.33)) * 0.025;
+  return c * vis;
+}
 void main() {
   vec2 uv = vUv;
+  // anti-aliasing for scenes drawn without MSAA: where to sample the scene
+  vec2 suv = uFxaa > 0.0 ? fxaaUv(tScene, uv, 1.0 / uRes) : uv;
   vec3 col;
   if (uAberration > 0.0) {
     vec2 d = (uv - 0.5) * uAberration;
-    col = vec3(texture2D(tScene, uv + d).r, texture2D(tScene, uv).g, texture2D(tScene, uv - d).b);
-  } else col = texture2D(tScene, uv).rgb;
+    col = vec3(texture2D(tScene, suv + d).r, texture2D(tScene, suv).g, texture2D(tScene, suv - d).b);
+  } else col = texture2D(tScene, suv).rgb;
+  float z = uAO > 0.0 || uDof > 0.0 ? linZ(texture2D(tDepth, uv).r) : 0.0;
+  if (uDof > 0.0) {
+    vec4 b = texture2D(tDof, uv);
+    col = mix(col, b.rgb, smoothstep(0.1, 0.45, uDofFocus.y * abs(z - uDofFocus.x) / max(z, 1e-3)));
+  }
+  if (uAO > 0.0) {
+    // depth-aware upsample of the half-res AO: the four texels around, weighed
+    // by how close their depth is to this pixel's
+    vec2 p = uv * uAORes - 0.5;
+    vec2 fr = fract(p);
+    vec2 b0 = (floor(p) + 0.5) / uAORes;
+    vec2 t = 1.0 / uAORes;
+    vec2 s0 = texture2D(tAO, b0).rg, s1 = texture2D(tAO, b0 + vec2(t.x, 0.0)).rg;
+    vec2 s2 = texture2D(tAO, b0 + vec2(0.0, t.y)).rg, s3 = texture2D(tAO, b0 + t).rg;
+    vec4 w = vec4((1.0 - fr.x) * (1.0 - fr.y), fr.x * (1.0 - fr.y), (1.0 - fr.x) * fr.y, fr.x * fr.y) + 1e-3;
+    w /= 0.02 + abs(vec4(s0.g, s1.g, s2.g, s3.g) - z) / z;
+    float ao = dot(w, vec4(s0.r, s1.r, s2.r, s3.r)) / dot(w, vec4(1.0));
+    // ambient occlusion: sunlit, bright surfaces keep more of their light
+    float lit = smoothstep(0.3, 1.1, luma(col));
+    col *= mix(1.0, ao, uAO * (1.0 - uAOProtect * lit));
+  }
+  // beams read against things in front of the sun; over open sky (which glows
+  // around the sun already) they would only be haze
+  if (uShafts > 0.0) col += texture2D(tShafts, uv).r * uSunColor * uShafts * (1.0 - 0.75 * step(uClip.y * 0.98, texture2D(tZ, uv).r));
   col += texture2D(tBloom, uv).rgb * uBloom;
+  if (uFlare > 0.0) col += sunFlare(uv) * uFlare;
   col *= uExposure;
   if (uTonemap == 1) col = aces(col);
+  else if (uTonemap == 2) col = agx(col);
+  else if (uTonemap == 3) col = neutral(col);
   col = saturate3(col, uSat);
   col = (col - 0.5) * uContrast + 0.5;
   col = col * uGain + uLift * (1.0 - col);
@@ -236,6 +305,7 @@ void main() {
   col *= mix(1.0 - uVignette, 1.0, v);
   col = mix(col, uFlashColor, uFlash);
   vec3 s = toSRGB(clamp(col, 0.0, 1.0));
+  if (uLut > 0.0) s = mix(s, texture(tLut, s * (31.0 / 32.0) + 0.5 / 32.0).rgb, uLut);
   if (uScan > 0.0) s *= 1.0 - uScan * (0.5 + 0.5 * sin(gl_FragCoord.y * 3.14159 * 0.66));
   if (uPaper > 0.0) {
     float f = fbm(gl_FragCoord.xy / 160.0) * 0.55 + vnoise(gl_FragCoord.xy / 2.5) * 0.3 + vnoise(gl_FragCoord.xy * vec2(0.04, 0.4)) * 0.15;
@@ -265,6 +335,24 @@ export function finalPass() {
     uFlashColor: { value: new THREE.Color(1, 1, 1) },
     uScan: { value: 0 },
     uPaper: { value: 0 },
+    tDepth: { value: null },
+    tZ: { value: null },
+    uClip: { value: new THREE.Vector2(0.1, 1000) },
+    tAO: { value: null },
+    uAO: { value: 0 },
+    uAORes: { value: new THREE.Vector2(1, 1) },
+    uAOProtect: { value: 0.5 },
+    tShafts: { value: null },
+    uShafts: { value: 0 },
+    uSun: { value: new THREE.Vector3() },
+    uSunColor: { value: new THREE.Color(1, 1, 1) },
+    uFlare: { value: 0 },
+    tDof: { value: null },
+    uDof: { value: 0 },
+    uDofFocus: { value: new THREE.Vector2(10, 1) },
+    tLut: { value: null },
+    uLut: { value: 0 },
+    uFxaa: { value: 0 },
   });
 }
 

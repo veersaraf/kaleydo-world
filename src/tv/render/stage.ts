@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import { Pass, makeRT } from './post';
+import { FX_TIERS, type DofState } from './effects';
 import { NOISE, COLOR } from './glsl';
 import type { World, WorldDef, FrameView } from '../worlds/base';
 import type { Look } from '../chars/look';
@@ -102,6 +103,10 @@ export class Stage {
   views = 1;
   /** MSAA samples for the worlds' scene buffers (the quality controller sets it) */
   msaa = 4;
+  /** effects tier for the worlds (render/effects.ts FX_TIERS; the quality controller sets it) */
+  fx = FX_TIERS.length - 1;
+  /** depth of field for cutscenes and replays (worlds that offer it), or null */
+  dof: DofState | null = null;
   looks: Look[] = [];
   private lookKey = '[]';
   /** the two teams' colours (ball halo) */
@@ -148,7 +153,7 @@ export class Stage {
 
   /** Get a world ready to draw this frame: right-sized buffers, current players. */
   private activate(w: World) {
-    w.fitTargets(this.vw, this.h, this.pr, this.msaa);
+    w.fitTargets(this.vw, this.h, this.pr, this.msaa, this.fx);
     w.setPlayers(this.looks, this.lookKey);
   }
 
@@ -171,8 +176,10 @@ export class Stage {
     this.primed.add(id);
     const onScreen = w === this.current || w === this.next;
     // one tiny render into a buffer and one into a single screen pixel: uploads
-    // geometry/textures and compiles the post passes for both kinds of target
-    if (!onScreen) w.fitTargets(64, 40, 1, this.msaa);
+    // geometry/textures and compiles the post passes (every effect pass, whatever
+    // the tier) for both kinds of target
+    if (!onScreen) w.fitTargets(64, 40, 1, this.msaa, this.fx);
+    w.priming = true;
     w.render(cam, this.primeRT);
     const vp = r.getViewport(new THREE.Vector4());
     const sc = r.getScissor(new THREE.Vector4());
@@ -181,6 +188,7 @@ export class Stage {
     r.setScissor(0, 0, 1, 1);
     r.setScissorTest(true);
     w.render(cam, null);
+    w.priming = false;
     if (!this.shatterPrimed) {
       this.shatterPrimed = true;
       this.shatter.u.tA.value = this.primeRT.texture;
@@ -227,7 +235,7 @@ export class Stage {
   private refitWarm() {
     const w = this.warmWorld;
     if (!w || !this.warmCam || w === this.current || w === this.next) return;
-    w.fitTargets(this.vw, this.h, this.pr, this.msaa);
+    w.fitTargets(this.vw, this.h, this.pr, this.msaa, this.fx);
     w.render(this.warmCam, this.primeRT);
   }
 
@@ -303,12 +311,19 @@ export class Stage {
     this.applySize();
   }
 
+  /** Effects tier (the quality controller's call, or a test's). */
+  setFx(n: number) {
+    if (n === this.fx) return;
+    this.fx = n;
+    this.applySize();
+  }
+
   private applySize() {
     const vw = this.vw,
       h = this.h,
       pr = this.pr;
     // worlds off screen are sized when they come back (except the one waiting in the wings)
-    for (const w of [this.current, this.next]) w?.fitTargets(vw, h, pr, this.msaa);
+    for (const w of [this.current, this.next]) w?.fitTargets(vw, h, pr, this.msaa, this.fx);
     this.refitWarm();
     this.rtA.setSize(Math.floor(vw * pr), Math.floor(h * pr));
     this.rtB.setSize(Math.floor(vw * pr), Math.floor(h * pr));
@@ -363,6 +378,8 @@ export class Stage {
   private renderView(cam: THREE.PerspectiveCamera) {
     if (!this.current) return;
     const irisOpen = this.iris > 1.5;
+    this.current.setDof(this.dof);
+    this.next?.setDof(this.dof);
     if (this.next) {
       this.current.render(cam, this.rtA);
       this.next.render(cam, this.rtB);
