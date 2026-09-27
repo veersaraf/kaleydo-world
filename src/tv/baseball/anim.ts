@@ -1617,7 +1617,8 @@ export class PitcherAnimator extends Base {
     P.bodyPitch = lerp(P.bodyPitch, T.pitch, kb);
     P.bodyYaw = P.bodyYaw + angleDiff(P.bodyYaw, T.yaw) * kb;
     P.bodyRoll = lerp(P.bodyRoll, T.roll, kb);
-    P.hop = 0;
+    // (standing on the mound's flat top: the rubber and the whole stride are up on it)
+    P.hop = FIELD.moundH;
     P.squash = this.spring(dt);
     for (let i = 0; i < 2; i++) {
       lerpV(P.feet[i], P.feet[i], T.feet[i], kf);
@@ -1655,7 +1656,7 @@ export class PitcherAnimator extends Base {
     const c = Math.cos(P.yaw),
       s = Math.sin(P.yaw);
     const lx = (c * dx - s * dz) / sc,
-      ly = toss.y / sc,
+      ly = (toss.y - P.hop) / sc,
       lz = (s * dx + c * dz) / sc;
     // fingers up, the pocket facing the throw (towards the catcher: forward)
     this.qDir(T.gloveDir, 0.2, -0.12, 1);
@@ -1792,7 +1793,7 @@ export class PitcherAnimator extends Base {
     P.bodyYaw = lerp(this.snap.yaw, T.yaw, blend);
     P.bodyPitch = lerp(this.snap.pitch, T.pitch, blend);
     P.bodyRoll = lerp(this.snap.roll, T.roll, blend);
-    P.hop = 0;
+    P.hop = FIELD.moundH;
     P.squash = 1;
     const st = this.h > 0 ? 0 : 1;
     tri((k) => k.stride, this.a);
@@ -1856,7 +1857,7 @@ export class PitcherAnimator extends Base {
     // the release point in the pitcher's frame (root units)
     const F = (FIELD.releaseZ - z) / sc;
     const R = FIELD.releaseSide / sc;
-    const U = FIELD.releaseY / sc;
+    const U = (FIELD.releaseY - FIELD.moundH) / sc;
     // the throwing shoulder's offset from the body in this lean
     const o = { yaw: 0, pitch: 0, roll: 0 };
     this.chest(o, k.turn, k.lean, k.tilt);

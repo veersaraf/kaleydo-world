@@ -684,6 +684,11 @@ class PlazaWorld extends World {
     const wallMat = toon('#ffffff', { map: logo, gradient: [190, 235, 255] });
     const wall = (w: number, x: number, z: number, ry: number) => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(w, 1.1, 0.14), wallMat);
+      // the side walls cross the ballpark's fair corners
+      if (x !== 0) {
+        m.userData.noBatch = true;
+        this.notBaseball.push(m);
+      }
       m.position.set(x, 0.55, z);
       m.rotation.y = ry;
       m.castShadow = true;

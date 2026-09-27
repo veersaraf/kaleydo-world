@@ -164,6 +164,9 @@ export abstract class World {
   /** scenery that only belongs to tennis (an umpire's chair, "TENNIS" painted on
    *  the ground): hidden for other sports — mark it noBatch so it can be */
   protected tennisOnly: THREE.Object3D[] = [];
+  /** scenery that stands where the ballpark goes (across its fair corners, say): hidden for baseball —
+   *  mark it noBatch so it can be */
+  protected notBaseball: THREE.Object3D[] = [];
   /** which sport this world is set up for */
   sport: Sport = 'tennis';
   /** the bowling lanes, pins and ball / the duel arena — each built the first time
@@ -701,6 +704,7 @@ export abstract class World {
     if (this.netGroup) this.netGroup.visible = tennis;
     if (this.netMesh) this.netMesh.visible = tennis;
     for (const o of this.tennisOnly) o.visible = tennis;
+    for (const o of this.notBaseball) o.visible = sport !== 'baseball';
     this.fitSun();
   }
 

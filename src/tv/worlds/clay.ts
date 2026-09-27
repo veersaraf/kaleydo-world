@@ -521,6 +521,9 @@ class ClayWorld extends World {
     this.snail.traverse((o) => (o.castShadow = true));
     this.snail.scale.setScalar(1.3);
     s.add(this.snail);
+    // (it crawls through where the ballpark's left-field fence stands)
+    this.snail.userData.noBatch = true;
+    this.notBaseball.push(this.snail);
     this.buildWindmill();
   }
 
