@@ -1353,6 +1353,8 @@ interface StaticSet {
   receive: boolean;
   /** outline width scale; 0 = none */
   outline: number;
+  /** draw order (the floors go first, top layer first, so what they cover is rejected by depth before it's shaded) */
+  order: number;
 }
 
 interface MatOpts {
@@ -2080,9 +2082,9 @@ export class FieldVenue implements FieldVenueLike {
   }
 
   /** Queue static geometry; everything with the same material becomes one mesh. */
-  private add(mat: THREE.Material, geo: THREE.BufferGeometry, o: { cast?: boolean; receive?: boolean; outline?: number } = {}) {
+  private add(mat: THREE.Material, geo: THREE.BufferGeometry, o: { cast?: boolean; receive?: boolean; outline?: number; order?: number } = {}) {
     let s = this.statics.get(mat);
-    if (!s) this.statics.set(mat, (s = { geos: [], cast: !!o.cast, receive: !!o.receive, outline: o.outline ?? 0 }));
+    if (!s) this.statics.set(mat, (s = { geos: [], cast: !!o.cast, receive: !!o.receive, outline: o.outline ?? 0, order: o.order ?? 0 }));
     s.geos.push(geo);
   }
 
@@ -2101,6 +2103,7 @@ export class FieldVenue implements FieldVenueLike {
       m.receiveShadow = shadows && s.receive;
       if (s.outline <= 0) m.userData.noOutline = true;
       else m.userData.outlineScale = s.outline;
+      m.renderOrder = s.order;
       m.matrixAutoUpdate = false;
       m.updateMatrix();
       this.group.add(m);
@@ -2212,7 +2215,7 @@ export class FieldVenue implements FieldVenueLike {
         z = p.getZ(i) - HOME_Z;
       uv.setXY(i, (x * ca - z * sa) / (2 * cell) + 0.25, (x * ca + z * sa) / (2 * cell) + 0.25);
     }
-    this.add(lawn, g, { receive: true });
+    this.add(lawn, g, { receive: true, order: -2 });
   }
 
   /** Dirt: home plate's circle, the mound, the warning track (vertex-coloured, one mesh). */
@@ -2222,11 +2225,11 @@ export class FieldVenue implements FieldVenueLike {
     const dirt = pal.glow ? this.glowMat('#ffffff', 1, { map: tex, vc: true, floor: 2 }) : this.mat('shirt', '#ffffff', { map: tex, vc: true, floor: 2, rim: 0.15 });
     const per = pal.lawnStyle === 'pixel' ? 4 : 2.6;
     const keep = ['position', 'normal', 'uv', 'color'];
-    // home plate's circle, cut off by the backstop
-    const skin = circlePts(0, SKIN.z, SKIN.r, 72).map(([x, z]) => [x, Math.min(z, backstopZ(x) + 0.05)] as [number, number]);
-    this.add(dirt, only(paint(flatPoly(skin, Y.dirt, per), pal.dirt), keep), { receive: true });
+    // home plate's circle, cut off by the backstop, dug in where the batters and the catcher stand
+    this.add(dirt, this.skinGeometry(per), { receive: true, order: -3 });
     // the mound
-    this.add(dirt, only(paint(this.moundGeometry(per), pal.dirt), keep), { receive: true, cast: this.world === 'paper' || this.world === 'pixel' });
+    const mg = this.moundGeometry(per);
+    this.add(dirt, only(mg.attributes.color ? mg : paint(mg, pal.dirt), keep), { receive: true, cast: this.world === 'paper' || this.world === 'pixel' });
     // the warning track: in front of the wall, pole to pole
     const P = this.fence;
     const pos: number[] = [],
@@ -2269,7 +2272,7 @@ export class FieldVenue implements FieldVenueLike {
         }
         return out;
       };
-      for (const g of ring(0, SKIN.z, SKIN.r, 0.05, Y.chalk, (x) => backstopZ(x))) this.add(edge, only(g, ['position', 'normal']));
+      for (const g of ring(0, SKIN.z, SKIN.r, 0.05, Y.chalk, (x) => backstopZ(x))) this.add(edge, only(g, ['position', 'normal']), { order: -4 });
       for (const g of ring(0, FIELD.moundCZ, FIELD.moundR, 0.05, Y.chalk)) this.add(edge, only(g, ['position', 'normal']));
       for (const g of ring(0, FIELD.moundCZ, FIELD.moundTop, 0.04, FIELD.moundH + Y.chalk)) this.add(edge, only(g, ['position', 'normal']));
       // the track's inner edge
@@ -2279,6 +2282,65 @@ export class FieldVenue implements FieldVenueLike {
         this.add(edge, only(stripe(p.x - p.nx * TRACK, p.z - p.nz * TRACK, q.x - q.nx * TRACK, q.z - q.nz * TRACK, 0.05, Y.chalk), ['position', 'normal']));
       }
     }
+  }
+
+  /**
+   * Home plate's dirt: a polar grid, so it can be worn — darker where the
+   * batters dig in, round the plate and where the catcher squats (flat in the
+   * pixel and glowing worlds) — cut off at the backstop.
+   */
+  private skinGeometry(per: number) {
+    const rings = 16,
+      seg = 96;
+    const base = new THREE.Color(this.pal.dirt);
+    const dark = base.clone().multiplyScalar(0.8);
+    const worn = !this.pal.glow && this.world !== 'pixel';
+    const pos: number[] = [],
+      uvs: number[] = [],
+      col: number[] = [],
+      idx: number[] = [];
+    const c = new THREE.Color();
+    const blob = (x: number, z: number, cx: number, cz: number, rx: number, rz: number) => 1 - THREE.MathUtils.smoothstep(Math.hypot((x - cx) / rx, (z - cz) / rz), 0.35, 1);
+    const vert = (x: number, z: number) => {
+      z = Math.min(z, backstopZ(x) + 0.05);
+      pos.push(x, Y.dirt, z);
+      uvs.push(x / per, -z / per);
+      let k = 0;
+      if (worn) {
+        for (const sx of [-1, 1]) k = Math.max(k, blob(x, z, sx * FIELD.boxX, 11.8, 0.62, 0.95));
+        k = Math.max(k, 0.55 * blob(x, z, 0, 11.75, 0.75, 0.6), 0.75 * blob(x, z, 0, FIELD.catcherZ, 0.7, 0.55));
+        // a little unevenness everywhere
+        k += (Math.sin(x * 7.1 + z * 3.3) * Math.sin(z * 5.7 - x * 2.1)) * 0.08;
+      }
+      c.copy(base).lerp(dark, THREE.MathUtils.clamp(k, 0, 1));
+      col.push(c.r, c.g, c.b);
+    };
+    vert(0, SKIN.z);
+    for (let r = 1; r <= rings; r++) {
+      const rad = (r / rings) * SKIN.r;
+      for (let s = 0; s < seg; s++) {
+        const a = (s / seg) * Math.PI * 2;
+        vert(Math.cos(a) * rad, SKIN.z + Math.sin(a) * rad);
+      }
+    }
+    for (let s = 0; s < seg; s++) idx.push(0, 1 + ((s + 1) % seg), 1 + s);
+    for (let r = 1; r < rings; r++)
+      for (let s = 0; s < seg; s++) {
+        const a = 1 + (r - 1) * seg + s,
+          b = 1 + (r - 1) * seg + ((s + 1) % seg);
+        idx.push(a, b, a + seg, b, b + seg, a + seg);
+      }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    if ((g.attributes.normal as THREE.BufferAttribute).getY(0) < 0) {
+      flipWinding(g);
+      g.computeVertexNormals();
+    }
+    return g;
   }
 
   /** The mound: a dome of dirt as field.ts shapes it — stacked card in paper, stepped blocks in pixel. */
@@ -2312,14 +2374,26 @@ export class FieldVenue implements FieldVenueLike {
       parts.forEach((p) => p.dispose());
       return g;
     }
-    // a polar grid, the dome's height from moundY()
+    // a polar grid, the dome's height from moundY(), worn in front of the rubber where the stride lands
     const rings = 14,
       seg = 72;
     const pos: number[] = [],
       uvs: number[] = [],
+      col: number[] = [],
       idx: number[] = [];
+    const base = new THREE.Color(this.pal.dirt);
+    const dark = base.clone().multiplyScalar(0.8);
+    const worn = !this.pal.glow;
+    const c = new THREE.Color();
+    const blob = (x: number, z: number, bx: number, bz: number, rx: number, rz: number) => 1 - THREE.MathUtils.smoothstep(Math.hypot((x - bx) / rx, (z - bz) / rz), 0.3, 1);
+    const tint = (x: number, z: number) => {
+      const k = worn ? Math.max(0.85 * blob(x, z, 0, FIELD.moundZ + 1.15, 0.5, 0.62), 0.6 * blob(x, z, 0, FIELD.moundZ, 0.62, 0.34)) + Math.sin(x * 6.3 + z * 4.1) * Math.sin(z * 5.1 - x * 3.7) * 0.07 : 0;
+      c.copy(base).lerp(dark, THREE.MathUtils.clamp(k, 0, 1));
+      col.push(c.r, c.g, c.b);
+    };
     pos.push(0, FIELD.moundH + Y.dirt, cz);
     uvs.push(0, -cz / per);
+    tint(0, cz);
     for (let r = 1; r <= rings; r++) {
       // rings bunched on the slope, where the shape is
       const u = r / rings;
@@ -2330,6 +2404,7 @@ export class FieldVenue implements FieldVenueLike {
           z = cz + Math.sin(a) * rad;
         pos.push(x, moundY(x, z) + Y.dirt, z);
         uvs.push(x / per, -z / per);
+        tint(x, z);
       }
     }
     for (let s = 0; s < seg; s++) idx.push(0, 1 + ((s + 1) % seg), 1 + s);
@@ -2344,6 +2419,7 @@ export class FieldVenue implements FieldVenueLike {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
     g.setIndex(idx);
     g.computeVertexNormals();
     if ((g.attributes.normal as THREE.BufferAttribute).getY(0) < 0) {
@@ -2359,7 +2435,7 @@ export class FieldVenue implements FieldVenueLike {
     const chalk = pal.glow ? this.glowMat('#ffffff', 1.7, { vc: true, floor: 3 }) : this.mat('shirt', '#ffffff', { vc: true, floor: 3, rim: 0.2 });
     const keep = ['position', 'normal', 'color'];
     const lineCol = pal.chalk;
-    const put = (g: THREE.BufferGeometry, css: string, cast = false) => this.add(chalk, only(paint(g, css), keep), { receive: true, cast });
+    const put = (g: THREE.BufferGeometry, css: string, cast = false) => this.add(chalk, only(paint(g, css), keep), { receive: true, cast, order: -4 });
     const w = LINE_W;
     const y = Y.chalk;
     // the foul lines: from the batter's box to the wall, then up it
@@ -2553,7 +2629,8 @@ export class FieldVenue implements FieldVenueLike {
     const at = this.atlas;
     const cw = at.canvas.width,
       ch = at.canvas.height;
-    const u = (s: number) => (at.back.x + (s / len) * at.back.w) / cw;
+    // (seen from the field, looking at home, +x is on the left: the lettering runs from +x to −x)
+    const u = (s: number) => (at.back.x + (1 - s / len) * at.back.w) / cw;
     const vTop = 1 - at.back.y / ch,
       vBot = 1 - (at.back.y + at.back.h) / ch;
     this.add(art, band(pts, 0, B.h, 0, -1, (i, t) => [u(pts[i].s), t ? vTop : vBot]), { cast: true, outline: 0 });

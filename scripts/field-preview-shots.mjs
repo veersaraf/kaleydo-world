@@ -93,7 +93,7 @@ if (args[1] === '--url') {
   const names = !args[2] || args[2] === 'all' ? Object.keys(SHOTS) : args[2].split(',');
   const extra = process.env.Q ? `&${process.env.Q}` : '';
   for (const w of worlds) {
-    await open(`world=${w}&still=1&pr=1${extra}`);
+    await open(`world=${w}&still=1&pr=${process.env.PR || 1}${extra}`);
     for (const n of names) {
       const s = SHOTS[n];
       if (!s) {
@@ -130,11 +130,11 @@ if (args[1] === '--url') {
         ['wide', 'bomb', 'land', 1.2],
       ]) {
         const r = await gp.evaluate(
-          async ([cam, pitch, moment, off]) => {
+          async ([cam, pitch, moment, off, frames]) => {
             window.field.seek(window.field.at(pitch, moment, off), cam);
-            return window.field.gpu(Number(400), cam);
+            return window.field.gpu(frames, cam);
           },
-          [cam, pitch, moment, off],
+          [cam, pitch, moment, off, Number(process.env.FRAMES || 600)],
         );
         console.log(w, `${cam}@${pitch}.${moment}`, JSON.stringify(r));
       }

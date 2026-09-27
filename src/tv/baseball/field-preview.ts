@@ -545,25 +545,27 @@ async function gpu(frames = 400, camera?: string) {
   const ext = gl.getExtension('EXT_disjoint_timer_query_webgl2');
   if (!ext) return null;
   benching = true;
-  const res = { on: [] as number[], off: [] as number[] };
-  const pending: { q: WebGLQuery; on: boolean }[] = [];
+  // each frame's time, by frame; frames 2k and 2k+1 are a pair (one on, one off, in alternating order)
+  const ms: (number | null)[] = new Array(frames).fill(null);
+  const ons: boolean[] = [];
+  const pending: { q: WebGLQuery; i: number }[] = [];
   const collect = () => {
     while (pending.length && gl.getQueryParameter(pending[0].q, gl.QUERY_RESULT_AVAILABLE)) {
       const p = pending.shift()!;
-      if (!gl.getParameter(ext.GPU_DISJOINT_EXT)) (p.on ? res.on : res.off).push(gl.getQueryParameter(p.q, gl.QUERY_RESULT) / 1e6);
+      if (!gl.getParameter(ext.GPU_DISJOINT_EXT)) ms[p.i] = gl.getQueryParameter(p.q, gl.QUERY_RESULT) / 1e6;
       gl.deleteQuery(p.q);
     }
   };
   for (let i = 0; i < frames; i++) {
-    // pairs in alternating order (on, off, off, on, …) so neither always goes first
-    const on = (i & 1) === ((i >> 1) & 1) ? true : false;
+    const on = (i & 1) === ((i >> 1) & 1);
+    ons.push(on);
     venue.group.visible = on;
     const qq = gl.createQuery()!;
     gl.beginQuery(ext.TIME_ELAPSED_EXT, qq);
     placeCam();
     w.render(cam, null);
     gl.endQuery(ext.TIME_ELAPSED_EXT);
-    pending.push({ q: qq, on });
+    pending.push({ q: qq, i });
     await new Promise((r) => requestAnimationFrame(r));
     collect();
   }
@@ -573,14 +575,29 @@ async function gpu(frames = 400, camera?: string) {
   }
   venue.group.visible = true;
   benching = false;
-  const pct = (a: number[], p: number) => {
-    const s = [...a].sort((x, y) => x - y);
-    return +s[Math.min(s.length - 1, Math.floor(p * s.length))].toFixed(3);
+  const sorted = (a: number[]) => [...a].sort((x, y) => x - y);
+  const pct = (a: number[], p: number) => +sorted(a)[Math.min(a.length - 1, Math.floor(p * a.length))].toFixed(3);
+  const on: number[] = [],
+    off: number[] = [],
+    diff: number[] = [];
+  for (let i = 0; i + 1 < frames; i += 2) {
+    const a = ms[i],
+      b = ms[i + 1];
+    if (a === null || b === null) continue;
+    (ons[i] ? on : off).push(a);
+    (ons[i + 1] ? on : off).push(b);
+    diff.push(ons[i] ? a - b : b - a);
+  }
+  // the middle half of the paired differences (contention hits both frames of a pair alike, mostly)
+  const d = sorted(diff);
+  const mid = d.slice(Math.floor(d.length * 0.25), Math.ceil(d.length * 0.75));
+  const trimmed = mid.reduce((s, x) => s + x, 0) / Math.max(1, mid.length);
+  return {
+    on: { p10: pct(on, 0.1), p50: pct(on, 0.5) },
+    off: { p10: pct(off, 0.1), p50: pct(off, 0.5) },
+    pairs: diff.length,
+    delta: { median: pct(diff, 0.5), trimmedMean: +trimmed.toFixed(3), p10: +(pct(on, 0.1) - pct(off, 0.1)).toFixed(3) },
   };
-  const summary = (a: number[]) => ({ n: a.length, p10: pct(a, 0.1), p50: pct(a, 0.5) });
-  const on = summary(res.on),
-    off = summary(res.off);
-  return { on, off, delta: { p10: +(on.p10 - off.p10).toFixed(3), p50: +(on.p50 - off.p50).toFixed(3) } };
 }
 
 /** seek() and hand back the frame as a PNG data url (read in the same task as the draw) */
