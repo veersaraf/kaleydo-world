@@ -128,6 +128,9 @@ export interface CloudOpts {
   seed?: number;
   /** keep clear of this sector (angle range, radians): e.g. behind the main camera */
   avoid?: [number, number];
+  /** the painted bellies' and tops' colours ('r,g,b' 0–255): a cool grey under white by default */
+  shade?: string;
+  lit?: string;
 }
 
 export class Clouds {
@@ -138,7 +141,7 @@ export class Clouds {
 
   constructor(o: CloudOpts) {
     const rand = mulberry(o.seed ?? 5);
-    this.u.tAtlas.value = cloudAtlas(o.seed ?? 5, '198,211,230', '255,255,255');
+    this.u.tAtlas.value = cloudAtlas(o.seed ?? 5, o.shade ?? '198,211,230', o.lit ?? '255,255,255');
     this.u.uHaze.value.copy(o.haze);
     const quad = new THREE.PlaneGeometry(1, 1).translate(0, 0.5, 0);
     const geo = new THREE.InstancedBufferGeometry();
