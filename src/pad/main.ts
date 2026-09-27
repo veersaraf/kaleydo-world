@@ -9,7 +9,11 @@ import { BowlDetector, swipeThrow, MIN_SPEED, MAX_SPEED, type BowlThrow, type Sw
 import { SwordDetector, swipeStrike, guardLine, type GuardLine, type SwordStrike } from './sword';
 import { Orientation, qrot, type Vec3 } from './orient';
 import { PadAudio } from './audio';
-import type { Handed, PadButton, PadFx, PadMode, PadMsg, ServerToPad } from '../shared/protocol';
+import type { Handed, LookPrefs, PadButton, PadFx, PadMode, PadMsg, ServerToPad } from '../shared/protocol';
+import { HAIRS, HAIR_NAMES, EYES, SKIN_TONES, HAIR_TONES } from '../shared/protocol';
+import { hashStr } from '../shared/hash';
+import { playerLook } from '../tv/chars/look';
+import { avatarSvg } from './avatar';
 import { PLAYER_COLORS } from '../shared/protocol';
 
 // ------------------------------------------------------------------ prefs
@@ -58,10 +62,20 @@ const pid = choosePid();
 setInterval(() => store.set('lock.' + pid, String(Date.now())), 1000);
 store.set('lock.' + pid, String(Date.now()));
 
+function loadLook(): LookPrefs | null {
+  try {
+    const v = JSON.parse(store.get('look', 'null'));
+    return v && typeof v.hair === 'string' && typeof v.skin === 'string' ? v : null;
+  } catch {
+    return null;
+  }
+}
 const prefs = {
   name: store.get('name', ''),
   handed: (store.get('handed', 'R') as Handed) || 'R',
   sens: Number(store.get('sens', '1')) || 1,
+  /** the character you made (null = the one the TV picks for this phone) */
+  look: loadLook(),
 };
 
 // ------------------------------------------------------------------ dom
@@ -98,12 +112,14 @@ const handL = h('button', { class: 'seg-btn', 'data-h': 'L' }, 'Left hand');
 const handR = h('button', { class: 'seg-btn', 'data-h': 'R' }, 'Right hand');
 const joinBtn = h('button', { class: 'join-btn' }, h('span', {}, 'Join game'));
 const joinNote = h('p', { class: 'join-note' }, 'Hold your phone like a racket handle. Swing to hit.');
+// your character: tap to change it
+const joinFace = h('button', { class: 'face-btn', 'aria-label': 'Change your character' }, h('i', { class: 'face' }), h('span', {}, 'Edit'));
 const joinScreen = h(
   'section',
   { class: 'join' },
   h('div', { class: 'logo', 'aria-label': 'KALEIDO' }, ...'KALEIDO'.split('').map((ch, i) => h('span', { style: `--i:${i}` }, ch))),
   h('div', { class: 'tagline' }, 'Your phone is the remote'),
-  h('div', { class: 'card' }, nameInput, h('div', { class: 'seg' }, handL, handR), joinBtn, joinNote),
+  h('div', { class: 'card' }, joinFace, nameInput, h('div', { class: 'seg' }, handL, handR), joinBtn, joinNote),
   h(
     'details',
     { class: 'cert' },
@@ -408,6 +424,26 @@ const setL = h('button', { class: 'seg-btn', 'data-h': 'L' }, 'Left hand');
 const setR = h('button', { class: 'seg-btn', 'data-h': 'R' }, 'Right hand');
 const sheetClose = h('button', { class: 'join-btn small' }, h('span', {}, 'Done'));
 const motionState = h('p', { class: 'join-note' }, '');
+// the character editor: a face that shows every change, and the pieces
+const faceBig = h('i', { class: 'face big' });
+const cycleRow = (label: string) => {
+  const v = h('b', {});
+  const prev = h('button', { class: 'cyc', 'aria-label': `Previous ${label}` }, '◀');
+  const next = h('button', { class: 'cyc', 'aria-label': `Next ${label}` }, '▶');
+  return { row: h('div', { class: 'look-row' }, h('span', { class: 'label' }, label), h('div', { class: 'cycle' }, prev, v, next)), v, prev, next };
+};
+const swatchRow = (label: string, colors: readonly string[], key: 'hairColor' | 'skin') => {
+  const btns = colors.map((c) => h('button', { class: 'sw', style: `--c:${c}`, 'data-c': c, 'aria-label': `${label} ${c}` }));
+  for (const b of btns) b.addEventListener('click', () => editLook({ [key]: b.dataset.c! }));
+  return { row: h('div', { class: 'look-row' }, h('span', { class: 'label' }, label), h('div', { class: 'swatches' }, ...btns)), btns };
+};
+const hairRow = cycleRow('Hair');
+const hairColRow = swatchRow('Hair colour', HAIR_TONES, 'hairColor');
+const skinRow = swatchRow('Skin', SKIN_TONES, 'skin');
+const eyesRow = cycleRow('Eyes');
+const surprise = h('button', { class: 'seg-btn surprise' }, 'Surprise me');
+const EYE_NAMES: Record<string, string> = { oval: 'Round', dot: 'Dots', tall: 'Tall', wide: 'Wide', sleepy: 'Sleepy' };
+const lookCard = h('div', { class: 'look' }, faceBig, h('div', { class: 'look-rows' }, hairRow.row, hairColRow.row, skinRow.row, eyesRow.row, surprise));
 const recenterBtn = h('button', { class: 'join-btn small recenter' }, h('span', {}, 'Recenter aim'));
 const recenterNote = h('p', { class: 'join-note' }, 'Point the top of your phone at the screen, then tap.');
 const sheet = h(
@@ -419,6 +455,8 @@ const sheet = h(
     h('h2', {}, 'Remote settings'),
     setName,
     h('div', { class: 'seg' }, setL, setR),
+    h('div', { class: 'label' }, 'Your character'),
+    lookCard,
     h('div', { class: 'label' }, 'Swing sensitivity'),
     h('div', { class: 'seg three' }, ...sensBtns),
     recenterBtn,
@@ -464,10 +502,49 @@ let touchGuard: 'vertical' | 'horizontal' = store.get('guard') === 'horizontal' 
  *  a thumb sliding off the grip or the guard, a hand flailing after a blow */
 let lockUntil = 0;
 
+let myColor = '#8a7dff';
 function setColor(c: string) {
+  myColor = c;
   root.style.setProperty('--pc', c);
   document.querySelector('meta[name=theme-color]')?.setAttribute('content', c);
+  drawFaces();
 }
+
+/** Your character as the TV will build it: the look you made, or this phone's default. */
+function faceLook() {
+  const d = playerLook(myColor, hashStr(pid));
+  const L = prefs.look;
+  return { skin: L?.skin ?? d.skin, hair: L?.hair ?? d.hair, hairColor: L?.hairColor ?? d.hairColor, eyes: L?.eyes ?? d.eyes, shirt: myColor };
+}
+
+function drawFaces() {
+  const f = faceLook();
+  for (const el of document.querySelectorAll('.face')) el.replaceChildren(avatarSvg(f));
+  hairRow.v.textContent = HAIR_NAMES[f.hair] ?? f.hair;
+  eyesRow.v.textContent = EYE_NAMES[f.eyes] ?? f.eyes;
+  for (const b of hairColRow.btns) b.classList.toggle('on', b.dataset.c === f.hairColor);
+  for (const b of skinRow.btns) b.classList.toggle('on', b.dataset.c === f.skin);
+}
+
+/** Change a piece of your character: saved on the phone and sent to the TV (it shows from the next game). */
+function editLook(change: Partial<LookPrefs>) {
+  const f = faceLook();
+  prefs.look = { hair: f.hair, hairColor: f.hairColor, skin: f.skin, eyes: f.eyes, ...change };
+  store.set('look', JSON.stringify(prefs.look));
+  drawFaces();
+  sendPrefs();
+  audio.tick();
+}
+
+const cycle = (list: readonly string[], cur: string, d: number) => list[(Math.max(0, list.indexOf(cur)) + d + list.length) % list.length];
+hairRow.prev.addEventListener('click', () => editLook({ hair: cycle(HAIRS, faceLook().hair, -1) }));
+hairRow.next.addEventListener('click', () => editLook({ hair: cycle(HAIRS, faceLook().hair, 1) }));
+eyesRow.prev.addEventListener('click', () => editLook({ eyes: cycle(EYES, faceLook().eyes, -1) }));
+eyesRow.next.addEventListener('click', () => editLook({ eyes: cycle(EYES, faceLook().eyes, 1) }));
+surprise.addEventListener('click', () => {
+  const pick = <T,>(a: readonly T[]) => a[Math.floor(Math.random() * a.length)];
+  editLook({ hair: pick(HAIRS.filter((x) => x !== 'none')), hairColor: pick(HAIR_TONES), skin: pick(SKIN_TONES), eyes: pick(EYES) });
+});
 setColor('#8a7dff');
 
 function syncHandButtons() {
@@ -500,7 +577,7 @@ for (const b of sensBtns) {
 }
 
 function sendPrefs() {
-  if (joined) link.send({ type: 'prefs', name: prefs.name || 'Player', handed: prefs.handed });
+  if (joined) link.send({ type: 'prefs', name: prefs.name || 'Player', handed: prefs.handed, ...(prefs.look ? { look: prefs.look } : {}) });
 }
 
 let toastTimer = 0;
@@ -605,7 +682,7 @@ function setStatus(s: LinkStatus) {
   if (s === 'offline' || s === 'connecting') {
     if (slot < 0) setMode('wait', s === 'connecting' ? 'Connecting…' : 'Disconnected', 'Make sure KALEIDO is running on your Mac');
   } else if (joined) {
-    link.send({ type: 'hello', name: prefs.name || 'Player', handed: prefs.handed, ver: 1, motion: motionOK });
+    link.send({ type: 'hello', name: prefs.name || 'Player', handed: prefs.handed, ver: 1, motion: motionOK, ...(prefs.look ? { look: prefs.look } : {}) });
   }
 }
 
@@ -857,6 +934,7 @@ skipBtn.addEventListener('pointerdown', (e) => {
   link.send({ type: 'btn', b: 'a', down: false });
 });
 
+joinFace.addEventListener('click', () => gearBtn.click());
 gearBtn.addEventListener('click', () => {
   setName.value = prefs.name;
   motionState.textContent = motionOK
@@ -1559,7 +1637,7 @@ joinBtn.addEventListener('click', () => {
     if (!ok) showToast(window.isSecureContext ? 'No motion sensor: swipe to swing' : 'Motion needs https', 2200);
     setMode(mode);
     if (link.status === 'online') {
-      link.send({ type: 'hello', name: prefs.name || 'Player', handed: prefs.handed, ver: 1, motion: motionOK });
+      link.send({ type: 'hello', name: prefs.name || 'Player', handed: prefs.handed, ver: 1, motion: motionOK, ...(prefs.look ? { look: prefs.look } : {}) });
     }
     cancelAnimationFrame(liveRaf);
     liveLoop();

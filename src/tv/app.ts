@@ -27,6 +27,7 @@ import { ArcheryGear } from './archery/bow';
 import { RANGE } from './archery/range';
 import type { Archer, ArcheryEvent, ArcherState } from './archery/types';
 import type { World } from './worlds/base';
+import { hashStr } from '../shared/hash';
 import { CHAR_SCALE } from './chars/rig';
 import { newPose, copyPose } from './chars/pose';
 import { WORLDS } from './worlds';
@@ -886,11 +887,4 @@ interface RecFrame {
   events: MatchEvent[];
 }
 
-export function hashStr(s: string) {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
+export { hashStr };
