@@ -1,6 +1,18 @@
 // BIT KINGDOM — an 8-bit castle court. The world is rendered at a low
-// resolution, snapped to a 16-colour palette with ordered dithering and given
-// crisp one-pixel outlines, then scaled up with hard square pixels.
+// resolution (270 rows), snapped to a 16-colour palette with ordered
+// dithering and given crisp one-pixel outlines, then scaled up with hard
+// square pixels.
+//
+// Round it, a 16-bit game's parallax: a dithered sky with the sun behind the
+// players, snow-capped mountains with waterfalls, green hills, a rainbow over
+// the castle, clouds drifting in sprite steps, waterfalls pouring from the
+// castle walls into its moat, flags and ?-blocks, birds, and a village with a
+// windmill behind the players (pixel-env/). Everything moves in shaders.
+//
+// The palette pass runs once per low-resolution pixel (not once per screen
+// pixel); a second pass scales the result up, optionally through a CRT
+// (?crt in the URL): curved glass, scanlines and phosphor glow — all in the
+// palette's own colours.
 
 import * as THREE from 'three';
 import { World, type WorldDef, type FrameView } from './base';
@@ -10,12 +22,24 @@ import { Crowd, type Stand } from './crowd';
 import { Pass, makeRT } from '../render/post';
 import { COLOR } from '../render/glsl';
 import type { MatchEvent } from '../tennis/match';
+import { pixelSky, land, rainbow, PixelClouds } from './pixel-env/backdrop';
+import { water, flags, questionBlocks, village } from './pixel-env/props';
+import { Birds } from './park-env/props';
 
 // PICO-8 palette
 const PAL = ['#000000', '#1d2b53', '#7e2553', '#008751', '#ab5236', '#5f574f', '#c2c3c7', '#fff1e8', '#ff004d', '#ffa300', '#ffec27', '#00e436', '#29adff', '#83769c', '#ff77a8', '#ffccaa'];
+/** each colour's darker neighbour in the palette (the CRT's scanlines) */
+const DARK = [0, 0, 1, 1, 2, 0, 13, 6, 2, 4, 9, 3, 1, 5, 2, 4];
 
-const PIXEL_FRAG = /* glsl */ `
-uniform sampler2D tScene; uniform sampler2D tDepth; uniform vec2 uLow; uniform vec3 uPal[16]; uniform float uNear; uniform float uFar; uniform float uFlash;
+/** the sun, behind the players' end: the castle is lit from the front, the rainbow stands opposite */
+const SUN = new THREE.Vector3(-0.35, 0.5, 0.8).normalize();
+
+/** The CRT, off unless asked for (?crt): curvature and scanlines cost a little readability. */
+const CRT = typeof location !== 'undefined' && new URLSearchParams(location.search).has('crt');
+
+/** At low resolution: the scene snapped to the palette (with its index in alpha), one-pixel outlines. */
+const QUANT_FRAG = /* glsl */ `
+uniform sampler2D tScene; uniform sampler2D tDepth; uniform vec3 uPal[16]; uniform float uNear; uniform float uFar; uniform float uFlash;
 varying vec2 vUv;
 ${COLOR}
 float bayer(vec2 p) {
@@ -24,25 +48,64 @@ float bayer(vec2 p) {
   float m[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
   return m[idx] / 16.0 - 0.47;
 }
-float lin(vec2 uv) { float d = texture2D(tDepth, uv).x; float z = d * 2.0 - 1.0; return (2.0 * uNear * uFar) / (uFar + uNear - z * (uFar - uNear)); }
+float lin(ivec2 p) {
+  p = clamp(p, ivec2(0), textureSize(tDepth, 0) - 1);
+  float z = texelFetch(tDepth, p, 0).x * 2.0 - 1.0;
+  return (2.0 * uNear * uFar) / (uFar + uNear - z * (uFar - uNear));
+}
 void main() {
-  vec2 cell = floor(vUv * uLow);
-  vec2 uv = (cell + 0.5) / uLow;
-  vec3 c = toSRGB(texture2D(tScene, uv).rgb);
+  ivec2 ip = ivec2(gl_FragCoord.xy);
+  vec3 c = toSRGB(texelFetch(tScene, ip, 0).rgb);
   c = mix(c, vec3(1.0), uFlash);
-  c += bayer(cell) * 0.085;
-  float best = 1e9; vec3 outc = uPal[0];
+  c += bayer(gl_FragCoord.xy - 0.5) * 0.085;
+  float best = 1e9; int bi = 0;
   for (int i = 0; i < 16; i++) {
     vec3 d = c - uPal[i];
     float e = dot(d * vec3(0.3, 0.59, 0.11), d) + dot(d, d) * 0.25;
-    if (e < best) { best = e; outc = uPal[i]; }
+    if (e < best) { best = e; bi = i; }
   }
-  // one-pixel outlines where depth jumps
-  vec2 px = 1.0 / uLow;
-  float d0 = lin(uv);
-  float dmax = max(max(lin(uv + vec2(px.x, 0.0)), lin(uv - vec2(px.x, 0.0))), max(lin(uv + vec2(0.0, px.y)), lin(uv - vec2(0.0, px.y))));
-  if ((dmax - d0) / d0 > 0.08 && d0 < 90.0) outc = uPal[1] * 0.6;
-  gl_FragColor = vec4(outc, 1.0);
+  // one-pixel outlines where depth jumps (navy, darkened: the palette's darkest blue-black)
+  float d0 = lin(ip);
+  float dmax = max(max(lin(ip + ivec2(1, 0)), lin(ip - ivec2(1, 0))), max(lin(ip + ivec2(0, 1)), lin(ip - ivec2(0, 1))));
+  vec3 outc = uPal[bi];
+  if ((dmax - d0) / d0 > 0.08 && d0 < 90.0) { outc = uPal[1] * 0.6; bi = 0; }
+  gl_FragColor = vec4(outc, float(bi) / 15.0);
+}`;
+
+/** At screen resolution: hard square pixels, or a CRT's glass, scanlines and glow (in the palette). */
+const SHOW_FRAG = /* glsl */ `
+uniform sampler2D tLow; uniform vec3 uPal[16]; uniform int uDark[16]; uniform float uCrt; uniform vec2 uLow; uniform vec2 uRes;
+varying vec2 vUv;
+int idx(vec4 q) { return int(q.a * 15.0 + 0.5); }
+// the curved glass: a gentle barrel (−1..1 across the view)
+vec2 barrel(vec2 uv) { vec2 p = uv * 2.0 - 1.0; return p * (1.0 + dot(p, p) * vec2(0.022, 0.03)); }
+// which low-res pixel a screen point shows
+vec2 cellAt(vec2 uv) { return floor((barrel(uv) * 0.5 + 0.5) * uLow); }
+void main() {
+  if (uCrt < 0.5) { gl_FragColor = vec4(texture2D(tLow, vUv).rgb, 1.0); return; }
+  vec2 p = barrel(vUv);
+  // black beyond the tube's rounded corners
+  vec2 corner = max(abs(p) - 0.94, 0.0);
+  if (any(greaterThan(abs(p), vec2(1.0))) || length(corner) > 0.05) { gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
+  vec2 cell = cellAt(vUv);
+  ivec2 ip = clamp(ivec2(cell), ivec2(0), ivec2(uLow) - 1);
+  vec4 q = texelFetch(tLow, ip, 0);
+  int i = idx(q);
+  vec3 col = q.rgb;
+  // where this screen pixel sits in its low-res pixel, from its neighbours' cells (exact
+  // one-pixel lines along the curve: testing a fraction would alias into moiré rings)
+  vec2 px = 1.0 / uRes;
+  bool lastRow = cellAt(vUv - vec2(0.0, px.y)).y != cell.y;
+  bool firstCol = cellAt(vUv - vec2(px.x, 0.0)).x != cell.x;
+  bool lastCol = cellAt(vUv + vec2(px.x, 0.0)).x != cell.x;
+  // phosphor glow: a brighter neighbour bleeds into this pixel's edge in its darker shade
+  if (firstCol || lastCol) {
+    vec4 qn = texelFetch(tLow, clamp(ip + ivec2(firstCol ? -1 : 1, 0), ivec2(0), ivec2(uLow) - 1), 0);
+    if (dot(qn.rgb, vec3(0.3, 0.59, 0.11)) > dot(col, vec3(0.3, 0.59, 0.11)) + 0.35) col = uPal[uDark[idx(qn)]];
+  }
+  // scanlines: the bottom screen row of every pixel row, one shade down
+  if (lastRow) col = uPal[uDark[i]];
+  gl_FragColor = vec4(col, 1.0);
 }`;
 
 function boxGeo(w: number, h: number, d: number) {
@@ -64,11 +127,15 @@ class PixelWorld extends World {
     shadowOpacity: 0.6,
   };
 
+  /** the CRT look (see SHOW_FRAG) */
+  crt = CRT;
+  private u = { uTime: { value: 0 } };
   private low!: THREE.WebGLRenderTarget;
-  private pix!: Pass;
-  private blocks: THREE.Object3D[] = [];
-  private clouds: THREE.Object3D[] = [];
-  private flags: THREE.Mesh[] = [];
+  private lowQ!: THREE.WebGLRenderTarget;
+  private quant!: Pass;
+  private show!: Pass;
+  private clouds!: PixelClouds;
+  private birds!: Birds;
 
   protected samples() {
     return 0;
@@ -76,19 +143,19 @@ class PixelWorld extends World {
 
   protected build() {
     const s = this.scene;
-    s.background = new THREE.Color('#29adff');
-    s.fog = new THREE.Fog('#83c8ff', 80, 320);
+    // the fields fade into the green of the hills (the sky's blue would draw a false river at their foot)
+    s.fog = new THREE.Fog('#2fb85a', 90, 260);
     s.add(new THREE.HemisphereLight('#ffffff', '#3d6b2a', 2.2));
     const sun = new THREE.DirectionalLight('#fff4d8', 1.8);
-    sun.position.set(-12, 25, 10);
+    sun.position.copy(SUN).multiplyScalar(30);
     s.add(sun);
 
     const M = (c: string) => new THREE.MeshLambertMaterial({ color: c, flatShading: true });
     const grassTop = M('#00e436');
-    const dirt = M('#ab5236');
     const stone = M('#c2c3c7');
     const darkStone = M('#5f574f');
-    const water = M('#29adff');
+
+    this.buildBackdrop();
 
     // blocky ground: a checker of grass blocks
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(700, 700), M('#00b43a'));
@@ -142,6 +209,7 @@ class PixelWorld extends World {
     const gate = new THREE.Mesh(boxGeo(6, 7, 4.2), darkStone);
     gate.position.set(0, 3.5, 0.1);
     castle.add(gate);
+    const flagAt: THREE.Matrix4[] = [];
     const tower = (x: number, h: number) => {
       const t = new THREE.Mesh(boxGeo(7, h, 7), stone);
       t.position.set(x, h / 2, 0);
@@ -164,13 +232,7 @@ class PixelWorld extends World {
       roof.position.set(x, h + 5, 0);
       roof.rotation.y = Math.PI / 4;
       castle.add(roof);
-      const fg = new THREE.PlaneGeometry(2.6, 1.6, 6, 2);
-      fg.translate(1.3, 0, 0);
-      fg.userData.base = Float32Array.from(fg.attributes.position.array as Float32Array);
-      const flag = new THREE.Mesh(fg, new THREE.MeshLambertMaterial({ color: '#ffec27', side: THREE.DoubleSide }));
-      flag.position.set(x, h + 10, 0);
-      castle.add(flag);
-      this.flags.push(flag);
+      flagAt.push(new THREE.Matrix4().makeTranslation(x, h + 10, 0));
       const pole = new THREE.Mesh(boxGeo(0.25, 3, 0.25), darkStone);
       pole.position.set(x, h + 9, 0);
       castle.add(pole);
@@ -191,14 +253,17 @@ class PixelWorld extends World {
     keepRoof.position.set(0, 31, -8);
     keepRoof.rotation.y = Math.PI / 4;
     castle.add(keepRoof);
+    // the towers' flags, and a banner on the keep
+    flagAt.push(new THREE.Matrix4().makeTranslation(0, 39, -8));
+    castle.add(flags(this.u, flagAt, '#ffec27'));
+    const keepPole = new THREE.Mesh(boxGeo(0.25, 4, 0.25), darkStone);
+    keepPole.position.set(0, 37.5, -8);
+    castle.add(keepPole);
     castle.position.set(0, 0, -78);
     castle.scale.setScalar(0.85);
     s.add(castle);
-    // moat
-    const moat = new THREE.Mesh(new THREE.PlaneGeometry(60, 6), water);
-    moat.rotation.x = -Math.PI / 2;
-    moat.position.set(0, 0.02, -72);
-    s.add(moat);
+    // the moat, fed by waterfalls from the walls (the rest of the world's water is in the backdrop)
+    s.add(water(this.u));
 
     // voxel trees
     const trunk = M('#ab5236');
@@ -225,33 +290,23 @@ class PixelWorld extends World {
       const z = -80 + Math.random() * 95;
       tree(Math.round(x), Math.round(z), 3 + Math.floor(Math.random() * 4));
     }
+    // round the village behind the players
+    for (const [x, z] of [
+      [-52, 30],
+      [-26, 70],
+      [4, 76],
+      [30, 66],
+      [52, 44],
+      [-14, 36],
+      [38, 28],
+    ])
+      tree(x, z, 3 + Math.floor(Math.random() * 4));
 
-    // floating crystal blocks
-    const crystal = M('#ffa300');
-    for (let i = 0; i < 7; i++) {
-      const b = new THREE.Mesh(boxGeo(1.6, 1.6, 1.6), crystal);
-      const face = new THREE.Mesh(boxGeo(0.5, 0.9, 1.7), flat('#fff1e8'));
-      b.add(face);
-      b.position.set(-18 + i * 6, 12 + (i % 2) * 2, -26);
-      b.userData.phase = i;
-      s.add(b);
-      this.blocks.push(b);
-    }
+    // floating ?-blocks
+    s.add(questionBlocks(this.u, Array.from({ length: 7 }, (_, i) => new THREE.Vector3(-18 + i * 6, 12 + (i % 2) * 2, -26))));
 
-    // blocky clouds
-    const cloudMat = flat('#fff1e8');
-    for (let i = 0; i < 16; i++) {
-      const c = new THREE.Group();
-      const w = 3 + Math.floor(Math.random() * 4);
-      for (let k = 0; k < w; k++) {
-        const b = new THREE.Mesh(boxGeo(4, 2 + (k % 2) * 2, 4), cloudMat);
-        b.position.set(k * 4 - w * 2, (k % 2) * 1, 0);
-        c.add(b);
-      }
-      c.position.set(-200 + Math.random() * 400, 40 + Math.random() * 40, -100 - Math.random() * 150);
-      s.add(c);
-      this.clouds.push(c);
-    }
+    // the village
+    s.add(...village(this.u));
 
     // stone stands with a blocky crowd
     const stands: Stand[] = [];
@@ -268,8 +323,9 @@ class PixelWorld extends World {
       s.add(g);
       stands.push({ x: cx, z: cz, facing, width: width - 0.6, rows, rowRise: 0.6, rowDepth: 1, y0: 0.6 });
     };
-    mk(-10.5, 0, -Math.PI / 2, 22, 6);
-    mk(10.5, 0, Math.PI / 2, 22, 6);
+    // (four rows at the sides: the courtside attract shot looks over the back row)
+    mk(-10.5, 0, -Math.PI / 2, 22, 4);
+    mk(10.5, 0, Math.PI / 2, 22, 4);
     mk(0, -19.5, Math.PI, 16, 5);
     this.addCrowd(
       new Crowd({
@@ -284,20 +340,60 @@ class PixelWorld extends World {
     );
 
     this.low = makeRT(320, 180, { depth: true, filter: THREE.NearestFilter });
-    this.pix = new Pass(PIXEL_FRAG, {
+    this.lowQ = makeRT(320, 180, { type: THREE.UnsignedByteType, filter: THREE.NearestFilter });
+    // palette in sRGB space (the shader compares sRGB values)
+    const pal = PAL.map((hex) => {
+      const n = parseInt(hex.slice(1), 16);
+      return new THREE.Vector3(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
+    });
+    this.quant = new Pass(QUANT_FRAG, {
       tScene: { value: null },
       tDepth: { value: null },
-      uLow: { value: new THREE.Vector2(320, 180) },
-      uPal: { value: [] as THREE.Vector3[] },
+      uPal: { value: pal },
       uNear: { value: 0.1 },
       uFar: { value: 1200 },
       uFlash: { value: 0 },
     });
-    // palette in sRGB space (the shader compares sRGB values)
-    this.pix.u.uPal.value = PAL.map((hex) => {
-      const n = parseInt(hex.slice(1), 16);
-      return new THREE.Vector3(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
+    this.show = new Pass(SHOW_FRAG, {
+      tLow: { value: this.lowQ.texture },
+      uPal: { value: pal },
+      uDark: { value: DARK },
+      uCrt: { value: 0 },
+      uLow: { value: new THREE.Vector2(320, 180) },
+      uRes: { value: new THREE.Vector2(1, 1) },
     });
+    this.quant.mat.name = 'pixel.quant';
+    this.show.mat.name = 'pixel.show';
+  }
+
+  /** Sky, mountains, hills, the rainbow, clouds and birds. */
+  private buildBackdrop() {
+    const s = this.scene;
+    s.add(pixelSky(SUN));
+    s.add(
+      land(
+        this.u,
+        [
+          // waterfalls on the mountains either side of the castle, and round the back
+          { radius: 300, height: [34, 105], peaks: 17, kind: 0, seed: 3, falls: [-0.42, 0.37, 1.35, -1.5, 2.6] },
+          { radius: 200, height: [10, 30], peaks: 22, kind: 1, seed: 8 },
+        ],
+        SUN,
+      ),
+    );
+    // framing the castle from behind, its feet in the hills
+    s.add(rainbow(new THREE.Vector3(0, -36, -250), 118, 16));
+    this.clouds = new PixelClouds(this.u, { count: 24, radius: [130, 280], height: [32, 92], size: [34, 70], seed: 6 });
+    s.add(this.clouds.mesh);
+    this.birds = new Birds(
+      this.u,
+      [
+        { x: 0, y: 34, z: -95, radius: 24, count: 6, speed: 0.22 },
+        { x: -10, y: 26, z: 60, radius: 18, count: 5, speed: -0.25 },
+      ],
+      '#1d2b53',
+    );
+    s.add(this.birds.mesh);
   }
 
   protected onResize(W: number, H: number) {
@@ -305,25 +401,18 @@ class PixelWorld extends World {
     const rows = 270;
     const cols = Math.round((rows * W) / H);
     this.low.setSize(cols, rows);
-    this.pix.u.uLow.value.set(cols, rows);
+    this.lowQ.setSize(cols, rows);
+    this.show.u.uLow.value.set(cols, rows);
+    this.show.u.uRes.value.set(W, H);
+  }
+
+  protected onDetail(d: number) {
+    this.clouds.setDetail(d);
+    this.birds.setDetail(d);
   }
 
   protected animate(v: FrameView) {
-    const t = v.realT;
-    for (const b of this.blocks) {
-      b.rotation.y = t * 0.8 + b.userData.phase;
-      b.position.y = 12 + Math.sin(t * 2 + b.userData.phase) * 0.6 + (b.userData.phase % 2) * 2;
-    }
-    for (const c of this.clouds) {
-      c.position.x += v.realDt * 2;
-      if (c.position.x > 220) c.position.x = -220;
-    }
-    for (const f of this.flags) {
-      const pos = f.geometry.attributes.position as THREE.BufferAttribute;
-      const base = f.geometry.userData.base as Float32Array;
-      for (let i = 0; i < pos.count; i++) pos.setZ(i, Math.round(Math.sin(t * 6 + base[i * 3] * 2) * 2) * 0.12 * base[i * 3]);
-      pos.needsUpdate = true;
-    }
+    this.u.uTime.value = v.realT;
   }
 
   protected fx(e: MatchEvent) {
@@ -346,20 +435,24 @@ class PixelWorld extends World {
     r.setClearColor('#29adff', 1);
     r.clear();
     r.render(this.scene, cam);
-    const u = this.pix.u;
-    u.tScene.value = this.low.texture;
-    u.tDepth.value = this.low.depthTexture;
-    u.uNear.value = cam.near;
-    u.uFar.value = cam.far;
-    u.uFlash.value = this.flash * 0.7;
-    this.pix.render(r, target);
+    const q = this.quant.u;
+    q.tScene.value = this.low.texture;
+    q.tDepth.value = this.low.depthTexture;
+    q.uNear.value = cam.near;
+    q.uFar.value = cam.far;
+    q.uFlash.value = this.flash * 0.7;
+    this.quant.render(r, this.lowQ);
+    this.show.u.uCrt.value = this.crt ? 1 : 0;
+    this.show.render(r, target);
     r.setClearColor(0x000000, 1);
   }
 
   dispose() {
     super.dispose();
     this.low.dispose();
-    this.pix.dispose();
+    this.lowQ.dispose();
+    this.quant.dispose();
+    this.show.dispose();
   }
 }
 
