@@ -199,6 +199,12 @@ export interface FoliageOpts {
   bush?: SwayOpts;
   flower?: SwayOpts;
   shadows?: boolean;
+  /** the world's own kind of material for the plants (toon, lambert, clay…); standard by default */
+  material?: (o: { vertexColors: boolean; roughness: number }) => THREE.Material;
+  /** the canopies' baked two-tone gradient (a flatter one suits cel shading) */
+  tone?: Tone;
+  /** bark colour */
+  bark?: THREE.Color;
 }
 
 /**
@@ -207,14 +213,17 @@ export interface FoliageOpts {
  */
 export class Foliage {
   group = new THREE.Group();
-  readonly leaf: THREE.MeshStandardMaterial;
+  readonly leaf: THREE.Material;
 
-  readonly shrub: THREE.MeshStandardMaterial;
-  readonly bloom: THREE.MeshStandardMaterial;
+  readonly shrub: THREE.Material;
+  readonly bloom: THREE.Material;
   private depth: { tree: THREE.Material; bush: THREE.Material };
   /** meshes whose instance count the detail level trims (with their full counts) */
   private optional: [THREE.InstancedMesh, number][] = [];
   private shadows: boolean;
+  private make: (o: { vertexColors: boolean; roughness: number }) => THREE.Material;
+  private tone: Tone;
+  private bark: THREE.Color | undefined;
 
   constructor(
     private wind: Wind,
@@ -224,9 +233,12 @@ export class Foliage {
     const bush = o.bush ?? { amp: 0.05, height: 1.1, flutter: 0.015 };
     const flower = o.flower ?? { amp: 0.06, height: 0.5, flutter: 0.01 };
     this.shadows = o.shadows ?? true;
+    this.make = o.material ?? ((p) => new THREE.MeshStandardMaterial(p));
+    this.tone = o.tone ?? LEAF_TONE;
+    this.bark = o.bark;
     // a tree is one draw: trunk and crown share this material, and aLeaf (0 on the
     // trunk) keeps the instance's leaf colour off the bark
-    this.leaf = sway(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), wind, 'canopy', tree, {
+    this.leaf = sway(this.make({ vertexColors: true, roughness: 0.85 }), wind, 'canopy', tree, {
       key: 'leaf-mask',
       patch: (sh) => {
         sh.vertexShader = sh.vertexShader
@@ -234,8 +246,8 @@ export class Foliage {
           .replace('#include <color_vertex>', '#include <color_vertex>\n#ifdef USE_INSTANCING_COLOR\nvColor.rgb /= mix(vec3(1.0), max(instanceColor.rgb, vec3(1e-3)), 1.0 - aLeaf);\n#endif');
       },
     });
-    this.shrub = sway(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), wind, 'canopy', bush);
-    this.bloom = sway(new THREE.MeshStandardMaterial({ roughness: 0.6 }), wind, 'grass', flower);
+    this.shrub = sway(this.make({ vertexColors: true, roughness: 0.85 }), wind, 'canopy', bush);
+    this.bloom = sway(this.make({ vertexColors: false, roughness: 0.6 }), wind, 'grass', flower);
     this.depth = { tree: swayDepth(wind, 'canopy', tree), bush: swayDepth(wind, 'canopy', bush) };
   }
 
@@ -269,21 +281,25 @@ export class Foliage {
   }
 
   /** Trees of one shape: trunk and crown in one draw (and one in the shadow pass, swaying alike). */
-  trees(kind: TreeKind, at: Place[], seed = 11) {
+  trees(kind: TreeKind, at: Place[], seed = 11, o: { shadow?: boolean } = {}) {
     if (!at.length) return;
-    const trunk = trunkGeometry();
-    const crown = clumpGeometry(crownBlobs(kind, seed), { seed, seg: 10, lumpy: 0.07 });
+    return this.add(this.treeGeometry(clumpGeometry(crownBlobs(kind, seed), { seed, seg: 10, lumpy: 0.07, tone: this.tone })), this.leaf, at, { shadow: o.shadow === false ? null : this.depth.tree });
+  }
+
+  /** A crown (vertex-coloured) on this set's trunk, as one geometry for the leaf material. */
+  treeGeometry(crown: THREE.BufferGeometry) {
+    const trunk = trunkGeometry(3.6, this.bark);
     const mask = (g: THREE.BufferGeometry, v: number) => g.setAttribute('aLeaf', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count).fill(v), 1));
     const g = mergeGeometries([mask(trunk, 0), mask(crown, 1)])!;
     trunk.dispose();
     crown.dispose();
-    this.add(g, this.leaf, at, { shadow: this.depth.tree });
+    return g;
   }
 
   /** Round bushes (or a hedge-like row when placed close); small ones needn't cast shadows. */
   bushes(at: Place[], seed = 5, o: { shadow?: boolean; seg?: number } = {}) {
     if (!at.length) return;
-    this.add(clumpGeometry(bushBlobs(seed), { seed, seg: o.seg ?? 8, lumpy: 0.1, lean: 0.7 }), this.shrub, at, { shadow: o.shadow === false ? null : this.depth.bush });
+    return this.add(clumpGeometry(bushBlobs(seed), { seed, seg: o.seg ?? 8, lumpy: 0.1, lean: 0.7, tone: this.tone }), this.shrub, at, { shadow: o.shadow === false ? null : this.depth.bush });
   }
 
   /** Vines hanging from a beam or trailing over a pot's rim (y = where they hang from). */
@@ -291,8 +307,8 @@ export class Foliage {
     if (!at.length) return;
     // hung from the top: the bend grows downwards (a negative height), the tips swing most
     const opts = { amp: 0.12, height: -len, flutter: 0.02 };
-    const mat = sway(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), this.wind, 'canopy', opts);
-    return this.add(clumpGeometry(vineBlobs(seed, len), { seed, seg: 7, lumpy: 0.12, lean: 0.35 }), mat, at, { shadow: swayDepth(this.wind, 'canopy', opts) });
+    const mat = sway(this.make({ vertexColors: true, roughness: 0.85 }), this.wind, 'canopy', opts);
+    return this.add(clumpGeometry(vineBlobs(seed, len), { seed, seg: 7, lumpy: 0.12, lean: 0.35, tone: this.tone }), mat, at, { shadow: swayDepth(this.wind, 'canopy', opts) });
   }
 
   /** Little blossoms on unseen stalks (y = the ground they grow from; sy stretches the stalk). */
