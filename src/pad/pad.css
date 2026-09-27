@@ -1394,3 +1394,12 @@ section {
 .draw.held .bowglyph {
   transform: scale(0.94) translateX(4%);
 }
+
+/* your ball is rolling / your arrow is flying: the panel stays, the pad rests */
+.panel.locked .grip,
+.panel.locked .guard {
+  filter: saturate(0.55);
+  opacity: 0.72;
+  animation: none;
+  pointer-events: none;
+}

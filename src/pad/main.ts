@@ -522,9 +522,15 @@ function doFlash(strong = false, tint: '' | 'red' | 'steel' = '') {
   if (tint) flash.classList.add(tint);
 }
 
-function setMode(m: PadMode, title?: string, hint?: string) {
+/** the bowling / bow panel is showing but not taking input (your ball is rolling, your arrow flying) */
+let locked = false;
+
+function setMode(m: PadMode, title?: string, hint?: string, lock = false) {
   const prev = mode;
   mode = m;
+  locked = lock && (m === 'bowl' || m === 'bow');
+  bowlPanel.classList.toggle('locked', locked && m === 'bowl');
+  bowPanel.classList.toggle('locked', locked && m === 'bow');
   if (m === 'bowl') sport = 'bowl';
   else if (m === 'sword') sport = 'duel';
   else if (m === 'bow') sport = 'archery';
@@ -567,12 +573,17 @@ function setMode(m: PadMode, title?: string, hint?: string) {
   if (m === 'bowl') {
     bowlTitle.textContent = title || 'Your turn!';
     bowlHint.textContent = hint || (motionOK ? 'Hold the ball, swing back, then forward' : 'Hold the ball, drag up and let go');
-    if (gripId === null) gripIdle();
+    // (locked: the throw's read-out stays on the ball until the next turn)
+    if (gripId === null && !locked) gripIdle();
   }
   if (m === 'bow') {
     bowTitle.textContent = title || 'Your turn!';
     bowHint.textContent = hint || (motionOK ? 'Point at the target · hold DRAW · let go' : 'Hold DRAW · drag to aim · let go');
     if (drawId === null) drawIdle();
+    if (locked) {
+      drawBig.textContent = 'LOOSED';
+      drawSub.textContent = 'watch the target';
+    }
   }
   if (m === 'sword') {
     // a fresh duel: the motion so far was something else
@@ -612,7 +623,7 @@ function onMessage(m: ServerToPad) {
       setMode('wait', 'Game is full', 'Four remotes are already connected');
       break;
     case 'mode':
-      setMode(m.mode, m.title, m.hint);
+      setMode(m.mode, m.title, m.hint, !!m.lock);
       break;
     case 'score':
       scoreLine.textContent = m.line;
@@ -1146,7 +1157,7 @@ function gripIdle() {
 
 gripBall.addEventListener('pointerdown', (e) => {
   e.preventDefault();
-  if (mode !== 'bowl' || !joined || gripId !== null) return;
+  if (mode !== 'bowl' || locked || !joined || gripId !== null) return;
   gripId = e.pointerId;
   try {
     gripBall.setPointerCapture(e.pointerId);
@@ -1454,7 +1465,7 @@ function drawMeter() {
 
 drawPad.addEventListener('pointerdown', (e) => {
   e.preventDefault();
-  if (mode !== 'bow' || !joined || drawId !== null) return;
+  if (mode !== 'bow' || locked || !joined || drawId !== null) return;
   drawId = e.pointerId;
   try {
     drawPad.setPointerCapture(e.pointerId);

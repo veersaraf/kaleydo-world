@@ -2099,6 +2099,7 @@ export class Flow {
     for (const seat of this.app.input.seats) {
       if (!seat || !seat.pid || !seat.connected) continue;
       let mode: PadMode = 'menu';
+      let lock = false;
       let title = this.screen?.pad?.title;
       let hint = this.screen?.pad?.hint;
       const g = this.app.bowl;
@@ -2111,6 +2112,11 @@ export class Flow {
           mode = 'bow';
           title = 'Your shot!';
           hint = `End ${ag.end} · arrow ${ag.arrowNo} of ${ag.arrows}`;
+        } else if (mine && (ag.state === 'flight' || ag.state === 'result')) {
+          mode = 'bow';
+          lock = true;
+          title = 'Flying…';
+          hint = 'watch the target';
         } else {
           mode = 'wait';
           title = mine ? 'Flying…' : up ? `${up.name} is shooting` : 'Archery';
@@ -2134,6 +2140,12 @@ export class Flow {
           mode = 'bowl';
           title = 'Your turn!';
           hint = up.score.frame === 9 ? `10th frame · ball ${up.score.ball + 1}` : `Frame ${up.score.frame + 1} · ball ${up.score.ball + 1}`;
+        } else if (mine && (g.state === 'lane' || g.state === 'pins' || g.state === 'result')) {
+          // your ball is rolling: keep your throw's read-out and the verdict in view
+          mode = 'bowl';
+          lock = true;
+          title = 'Rolling…';
+          hint = 'watch the pins';
         } else {
           mode = 'wait';
           title = mine ? 'Rolling…' : `${up.name} is up`;
@@ -2159,10 +2171,10 @@ export class Flow {
           hint = 'Swing like a racket';
         }
       }
-      const key = `${mode}|${title}|${hint}`;
+      const key = `${mode}|${title}|${hint}|${lock}`;
       if (!force && this.padModes.get(seat.pid) === key) continue;
       this.padModes.set(seat.pid, key);
-      this.app.link.toPad(seat.pid, { type: 'mode', mode, title, hint });
+      this.app.link.toPad(seat.pid, lock ? { type: 'mode', mode, title, hint, lock } : { type: 'mode', mode, title, hint });
     }
   }
 

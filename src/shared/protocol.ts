@@ -109,7 +109,9 @@ export type PadFx =
 export type TVMsg =
   | { type: 'welcome'; slot: number; color: string; name: string }
   | { type: 'full' }
-  | { type: 'mode'; mode: PadMode; title?: string; hint?: string }
+  /** lock: show the panel but don't take input (bowling while your ball rolls,
+   *  archery while your arrow flies — the last throw and the verdict stay in view) */
+  | { type: 'mode'; mode: PadMode; title?: string; hint?: string; lock?: boolean }
   | { type: 'fx'; fx: PadFx; power?: number; label?: string; detail?: string }
   | { type: 'score'; line: string };
 
