@@ -42,16 +42,16 @@ export class DuelCamera {
     for (const v of this.views) v.cut = true;
   }
 
-  /** Behind fighter i, off the sword shoulder, looking past them at the opponent. */
+  /** Behind fighter i, high over the sword shoulder, looking at the opponent's
+   *  chest: your own head stays out of the way of their windup and guard. */
   private fightView(v: View, g: DuelGame, i: number, push = 0) {
     const me = g.fighters[i];
     const them = g.fighters[1 - i];
     const back = me.facing; // fighter 0 faces −z, so behind them is +z
     const right = me.facing; // …and their right is +x
-    const d = 3.25 - push;
-    v.tp.set(me.x - right * 0.72 * me.handed, ARENA.top + 1.85, me.z + back * d);
-    v.tl.set(them.x * 0.8 + me.x * 0.2 + right * 0.12 * me.handed, ARENA.top + 1.05, them.z * 0.72 + me.z * 0.28);
-    v.fov = 48;
+    v.tp.set(me.x + right * 1.8 * me.handed, ARENA.top + 2.45, me.z + back * (3.5 - push));
+    v.tl.set(them.x, ARENA.top + 1.0, them.z);
+    v.fov = 46;
   }
 
   update(g: DuelGame, dt: number, t: number) {
@@ -102,9 +102,9 @@ export class DuelCamera {
           const f = w ?? g.fighters[i];
           const k = clamp(since / 3);
           const side = f.facing * (i === 0 ? 1 : -1);
-          v.tp.set(f.x + side * (1.3 + (g.state === 'over' ? Math.sin(t * 0.4) * 0.8 : 0)), ARENA.top + 1.45 - k * 0.1, f.z - f.facing * (3.4 - k * 0.6));
-          v.tl.set(f.x, ARENA.top + 1.1, f.z);
-          v.fov = 40;
+          v.tp.set(f.x + side * (1.4 + (g.state === 'over' ? Math.sin(t * 0.4) * 0.8 : 0)), ARENA.top + 1.55 - k * 0.1, f.z - f.facing * (4.4 - k * 0.5));
+          v.tl.set(f.x, ARENA.top + 1.3, f.z);
+          v.fov = 44;
           lambda = since < 0.05 ? 1000 : 2.5;
           break;
         }

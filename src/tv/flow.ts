@@ -988,14 +988,19 @@ export class Flow {
       : '<b>Arrows</b> or drag the mouse to slash · hold <b>Space</b> (or the right button) to guard · <b>X</b> thrust';
   }
 
-  /** The arrows slash that way (the tip travels in the arrow's direction); A skips the walk-on. */
+  /** The arrows slash that way (the tip travels in the arrow's direction) — or, with
+   *  Space held, set the guard: ↑ ↓ flat (stops chops), ← → upright (stops side cuts).
+   *  A skips the walk-on. */
   private duelButton(slot: number, b: Btn, down: boolean) {
     const g = this.app.duel;
     if (!g) return false;
     const dirs: Partial<Record<Btn, number>> = { right: 0, up: Math.PI / 2, left: Math.PI, down: -Math.PI / 2 };
     const d = dirs[b];
     if (d !== undefined) {
-      if (down) g.slash(slot, { kind: 'slash', dir: d, power: 0.8 });
+      if (!down) return true;
+      const me = g.fighters[g.duelists.findIndex((q) => q.slot === slot)];
+      if (me?.phase === 'guard') this.app.input.localGuardAngle = b === 'up' || b === 'down' ? 0 : Math.PI / 2;
+      else this.app.duelKeySlash(slot, { kind: 'slash', dir: d, power: 0.8 });
       return true;
     }
     if (b === 'a' && down) {
