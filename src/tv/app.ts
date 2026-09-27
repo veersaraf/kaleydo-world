@@ -704,7 +704,8 @@ export class App {
     const fx: FieldFx[] = [];
     while (r.i < r.frames.length - 1 && r.frames[r.i + 1].t <= r.time) {
       r.i++;
-      for (const e of r.frames[r.i].fx) fx.push(e);
+      // (slowed down, the crack's flash would sit on screen: a gentler burst)
+      for (const e of r.frames[r.i].fx) fx.push(e.type === 'contact' ? { ...e, sweet: false, power: e.power * 0.45 } : e);
     }
     const f = r.frames[r.i];
     const cam = this.ballCam.cam;
