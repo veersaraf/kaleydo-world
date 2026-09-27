@@ -1420,7 +1420,6 @@ export class FieldVenue implements FieldVenueLike {
   private wallLen: number;
   // the ball
   private ball: THREE.Mesh;
-  private ballHull: THREE.Mesh | null = null;
   private halo: Halo;
   /** how strongly the halo shows (it fades in after contact) */
   private haloK = 0;
@@ -1517,9 +1516,9 @@ export class FieldVenue implements FieldVenueLike {
     if (edge) {
       const hm = hullMaterial(new THREE.Color(edge[0]), edge[1]);
       this.disposables.push(hm);
-      this.ballHull = new THREE.Mesh(ballGeo, hm);
-      this.ballHull.name = 'outline';
-      this.ball.add(this.ballHull);
+      const hull = new THREE.Mesh(ballGeo, hm);
+      hull.name = 'outline';
+      this.ball.add(hull);
     }
     this.group.add(this.ball);
     // and a ring in the hitter's colour round it in flight
