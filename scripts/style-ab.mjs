@@ -12,6 +12,8 @@
 //          js:<code> any toggle, run with (w = the world, on) — e.g. js:w.post=on?w.__p:null
 //   views: main,far,side,aerial,split2,bowl,duel,arch (default: all)
 //   RUNS=n repeats the whole set n times and prints the median of each figure
+//   PRE=<js> runs once after setup with (a = this build's world, b = the other or null),
+//            e.g. to hide a part of one of them
 import { chromium } from 'playwright-core';
 import fs from 'node:fs';
 const BASE = process.env.BASE || 'http://localhost:4000';
@@ -100,6 +102,7 @@ await p.evaluate(
     };
     window.__set = set;
     window.__A = A;
+    window.__B = B;
     const gl = k.renderer.getContext();
     const ext = gl.getExtension('EXT_disjoint_timer_query_webgl2');
     const pending = [];
@@ -143,6 +146,8 @@ await p.evaluate(
   },
   [world, mode, +pr, FILES[world] ?? world],
 );
+
+if (process.env.PRE) await p.evaluate((src) => new Function('a', 'b', src)(window.__A, window.__B), process.env.PRE);
 
 async function enter(view) {
   const k = 'window.kaleido';
