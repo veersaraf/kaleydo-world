@@ -67,7 +67,7 @@ export const HITSTOP = { hit: 0.07, sweet: 0.11 };
 
 // ------------------------------------------------------------------ pitches
 
-/** Release → contact plane, world metres (14.45), and a real pitch's (the HUD's km/h is a real pitch's). */
+/** Release → contact plane, world metres (14.7), and a real pitch's (the HUD's km/h is a real pitch's). */
 export const PITCH_RUN = FIELD.contactZ - FIELD.releaseZ;
 export const REAL_PITCH_RUN = 16.8;
 

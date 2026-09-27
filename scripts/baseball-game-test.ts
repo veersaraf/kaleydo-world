@@ -118,9 +118,9 @@ function toResult(g: BaseballGame, dt = DT) {
   near(r0.y, FIELD.releaseY, 1e-12, 'head high');
   near(r0.z, FIELD.releaseZ, 1e-12, 'out in front of the rubber');
   near(planPitch('fastball', 25, 0, 0.8, -1, 2).path.x0, FIELD.releaseSide, 1e-12, 'a left-hander at +x');
-  near(PITCH_RUN, 14.45, 1e-9, 'the release is 14.45 m from the contact plane');
-  near(pitch.tc - pitch.t0, 14.45 / 25, 1e-12, 'a 25 m/s pitch takes 14.45/25 s to the plate');
-  near(pitch.kmh, (25 * 16.8 * 3.6) / 14.45, 1e-9, "km/h on the HUD is a real pitch's (16.8 m / 14.45 m)");
+  near(PITCH_RUN, FIELD.contactZ - FIELD.releaseZ, 1e-9, 'the release is PITCH_RUN from the contact plane');
+  near(pitch.tc - pitch.t0, PITCH_RUN / 25, 1e-12, 'a 25 m/s pitch takes PITCH_RUN/25 s to the plate');
+  near(pitch.kmh, (25 * 16.8 * 3.6) / PITCH_RUN, 1e-9, "km/h on the HUD is a real pitch's (16.8 m / PITCH_RUN)");
   near(path.arrive, (MITT_Z - FIELD.releaseZ) / 25, 1e-12, 'it reaches the mitt plane (catcherZ − 0.35) this long after the release');
   near(MITT_Z, FIELD.catcherZ - 0.35, 1e-12, 'the mitt plane');
 }
