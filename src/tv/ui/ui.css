@@ -2234,3 +2234,8 @@ kbd {
   width: 2px;
   height: calc(var(--u) * 2.4);
 }
+
+/* duel calls sit above the fight, not over the opponent */
+.callout.dcall {
+  top: 23%;
+}

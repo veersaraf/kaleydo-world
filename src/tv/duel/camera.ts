@@ -49,8 +49,9 @@ export class DuelCamera {
     const them = g.fighters[1 - i];
     const back = me.facing; // fighter 0 faces −z, so behind them is +z
     const right = me.facing; // …and their right is +x
-    v.tp.set(me.x + right * 1.8 * me.handed, ARENA.top + 2.45, me.z + back * (3.5 - push));
-    v.tl.set(them.x, ARENA.top + 1.0, them.z);
+    // high enough that their head shows above yours (heads level with the lens overlap)
+    v.tp.set(me.x + right * 1.6 * me.handed, ARENA.top + 3.05, me.z + back * (4.1 - push));
+    v.tl.set(them.x - right * 0.15 * me.handed, ARENA.top + 0.95, them.z + back * 0.2);
     v.fov = 46;
   }
 
