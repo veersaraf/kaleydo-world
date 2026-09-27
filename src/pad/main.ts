@@ -6,9 +6,10 @@ import './pad.css';
 import { PadLink, type LinkStatus } from './link';
 import { SwingDetector, type SwingEvent } from './swing';
 import { BowlDetector, swipeThrow, MIN_SPEED, MAX_SPEED, type BowlThrow, type SwipePoint } from './bowl';
-import { Orientation, qrot } from './orient';
+import { SwordDetector, swipeStrike, guardLine, type GuardLine, type SwordStrike } from './sword';
+import { Orientation, qrot, type Vec3 } from './orient';
 import { PadAudio } from './audio';
-import type { Handed, PadButton, PadMode, PadMsg, ServerToPad } from '../shared/protocol';
+import type { Handed, PadButton, PadFx, PadMode, PadMsg, ServerToPad } from '../shared/protocol';
 import { PLAYER_COLORS } from '../shared/protocol';
 
 // ------------------------------------------------------------------ prefs
@@ -260,8 +261,73 @@ const bowlPanel = h(
   ),
 );
 
-// sword duel: guard pad + swings (placeholder until the sword controller lands)
-const swordPanel = h('div', { class: 'panel sword' }, h('div', { class: 'wtitle' }, 'Sword duel'));
+// sword duel: the phone is the sword. Swing to slash, push it at the screen
+// to thrust, hold the big GUARD pad with your thumb to block — a guard stops
+// a slash when the blade lies across it, so the pad shows how the blade lies
+// right now. Pause and re-center sit up in the corners, out of the thumb's
+// way. Without motion sensors: swipe to slash, tap to thrust, and a toggle
+// sets the guard's angle.
+/** a sword pointing up (turned to show how the blade lies across your view) */
+function swordGlyph() {
+  const svg = document.createElementNS(SVG, 'svg');
+  svg.setAttribute('viewBox', '-32 -32 64 64');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const [d, fill] of [
+    ['M0 -30 3.6 -23V8h-7.2v-31z', '#fff'],
+    ['M0 -22V5', ''],
+    ['M-12 8h24a2.5 2.5 0 0 1 0 5h-24a2.5 2.5 0 0 1 0-5z', 'rgba(29,28,43,.78)'],
+    ['M-2.7 13h5.4v12h-5.4z', 'rgba(29,28,43,.62)'],
+    ['M0 24.5a3.4 3.4 0 1 1 0 6.8a3.4 3.4 0 1 1 0-6.8z', 'rgba(29,28,43,.78)'],
+  ]) {
+    const p = document.createElementNS(SVG, 'path');
+    p.setAttribute('d', d);
+    if (fill) p.setAttribute('fill', fill);
+    else {
+      // the fuller down the middle of the blade
+      p.setAttribute('fill', 'none');
+      p.setAttribute('stroke', 'rgba(29,28,43,.16)');
+      p.setAttribute('stroke-width', '1.6');
+    }
+    svg.append(p);
+  }
+  return svg;
+}
+const swordTitle = h('div', { class: 'ptitle' }, '');
+const swordHint = h('div', { class: 'phint' }, '');
+const swordTv = h('div', { class: 'tvline' }, '');
+const bladeEl = h('i', { class: 'blade' }, swordGlyph());
+const guardBig = h('b', {}, 'GUARD');
+const guardSub = h('span', {}, '');
+const guardPad = h('div', { class: 'guard', role: 'button', 'aria-label': 'Hold to guard' }, bladeEl, guardBig, guardSub);
+const guardWrap = h('div', { class: 'guard-wrap' }, h('div', { class: 'guard-meter' }), guardPad);
+const swordShot = h('div', { class: 'shotline' }, '');
+const swordHome = padBtn('home', 'small home', h('i', { class: 'house' }));
+swordHome.dataset.lock = '';
+swordHome.setAttribute('aria-label', 'Pause');
+// "point the phone at the TV and tap": which way the screen is
+const swordRecenter = h(
+  'button',
+  { class: 'small', 'aria-label': 'Re-center: point the phone at the TV and tap' },
+  icon('M12 3.5v3.2M12 17.3v3.2M3.5 12h3.2M17.3 12h3.2M12 6.6a5.4 5.4 0 1 0 0 10.8a5.4 5.4 0 1 0 0-10.8', 'M12 10.3a1.7 1.7 0 1 0 0 3.4a1.7 1.7 0 1 0 0-3.4'),
+);
+// no motion sensor: the swipe pad and the guard's angle
+const slashZone = h('div', { class: 'slash-zone' }, h('b', {}, 'SWIPE TO SLASH'), h('span', {}, 'tap to thrust'));
+const guardVert = h('button', { class: 'gseg-btn', 'data-g': 'vertical' }, h('i', { class: 'gl v' }), 'Vertical');
+const guardHorz = h('button', { class: 'gseg-btn', 'data-g': 'horizontal' }, h('i', { class: 'gl h' }), 'Horizontal');
+const swordPanel = h(
+  'div',
+  { class: 'panel sword' },
+  h(
+    'div',
+    { class: 'stop' },
+    h('div', { class: 'sbtn' }, swordHome, h('span', {}, 'PAUSE')),
+    h('div', { class: 'shead' }, swordTitle, swordHint),
+    h('div', { class: 'sbtn recenter-wrap' }, swordRecenter, h('span', {}, 'RE-CENTER')),
+  ),
+  // the TV's verdict, the guard and your last blow stay together in the middle
+  h('div', { class: 'sstage' }, swordTv, slashZone, guardWrap, swordShot),
+  h('div', { class: 'gseg' }, guardVert, guardHorz),
+);
 
 const panels: Record<PadMode, HTMLElement> = {
   menu: menuPanel,
@@ -332,6 +398,9 @@ detector.upSign = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.pla
 const orient = new Orientation();
 const bowl = new BowlDetector();
 bowl.sensitivity = prefs.sens;
+const sword = new SwordDetector();
+sword.sensitivity = prefs.sens;
+sword.upSign = detector.upSign;
 const link = new PadLink(pid, () => prefs.name || 'Player');
 let slot = -1;
 let mode: PadMode = 'wait';
@@ -340,11 +409,17 @@ let motionSeen = false;
 let seq = 0;
 let joined = false;
 /** which game the TV's fx lines are about (they can arrive while on 'watch') */
-let sport: 'tennis' | 'bowl' = 'tennis';
+let sport: 'tennis' | 'bowl' | 'duel' = 'tennis';
 /** bowling: the pointer holding the grip (the ball is in the hand), or null */
 let gripId: number | null = null;
-/** bowling: move/aim ignore presses until then (a thumb sliding off the grip) */
-let bowlLockUntil = 0;
+/** sword: the guard pad is held (by these pointers) */
+let guarding = false;
+const guardPtrs = new Set<number>();
+/** sword without motion sensors: the guard's angle, from the toggle */
+let touchGuard: 'vertical' | 'horizontal' = store.get('guard') === 'horizontal' ? 'horizontal' : 'vertical';
+/** the locked buttons (bowling's move/aim, pause) ignore presses until then:
+ *  a thumb sliding off the grip or the guard, a hand flailing after a blow */
+let lockUntil = 0;
 
 function setColor(c: string) {
   root.style.setProperty('--pc', c);
@@ -364,6 +439,7 @@ for (const b of [handL, handR, setL, setR]) {
     detector.handed = prefs.handed === 'L' ? -1 : 1;
     store.set('handed', prefs.handed);
     syncHandButtons();
+    showGuardAngle();
     audio.tick();
     sendPrefs();
   });
@@ -373,6 +449,7 @@ for (const b of sensBtns) {
     prefs.sens = Number(b.dataset.s);
     detector.sensitivity = prefs.sens;
     bowl.sensitivity = prefs.sens;
+    sword.sensitivity = prefs.sens;
     store.set('sens', String(prefs.sens));
     syncHandButtons();
     audio.tick();
@@ -393,22 +470,30 @@ function showToast(text: string, ms = 1400) {
   toastTimer = window.setTimeout(() => toast.classList.remove('show'), ms);
 }
 
-function doFlash(strong = false) {
-  flash.classList.remove('go', 'strong');
+/** a white flash in the player's colour; 'red' when you're hit, 'steel' when your guard holds */
+function doFlash(strong = false, tint: '' | 'red' | 'steel' = '') {
+  flash.classList.remove('go', 'strong', 'red', 'steel');
   void flash.offsetWidth;
   flash.classList.add('go');
   if (strong) flash.classList.add('strong');
+  if (tint) flash.classList.add(tint);
 }
 
 function setMode(m: PadMode, title?: string, hint?: string) {
   const prev = mode;
   mode = m;
   if (m === 'bowl') sport = 'bowl';
+  else if (m === 'sword') sport = 'duel';
   else if (m === 'play' || m === 'serve') sport = 'tennis';
   if (prev === 'bowl' && m !== 'bowl') {
     // the game moved on with the ball still in the hand: drop it, don't throw
     gripCancel();
     // and whatever the tennis detector made of the bowling swings is forgotten
+    detector.reset();
+  }
+  if (prev === 'sword' && m !== 'sword') {
+    // the duel moved on with the guard up: let go of it (the TV hears so)
+    guardCancel();
     detector.reset();
   }
   for (const el of new Set(Object.values(panels))) el.classList.remove('on');
@@ -434,6 +519,16 @@ function setMode(m: PadMode, title?: string, hint?: string) {
     bowlTitle.textContent = title || 'Your turn!';
     bowlHint.textContent = hint || (motionOK ? 'Hold the ball, swing back, then forward' : 'Hold the ball, drag up and let go');
     if (gripId === null) gripIdle();
+  }
+  if (m === 'sword') {
+    // a fresh duel: the motion so far was something else
+    if (prev !== 'sword') sword.reset();
+    // (a new round: the last one's blow is old news)
+    if (prev !== 'sword' || (title || 'Duel!') !== swordTitle.textContent) swordShot.textContent = '';
+    swordTitle.textContent = title || 'Duel!';
+    swordHint.textContent = hint || (motionOK ? 'Swing to slash · hold GUARD to block' : 'Swipe to slash · hold GUARD to block');
+    swordPanel.classList.toggle('touch', !motionOK);
+    showGuardAngle();
   }
   swipeZone.classList.toggle('on', !motionOK && (m === 'play' || m === 'serve'));
   servePanel.classList.toggle('swipe', !motionOK);
@@ -469,6 +564,10 @@ function onMessage(m: ServerToPad) {
       scoreLine.textContent = m.line;
       break;
     case 'fx': {
+      if (sport === 'duel') {
+        duelFx(m);
+        break;
+      }
       const bowling = sport === 'bowl';
       // bowling: the TV's verdict on the throw, e.g. "STRIKE! · 7.6 m/s · hook"
       const line = [m.label, m.detail].filter(Boolean).join(' · ');
@@ -526,6 +625,66 @@ function onMessage(m: ServerToPad) {
   }
 }
 
+/** words for the duel's verdicts when the TV sends none */
+const DUEL_WORD: Partial<Record<PadFx, string>> = {
+  block: 'BLOCKED!',
+  ouch: 'OUCH!',
+  hit: 'HIT!',
+  'point-won': 'ROUND WON',
+  'point-lost': 'ROUND LOST',
+  win: 'YOU WIN!',
+  lose: 'YOU LOSE',
+};
+
+/** The TV's verdict in a duel: the line, a sound, a flash. */
+function duelFx(m: Extract<ServerToPad, { type: 'fx' }>) {
+  const word = m.label || DUEL_WORD[m.fx] || '';
+  const line = [word, m.detail].filter(Boolean).join(' · ');
+  if (line) {
+    swordTv.textContent = line;
+    swordTv.classList.remove('pop');
+    void swordTv.offsetWidth;
+    swordTv.classList.add('pop');
+    // between rounds the sword panel isn't showing: say it anyway
+    if (mode !== 'sword' && m.fx !== 'select' && m.fx !== 'move' && m.fx !== 'back') showToast(word || line, 1800);
+  }
+  switch (m.fx) {
+    case 'block':
+      audio.clank(m.power ?? 0.7);
+      doFlash(false, 'steel');
+      guardWrap.classList.remove('clank');
+      void guardWrap.offsetWidth;
+      guardWrap.classList.add('clank');
+      break;
+    case 'ouch':
+      audio.thud(m.power ?? 0.7);
+      doFlash(true, 'red');
+      break;
+    case 'hit':
+    case 'perfect':
+      audio.thwack(m.power ?? 0.7);
+      doFlash(m.fx === 'perfect');
+      break;
+    case 'point-won':
+    case 'win':
+      audio.jingle(true);
+      break;
+    case 'point-lost':
+    case 'lose':
+      audio.jingle(false);
+      break;
+    case 'select':
+      audio.select();
+      break;
+    case 'move':
+      audio.tick();
+      break;
+    case 'back':
+      audio.back();
+      break;
+  }
+}
+
 link.onMessage = onMessage;
 link.onStatus = setStatus;
 setInterval(() => {
@@ -539,14 +698,16 @@ function lookingAtPhone() {
   return orient.have && orient.toEarth([0, 0, 1])[2] > 0.35;
 }
 
-/** bowling's move/aim/home buttons that are down: let go of them all */
-const bowlBtnUps: (() => void)[] = [];
+/** the locked buttons (bowling's move/aim/home, the duel's pause) that are down: let go of them all */
+const lockedBtnUps: (() => void)[] = [];
+/** the thumb is on the grip or the guard, or just came off it */
+const handBusy = () => gripId !== null || guarding || performance.now() < lockUntil;
 
 for (const el of root.querySelectorAll<HTMLButtonElement>('.pb')) {
   const b = el.dataset.b as PadButton;
   // bowling's move/aim buttons repeat while held, like a held key: more downs, one up
   const rep = el.dataset.rep !== undefined;
-  // bowling's buttons (move, aim, home) wait while the ball is in the hand
+  // bowling's buttons (move, aim, home) wait while the ball is in the hand; the duel's pause while guarding
   const lock = rep || el.dataset.lock !== undefined;
   let repTimer = 0;
   const up = () => {
@@ -556,12 +717,12 @@ for (const el of root.querySelectorAll<HTMLButtonElement>('.pb')) {
     el.classList.remove('down');
     link.send({ type: 'btn', b, down: false });
   };
-  if (lock) bowlBtnUps.push(up);
+  if (lock) lockedBtnUps.push(up);
   el.addEventListener('pointerdown', (e) => {
     e.preventDefault();
-    // not while the ball is in the hand or just after letting go: that's a palm
-    // or a thumb sliding off the grip, not a press
-    if (lock && (gripId !== null || performance.now() < bowlLockUntil)) return;
+    // not while the ball is in the hand (or the guard is held) or just after
+    // letting go: that's a palm or a thumb sliding off the pad, not a press
+    if (lock && handBusy()) return;
     try {
       el.setPointerCapture?.(e.pointerId);
     } catch {}
@@ -667,8 +828,8 @@ function swingPath(sw: SwingEvent): number | null {
 }
 
 function emitSwing(sw: SwingEvent, touch = false) {
-  // bowling: the arm swing is a throw, not a racket swing
-  if (mode === 'bowl') return;
+  // bowling: the arm swing is a throw, not a racket swing; the duel has its own
+  if (mode === 'bowl' || mode === 'sword') return;
   if (!touch && sw.t < noSwingUntil) return;
   const age = Math.max(0, performance.now() - sw.t);
   const path = touch ? null : swingPath(sw);
@@ -706,7 +867,7 @@ function showSwing(sw: SwingEvent, path: number | null) {
 
 detector.onSwing = (s) => emitSwing(s);
 detector.onPrep = (side) => {
-  if (mode !== 'bowl') link.send({ type: 'prep', side, lat: Math.round(link.lat) });
+  if (mode !== 'bowl' && mode !== 'sword') link.send({ type: 'prep', side, lat: Math.round(link.lat) });
 };
 
 // Live motion meter — reassures players that the sensor works.
@@ -717,6 +878,14 @@ function liveLoop() {
   gaugeLive.style.opacity = String(0.15 + v * 0.7);
   // bowling: the ring round the ball fills with the swing (and falls back slowly)
   if (mode === 'bowl' && gripId !== null && motionOK) setMeter(Math.max(Math.min(1, bowl.live / 14), gripMeter * 0.94));
+  // the duel: how the blade lies, and the ring round the guard fills with the swing
+  if (mode === 'sword') {
+    showGuardAngle();
+    // (a hand holding still wobbles at up to ~1 rad/s: that's not a swing); a blow's
+    // power stays up a moment to be read, then drops
+    const held = performance.now() < meterHoldUntil;
+    if (motionOK) setSwordMeter(Math.max(Math.min(1, Math.max(0, sword.live - 1) / 17), held ? swordMeter : swordMeter * 0.9));
+  }
   liveRaf = requestAnimationFrame(liveLoop);
 }
 
@@ -731,22 +900,38 @@ function onOrient(e: DeviceOrientationEvent) {
 
 // Stream the racket's orientation so the in-game racket mirrors the phone —
 // and while bowling with the ball in the hand, the arm's swing, so the bowler
-// on screen mirrors that.
+// on screen mirrors that. In the duel it's the sword (without motion sensors,
+// held the way the guard toggle says).
 function sendOri() {
-  if (!orient.have || orient.heading === null || link.status !== 'online') return;
+  if (link.status !== 'online') return;
+  if (mode === 'sword' && !motionOK) {
+    const p = touchPose();
+    link.send({ type: 'ori', s: p.s, n: p.n });
+    return;
+  }
+  if (!orient.have || orient.heading === null) return;
   const r2 = (v: [number, number, number]) => v.map((x) => Math.round(x * 100) / 100) as [number, number, number];
   const msg: Extract<PadMsg, { type: 'ori' }> = { type: 'ori', s: r2(orient.devToPlayer([0, 1, 0])), n: r2(orient.devToPlayer([0, 0, 1])) };
   if (mode === 'bowl' && gripId !== null && motionOK) msg.arm = Math.round(bowl.arm * 100) / 100;
   link.send(msg);
 }
 let oriTimer = 0;
+let swordOriTimer = 0;
 function startOriStream() {
   clearInterval(oriTimer);
+  clearInterval(swordOriTimer);
   oriTimer = window.setInterval(
     () => {
       if (mode === 'play' || mode === 'serve' || mode === 'menu' || mode === 'bowl') sendOri();
     },
     link.transport === 'http' ? 100 : 50,
+  );
+  // the sword follows the phone 1:1 and the guard's angle decides blocks: a little quicker
+  swordOriTimer = window.setInterval(
+    () => {
+      if (mode === 'sword') sendOri();
+    },
+    link.transport === 'http' ? 100 : 33,
   );
 }
 
@@ -790,6 +975,16 @@ function onMotion(e: DeviceMotionEvent) {
     rz,
     q,
     ...(a && a.x != null && g && g.x != null ? { ax, ay, az, gx: (g.x ?? 0) - ax, gy: (g.y ?? 0) - ay, gz: (g.z ?? 0) - az } : {}),
+  });
+  sword.heading = orient.heading;
+  sword.push({
+    t: now,
+    rx,
+    ry,
+    rz,
+    q,
+    ...(a && a.x != null ? { ax, ay, az } : {}),
+    ...(g && g.x != null ? { igx: g.x ?? 0, igy: g.y ?? 0, igz: g.z ?? 0 } : {}),
   });
   detector.push({
     t: now,
@@ -891,7 +1086,7 @@ gripBall.addEventListener('pointerdown', (e) => {
   try {
     gripBall.setPointerCapture(e.pointerId);
   } catch {}
-  for (const up of bowlBtnUps) up(); // the palm on ◀ ▶ as the thumb lands isn't a move
+  for (const up of lockedBtnUps) up(); // the palm on ◀ ▶ as the thumb lands isn't a move
   const now = performance.now();
   bowl.heading = orient.heading;
   bowl.grip(now);
@@ -930,7 +1125,7 @@ function throwBall() {
   const lat = Math.round(link.lat);
   if (!touch) sendOri(); // the pose (and arm) it left the hand in
   gripId = null;
-  bowlLockUntil = performance.now() + 700;
+  lockUntil = performance.now() + 700;
   // tell the TV at once; the measurement takes a moment
   link.send({ type: 'grip', down: false, lat });
   const r = touch ? swipeThrow(gripPts) : bowl.release(performance.now());
@@ -971,6 +1166,201 @@ function showThrow(r: BowlThrow) {
   gripIdleTimer = window.setTimeout(() => {
     if (gripId === null) gripIdle();
   }, 2600);
+}
+
+// ------------------------------------------------------------------ sword duel
+
+// Hold the GUARD pad = guard: 'guard' down, the sword guards at whatever
+// angle the phone is held (streamed as 'ori'), and swings only move it. Let
+// go to attack, as in Chambara — a swing then is a 'slash', a push at the
+// screen a 'thrust'. Without motion: swipe the pad above the guard to slash,
+// tap it to thrust, and the toggle sets the guard's angle.
+
+let swordMeter = 0;
+let meterHoldUntil = 0;
+let shownLine: GuardLine | '' = '';
+let shownTurn = 0;
+const LINE_NAME: Record<GuardLine, string> = {
+  vertical: 'vertical',
+  horizontal: 'horizontal',
+  rising: 'diagonal ╱',
+  falling: 'diagonal ╲',
+  forward: 'pointed ahead',
+};
+
+/** without motion sensors: the sword held upright or across the body (a right hand's blade points left), screen to the face */
+function touchPose(): { s: Vec3; n: Vec3 } {
+  if (touchGuard === 'vertical') return { s: [0, 0.25, 0.97], n: [0, -0.97, 0.25] };
+  const x = prefs.handed === 'L' ? 1 : -1;
+  return { s: [0.97 * x, 0.25, 0], n: [0.25 * x, -0.97, 0] };
+}
+
+/** the guard pad's sword lies as the blade does across your view, and says how */
+function showGuardAngle() {
+  let s: Vec3;
+  if (!motionOK) s = touchPose().s;
+  else if (orient.have) s = orient.devToPlayer([0, 1, 0]);
+  else return;
+  const { angle, line } = guardLine(s);
+  // clockwise from pointing up, the nearest way round from where it is (no spin through 180°)
+  let turn = Math.round(90 - (angle * 180) / Math.PI);
+  turn += 360 * Math.round((shownTurn - turn) / 360);
+  if (turn !== shownTurn) {
+    shownTurn = turn;
+    bladeEl.style.transform = `rotate(${turn}deg)`;
+  }
+  if (line !== shownLine) {
+    shownLine = line;
+    guardSub.textContent = LINE_NAME[line];
+    guardPad.dataset.line = line;
+  }
+}
+
+function setSwordMeter(v: number) {
+  if (v < 0.01) v = 0; // (fall right back to empty, not stop just short of it)
+  if (Math.abs(v - swordMeter) < 0.002 && v !== 0) return;
+  if (v === 0 && swordMeter === 0) return;
+  swordMeter = v;
+  guardWrap.style.setProperty('--p', v.toFixed(3));
+}
+
+guardPad.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  if (mode !== 'sword' || !joined) return;
+  try {
+    guardPad.setPointerCapture(e.pointerId);
+  } catch {}
+  guardPtrs.add(e.pointerId);
+  if (!guarding) guardDown();
+});
+// held while any finger is on it: a thumb shifting its grip doesn't drop the guard
+const guardLift = (e: PointerEvent) => {
+  if (!guardPtrs.delete(e.pointerId) || guardPtrs.size) return;
+  guardUp();
+};
+guardPad.addEventListener('pointerup', guardLift);
+guardPad.addEventListener('pointercancel', guardLift);
+guardPad.addEventListener('lostpointercapture', guardLift);
+guardPad.addEventListener('contextmenu', (e) => e.preventDefault());
+
+function guardDown() {
+  guarding = true;
+  for (const up of lockedBtnUps) up(); // the palm on pause as the thumb lands isn't a press
+  sword.guard(true, performance.now());
+  sendOri(); // the angle it went up at
+  link.send({ type: 'guard', down: true, lat: Math.round(link.lat) });
+  guardPad.classList.add('held');
+  audio.guard();
+}
+
+function guardUp() {
+  guarding = false;
+  const now = performance.now();
+  sword.guard(false, now);
+  sendOri();
+  link.send({ type: 'guard', down: false, lat: Math.round(link.lat) });
+  guardPad.classList.remove('held');
+  lockUntil = Math.max(lockUntil, now + 300);
+}
+
+/** The duel moved on with the guard held: let go of it. */
+function guardCancel() {
+  if (!guarding) return;
+  const ids = [...guardPtrs];
+  guardPtrs.clear();
+  guardUp();
+  for (const id of ids)
+    try {
+      guardPad.releasePointerCapture(id);
+    } catch {}
+}
+
+/** A slash or a thrust — from the motion, or a swipe on the pad. Never with the guard held. */
+function attack(s: SwordStrike, touch: boolean) {
+  if (mode !== 'sword' || !joined || guarding) return;
+  sendOri(); // the pose it struck in
+  link.send({ type: 'slash', kind: s.kind, dir: +s.dir.toFixed(3), power: +s.power.toFixed(2), lat: Math.round(link.lat), touch });
+  // a hand flailing after a blow isn't pressing pause
+  lockUntil = Math.max(lockUntil, performance.now() + 400);
+  showStrike(s);
+}
+sword.onStrike = (s) => attack(s, false);
+
+const ARROWS = ['→', '↗', '↑', '↖', '←', '↙', '↓', '↘'];
+function showStrike(s: SwordStrike) {
+  const what = s.kind === 'thrust' ? 'THRUST' : `SLASH ${ARROWS[(Math.round(s.dir / (Math.PI / 4)) + 8) % 8]}`;
+  swordShot.textContent = `${what} · ${Math.round(s.power * 100)}%`;
+  swordTv.textContent = '';
+  setSwordMeter(Math.max(0.04, s.power));
+  meterHoldUntil = performance.now() + 600;
+  guardWrap.classList.remove('pop');
+  void guardWrap.offsetWidth;
+  guardWrap.classList.add('pop');
+  if (s.kind === 'thrust') audio.thrust(s.power);
+  else audio.slash(s.power);
+}
+
+swordRecenter.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  if (handBusy()) return;
+  if (orient.calibrate()) {
+    audio.select();
+    showToast('Re-centered on the TV');
+    sendOri();
+  } else {
+    audio.back();
+    showToast(orient.have ? 'Point the phone at the TV, not up' : 'No motion sensor');
+  }
+});
+
+// no motion sensor: swipe to slash, tap to thrust (timed by the events
+// themselves: a busy main thread hands them over in bunches)
+let swipeId: number | null = null;
+let swipePts: SwipePoint[] = [];
+const stamp = (e: PointerEvent) => (e.timeStamp > 0 && Math.abs(e.timeStamp - performance.now()) < 1000 ? e.timeStamp : performance.now());
+slashZone.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  if (mode !== 'sword' || motionOK || !joined || swipeId !== null) return;
+  swipeId = e.pointerId;
+  try {
+    slashZone.setPointerCapture(e.pointerId);
+  } catch {}
+  swipePts = [{ t: stamp(e), x: e.clientX, y: e.clientY }];
+  slashZone.classList.add('down');
+});
+slashZone.addEventListener('pointermove', (e) => {
+  if (e.pointerId !== swipeId) return;
+  swipePts.push({ t: stamp(e), x: e.clientX, y: e.clientY });
+  if (swipePts.length > 300) swipePts.splice(1, 150); // (keep the start: the stroke is measured from it)
+});
+const swipeEnd = (e: PointerEvent) => {
+  if (e.pointerId !== swipeId) return;
+  swipeId = null;
+  slashZone.classList.remove('down');
+  if (e.type !== 'pointerup') return; // cancelled: nothing
+  swipePts.push({ t: stamp(e), x: e.clientX, y: e.clientY });
+  const s = swipeStrike(swipePts);
+  if (s) attack(s, true);
+};
+slashZone.addEventListener('pointerup', swipeEnd);
+slashZone.addEventListener('pointercancel', swipeEnd);
+slashZone.addEventListener('lostpointercapture', swipeEnd);
+
+function syncGuardToggle() {
+  for (const b of [guardVert, guardHorz]) b.classList.toggle('on', b.dataset.g === touchGuard);
+}
+syncGuardToggle();
+for (const b of [guardVert, guardHorz]) {
+  // (not locked while guarding: flipping the guard with the other hand is the point)
+  b.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    touchGuard = b.dataset.g === 'horizontal' ? 'horizontal' : 'vertical';
+    store.set('guard', touchGuard);
+    syncGuardToggle();
+    showGuardAngle();
+    audio.tick();
+    if (mode === 'sword') sendOri();
+  });
 }
 
 // ------------------------------------------------------------------ join

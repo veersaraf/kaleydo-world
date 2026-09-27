@@ -7,6 +7,12 @@
 // 0.65 m down the arm from the shoulder, and its accelerometer reads that
 // (W3C signs): so a flat phone with the arm hanging — which the remote first
 // guesses is held up in front — has to be put right by the swing itself.
+//
+// The sword (a program that takes over the pose while it runs): hold() turns
+// the phone to a pose and keeps it there, sword() winds up slowly and strikes
+// through the held pose (the tip travelling at `dir` across the view at the
+// peak), thrust() pushes it along the blade, guard() presses the GUARD pad.
+// The phone swings about the wrist, 0.2 m behind it along the blade.
 export function phone() {
   const D = 180 / Math.PI;
   const qmul = (a, b) => [
@@ -51,13 +57,17 @@ export function phone() {
     const e = (v) => { const k = 1 / (1 + 0.3275911 * Math.abs(v)); const y = 1 - ((((1.061405429 * k - 1.453152027) * k + 1.421413741) * k - 0.284496736) * k + 0.254829592) * k * Math.exp(-v * v); return v >= 0 ? y : -y; };
     return W * sig * (Math.sqrt(Math.PI) / 2) * (1 + e(x));
   };
-  const pose = (t) => qmul(qaxis([0, 0, 1], yaw(t)), qmul(qaxis([1, 0, 0], theta(t)), qmul(qaxis([0, 0, 1], phi(t)), grip)));
+  const armPose = (t) => qmul(qaxis([0, 0, 1], yaw(t)), qmul(qaxis([1, 0, 0], theta(t)), qmul(qaxis([0, 0, 1], phi(t)), grip)));
   const rot = (q, v) => {
     const r = qmul(qmul(q, [v[0], v[1], v[2], 0]), qconj(q));
     return [r[0], r[1], r[2]];
   };
   // the phone on the end of the arm (the tennis swing turns it in place)
-  const where = (t) => rot(qaxis([1, 0, 0], theta(t)), [0, 0, -0.65]);
+  const armWhere = (t) => rot(qaxis([1, 0, 0], theta(t)), [0, 0, -0.65]);
+  // the sword program, when one is running: { pose(t), where(t) }
+  let sd = null;
+  const pose = (t) => (sd ? sd.pose(t) : armPose(t));
+  const where = (t) => (sd ? sd.where(t) : armWhere(t));
   const now = () => performance.now() / 1000;
   // (the script also runs on about:blank first, where the sensor events don't exist)
   if (typeof DeviceOrientationEvent === 'undefined') return;
@@ -96,6 +106,69 @@ export function phone() {
     const { el, x, y } = grab();
     el.dispatchEvent(new PointerEvent(type, { pointerId: id, pointerType: 'touch', isPrimary: true, clientX: x, clientY: y, bubbles: true, cancelable: true }));
   };
+  // ---------------------------------------------------------------- the sword
+  const unit = (v) => {
+    const l = Math.hypot(v[0], v[1], v[2]) || 1;
+    return [v[0] / l, v[1] / l, v[2] / l];
+  };
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const qnorm = (q) => {
+    const l = Math.hypot(q[0], q[1], q[2], q[3]);
+    return q.map((v) => v / l);
+  };
+  /** the rotation whose columns are the device x, y, z axes */
+  const qcols = (x, y, z) => {
+    const [m00, m10, m20] = x, [m01, m11, m21] = y, [m02, m12, m22] = z;
+    const tr = m00 + m11 + m22;
+    if (tr > 0) {
+      const s = Math.sqrt(tr + 1) * 2;
+      return qnorm([(m21 - m12) / s, (m02 - m20) / s, (m10 - m01) / s, s / 4]);
+    }
+    if (m00 > m11 && m00 > m22) {
+      const s = Math.sqrt(1 + m00 - m11 - m22) * 2;
+      return qnorm([s / 4, (m01 + m10) / s, (m02 + m20) / s, (m21 - m12) / s]);
+    }
+    if (m11 > m22) {
+      const s = Math.sqrt(1 + m11 - m00 - m22) * 2;
+      return qnorm([(m01 + m10) / s, s / 4, (m12 + m21) / s, (m02 - m20) / s]);
+    }
+    const s = Math.sqrt(1 + m22 - m00 - m11) * 2;
+    return qnorm([(m02 + m20) / s, (m12 + m21) / s, s / 4, (m10 - m01) / s]);
+  };
+  /** the phone with its top along `top` and its screen facing `screen` (earth = player frame: the TV is north) */
+  const frame = (top, screen) => {
+    const y = unit(top);
+    const k = screen[0] * y[0] + screen[1] * y[1] + screen[2] * y[2];
+    const z = unit([screen[0] - k * y[0], screen[1] - k * y[1], screen[2] - k * y[2]]);
+    return qcols(cross(y, z), y, z);
+  };
+  const slerp = (a, b, u) => {
+    let d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+    const bb = d < 0 ? b.map((v) => -v) : b;
+    d = Math.abs(d);
+    if (d > 0.9995) return qnorm(a.map((v, i) => v + (bb[i] - v) * u));
+    const th = Math.acos(d), s = Math.sin(th);
+    return a.map((v, i) => (v * Math.sin((1 - u) * th) + bb[i] * Math.sin(u * th)) / s);
+  };
+  const ease = (u) => (1 - Math.cos(Math.PI * Math.min(1, Math.max(0, u)))) / 2;
+  const erf = (v) => {
+    const k = 1 / (1 + 0.3275911 * Math.abs(v));
+    const y = 1 - ((((1.061405429 * k - 1.453152027) * k + 1.421413741) * k - 0.284496736) * k + 0.254829592) * k * Math.exp(-v * v);
+    return v >= 0 ? y : -y;
+  };
+  // the pose the sword rests at between moves (flat in the palm to begin with)
+  let held = grip;
+  const onWrist = (q) => {
+    const b = rot(q, [0, 1, 0]);
+    return [0.2 * b[0], 0.2 * b[1], 0.2 * b[2]];
+  };
+  const after = (s) => new Promise((done) => setTimeout(done, s * 1000));
+  const guardPtr = (type) => {
+    const el = document.querySelector('.guard');
+    const r = el.getBoundingClientRect();
+    el.dispatchEvent(new PointerEvent(type, { pointerId: 21, pointerType: 'touch', isPrimary: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true }));
+  };
+
   window.__phone = {
     /** grip, swing back and forward (peak rad/s through the bottom), let go `late` ms after the bottom
      *  (and press pause `homeAfter` ms after letting go, as a sliding thumb might) */
@@ -123,6 +196,59 @@ export function phone() {
     tennis() {
       sw = { kind: 'tennis', tp: now() + 0.6 };
       return new Promise((done) => setTimeout(() => ((sw = null), done()), 1300));
+    },
+    /** turn the phone (smoothly, over `ms`) to hold its top along `top`, screen facing `screen` */
+    hold({ top = [0, 0.8, 0.6], screen = [0, -1, 0], ms = 900 } = {}) {
+      const t0 = now(), T = ms / 1000;
+      const from = pose(t0), to = frame(top, screen);
+      held = to;
+      sd = { pose: (t) => slerp(from, to, ease((t - t0) / T)), where: (t) => onWrist(slerp(from, to, ease((t - t0) / T))) };
+      return after(T + 0.05);
+    },
+    /** a blow through the held pose: wind up slowly (away from it), then strike so the tip
+     *  crosses the view at `dir` (radians, 0 right, π/2 up) at `peak` rad/s; it ends in the follow-through */
+    sword({ dir = 0, peak = 12, rise = 0.06, fall = 0.05, windup = 0.9 } = {}) {
+      const base = held;
+      const b = unit(rot(base, [0, 1, 0]));
+      // the tip's travel at the peak: square to the blade, seen from the front at `dir`
+      const c = Math.cos(dir), s = Math.sin(dir);
+      const axis = unit(cross(b, unit([c, -(c * b[0] + s * b[2]) / b[1], s])));
+      const pre = peak * rise * Math.sqrt(Math.PI / 2), post = peak * fall * Math.sqrt(Math.PI / 2);
+      const t0 = now(), tp = t0 + windup + 0.05 + 3 * rise;
+      // the angle turned since the peak (− before it)
+      const ang = (t) => {
+        if (t < t0 + windup) return -pre * ease((t - t0) / windup);
+        if (t <= tp) return -pre + peak * rise * Math.sqrt(Math.PI / 2) * (1 + erf((t - tp) / (rise * Math.SQRT2))) - (peak * rise * Math.sqrt(Math.PI / 2)) * (1 + erf((t0 + windup - tp) / (rise * Math.SQRT2)));
+        return post * erf((t - tp) / (fall * Math.SQRT2));
+      };
+      const at = (t) => qmul(qaxis(axis, ang(t)), base);
+      sd = { pose: at, where: (t) => onWrist(at(t)) };
+      held = at(tp + 6 * fall);
+      return after(tp - t0 + 6 * fall + 0.05).then(() => ({ tp: tp * 1000 }));
+    },
+    /** push the phone along its blade `dist` m over `dur` s, hold, and bring it back slowly */
+    thrust({ dist = 0.35, dur = 0.25, back = 0.9 } = {}) {
+      const base = held, b = unit(rot(base, [0, 1, 0]));
+      const t0 = now() + 0.05;
+      const push = (t) => {
+        const u = t - t0;
+        if (u <= 0) return 0;
+        if (u < dur) return (dist * (1 - Math.cos((Math.PI * u) / dur))) / 2;
+        if (u < dur + 0.1) return dist;
+        const r = (u - dur - 0.1) / back;
+        return r >= 1 ? 0 : (dist * (1 + Math.cos(Math.PI * r))) / 2;
+      };
+      sd = { pose: () => base, where: (t) => onWrist(base).map((v, k) => v + push(t) * b[k]) };
+      return after(dur + back + 0.25);
+    },
+    /** press (true) or let go of (false) the GUARD pad */
+    guard(down) {
+      guardPtr(down ? 'pointerdown' : 'pointerup');
+    },
+    /** back to the arm model (bowling, tennis) */
+    rest() {
+      sd = null;
+      held = grip;
     },
   };
 }
