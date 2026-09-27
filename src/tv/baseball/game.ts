@@ -17,7 +17,8 @@
 //
 // A phone's swing message gets here 40–120 ms after the swing's fastest moment
 // (its `age`), and the ball the player timed was on screen DISPLAY_LAG after the
-// game computed it: the timing error is e = (t − age − DISPLAY_LAG) − pitch.tc.
+// game computed it (an option: TVs differ): the timing error is
+// e = (t − age − DISPLAY_LAG) − pitch.tc.
 // So a well-timed swing is usually heard about after the ball has gone by on
 // screen — often after it's in the mitt: the ball is rewound out of the mitt to
 // the contact point, everyone's pose back to that moment, and game time freezes
@@ -66,6 +67,8 @@ export interface BaseballOptions {
   pitcherHanded?: 1 | -1;
   /** override any of the pacing (BASEBALL_TIMING) */
   timing?: Partial<BaseballTiming>;
+  /** how long after the game computes a frame the TV shows it, s (default DISPLAY_LAG; a TV over HDMI can be slower) */
+  displayLag?: number;
 }
 
 /** How long things take, s (the camera, HUD and animators can read them). */
@@ -93,7 +96,7 @@ export const BASEBALL_TIMING = {
   throwRelease: 0.3,
   toss: 0.7,
   throwEnd: 0.8,
-  /** a home run this long (real m), or off the sweet spot, is a no-doubter: the batter celebrates (a bat flip) as soon as the swing's done */
+  /** a home run this long (real m), or any struck on the sweet spot, is a no-doubter: the batter celebrates (a bat flip) as soon as the swing's done */
   noDoubt: 132,
   /** a fair ball that comes down short of this (real m) is a dud: the batter hangs his head */
   dud: 100,
@@ -148,6 +151,9 @@ export class BaseballGame {
   readonly pitching: number;
   readonly pitcherHanded: 1 | -1;
   readonly timing: BaseballTiming;
+  /** the display's lag allowed for in judging a person's swing, s, and so how long after tc a swing can still meet the ball */
+  readonly displayLag: number;
+  readonly swingOpen: number;
   /** the hitter in the box */
   readonly batter: BatterState;
   readonly pitcher: PitcherState;
@@ -221,6 +227,8 @@ export class BaseballGame {
     this.pitching = clamp(opts.pitching ?? 0.5);
     this.pitcherHanded = opts.pitcherHanded ?? 1;
     this.timing = { ...BASEBALL_TIMING, ...opts.timing };
+    this.displayLag = clamp(opts.displayLag ?? DISPLAY_LAG, 0, 0.3);
+    this.swingOpen = SWING_OPEN - DISPLAY_LAG + this.displayLag;
     const seed = opts.seed ?? (Math.random() * 2 ** 31) | 0;
     this.rngPitch = new Rng(seed ^ 0x2545f491);
     this.rngHit = new Rng(seed ^ 0x6c8e9cf5);
@@ -392,7 +400,7 @@ export class BaseballGame {
     const now = this.t + clamp(Number.isFinite(since) ? since : 0, 0, 0.1);
     const age = clamp(Number.isFinite(s.age) ? s.age : 0, 0, AGE_MAX);
     // when the swing peaked, and what the player saw then
-    const seen = now - age - DISPLAY_LAG;
+    const seen = now - age - this.displayLag;
     // (swung before the ball was even out of the hand, as it looked: not at this pitch)
     if (seen < p.t0) return;
     const e = seen - p.tc;
@@ -738,7 +746,7 @@ export class BaseballGame {
         this.swingNow = { e: s.e, power: s.power, lift: s.lift };
         this.settleAt = Infinity;
       } else this.settleAt = pitch.t0 + path.arrive;
-    } else this.settleAt = pitch.tc + SWING_OPEN;
+    } else this.settleAt = pitch.tc + this.swingOpen;
     this.emit({ type: 'pitch', pitch });
   }
 

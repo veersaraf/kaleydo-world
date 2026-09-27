@@ -211,6 +211,19 @@ function toResult(g: BaseballGame, dt = DT) {
   }
 }
 {
+  // a slower TV (displayLag): a swing peaking as the ball is shown at the plate measures perfect; the strike waits longer for it
+  const { g, ev } = start([person(0)], { seed: 11, displayLag: 0.1 });
+  pitchOut(g);
+  const p = g.pitch!;
+  const arrive = p.tc + 0.1 + 0.08;
+  while (g.t + DT < arrive) g.step(DT);
+  g.swing(0, { power: 0.9, lift: 0.4, age: 0.08 }, arrive - g.t);
+  near(lastOf(ev, 'swing')?.timing ?? 9, 0, 1e-9, 'displayLag 0.1: a swing at the ball as that TV shows it is perfect');
+  near(g.swingOpen, WINDOW.contact + 0.1 + AGE_MAX, 1e-12, '…and a swing can still meet the ball that much later');
+  const d = new BaseballGame([person(0)], { seed: 1 });
+  ok(d.displayLag === DISPLAY_LAG && d.swingOpen === SWING_OPEN, 'the default: DISPLAY_LAG');
+}
+{
   // a late message outside the window: a swinging strike; the pitch was caught on time
   const { g, ev } = start();
   pitchOut(g);
