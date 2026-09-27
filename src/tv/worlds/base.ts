@@ -167,6 +167,24 @@ export abstract class World {
   batchStats: BatchStats | null = null;
   shake = 0;
 
+  /**
+   * How much optional scenery to draw, 0..1 (grass density and reach, clouds,
+   * flowers…): a quality knob beside resolution and MSAA. Worlds without extras
+   * ignore it; 1 = everything.
+   */
+  get detail() {
+    return this.detailLevel;
+  }
+  set detail(v: number) {
+    v = Math.min(1, Math.max(0, v));
+    if (v === this.detailLevel) return;
+    this.detailLevel = v;
+    this.onDetail(v);
+  }
+  private detailLevel = 1;
+  /** Scale the optional scenery to the detail level. */
+  protected onDetail(_d: number) {}
+
   constructor(
     public def: WorldDef,
     public renderer: THREE.WebGLRenderer,
