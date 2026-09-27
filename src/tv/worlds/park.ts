@@ -14,6 +14,7 @@ import type { MaterialKit, CharRole } from './types';
 import { stringsMat, skyDome, canvasTex } from './mats';
 import { Crowd, type Stand } from './crowd';
 import { Bloom } from '../render/post';
+import { sunRim } from '../render/effects';
 import type { MatchEvent } from '../tennis/match';
 import { COURT } from '../tennis/court';
 import { SKINS } from '../chars/look';
@@ -103,15 +104,53 @@ function grassAt(x: number, z: number) {
   return d;
 }
 
+/** the players' sunlit rim (render/effects.ts sunRim) */
+const RIM = { color: new THREE.Color('#ffe9c8'), strength: 0.6, power: 3, sky: 0.1 };
+
+const sstep = (a: number, b: number, x: number) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+
+/**
+ * The park's display grade (baked into a LUT): vivid but not garish — muted
+ * colours gain the most saturation, skin tones the least — with warm highlights,
+ * slightly cool shadows and a gentle S-curve. Sunny Sunday-afternoon plaza.
+ */
+function sunnyGrade([r, g, b]: [number, number, number]): [number, number, number] {
+  const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  const sat = Math.max(r, g, b) - Math.min(r, g, b);
+  // skin: red > green > blue, moderately saturated
+  const skin = r > g && g > b ? sstep(0.05, 0.2, r - b) * (1 - sstep(0.35, 0.6, sat)) * sstep(0.2, 0.4, l) : 0;
+  const vib = 1 + 0.24 * (1 - sat) * (1 - 0.8 * skin);
+  let R = l + (r - l) * vib,
+    G = l + (g - l) * vib,
+    B = l + (b - l) * vib;
+  // split tone
+  const hi = sstep(0.35, 0.95, l),
+    lo = 1 - sstep(0.05, 0.45, l);
+  R += 0.025 * hi - 0.012 * lo;
+  G += 0.01 * hi - 0.004 * lo;
+  B += -0.03 * hi + 0.02 * lo;
+  // a gentle S-curve around mid grey
+  const curve = (x: number) => {
+    const t = Math.min(1, Math.max(0, x));
+    const s = t * t * (3 - 2 * t);
+    return t + (s - t) * 0.18;
+  };
+  return [curve(R), curve(G), curve(B)];
+}
+
 class ParkWorld extends World {
   kit: MaterialKit = {
     char: (role: CharRole, c: THREE.Color) => {
       if (role === 'eye' || role === 'mouth' || role === 'eyeWhite') return new THREE.MeshBasicMaterial({ color: c });
       if (role === 'cheek') return new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.45 });
       if (role === 'strings') return stringsMat(c);
-      if (role === 'gold') return std(c, 0.3, { metalness: 0.6 });
+      if (role === 'gold') return sunRim(std(c, 0.3, { metalness: 0.6 }), RIM);
       const rough = role === 'skin' ? 0.62 : role === 'hair' ? 0.5 : role === 'racket' || role === 'grip' ? 0.35 : role === 'shoe' ? 0.55 : 0.78;
-      return std(c, rough);
+      // the main camera looks into the sun: a sunlit rim keeps the players round
+      return sunRim(std(c, rough), RIM);
     },
     outline: null,
     castShadow: true,
@@ -133,32 +172,15 @@ class ParkWorld extends World {
   protected build() {
     const s = this.scene;
     s.fog = new THREE.Fog('#dcefff', 80, 360);
-    s.add(
-      skyDome(new THREE.Color('#3f94ee'), new THREE.Color('#e3f4ff'), {
-        sunDir: new THREE.Vector3(-0.5, 0.6, -1),
-        sunColor: new THREE.Color('#fff7e2'),
-        sunSize: 0.01,
-        ground: new THREE.Color('#c9c3bb'),
-      }),
-    );
-
-    // light: a warm sun with soft shadows and a strong sky fill (Switch Sports' bright, gentle look)
-    const sun = new THREE.DirectionalLight('#fff3df', 3.1);
-    sun.position.set(-14, 30, -10);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.radius = 3;
-    const sc = sun.shadow.camera as THREE.OrthographicCamera;
-    sc.left = -20;
-    sc.right = 20;
-    sc.top = 26;
-    sc.bottom = -26;
-    sc.near = 5;
-    sc.far = 90;
-    sun.shadow.bias = -0.0005;
-    sun.shadow.normalBias = 0.02;
-    s.add(sun, sun.target);
-    s.add(new THREE.HemisphereLight('#dcecff', '#c8b8a6', 1.35));
+    const sunDir = new THREE.Vector3(-0.5, 0.6, -1);
+    const sky = skyDome(new THREE.Color('#3f94ee'), new THREE.Color('#e3f4ff'), {
+      sunDir,
+      sunColor: new THREE.Color('#fff7e2'),
+      sunSize: 0.01,
+      ground: new THREE.Color('#c9c3bb'),
+    });
+    s.add(sky);
+    this.light(sky, sunDir);
 
     this.buildGround();
     this.buildCourt({
@@ -198,6 +220,35 @@ class ParkWorld extends World {
     f.uGain.value.set(1.02, 1.0, 0.98);
     f.uVignette.value = 0.14;
     f.uGrain.value = 0.004;
+  }
+
+  /**
+   * A warm sun with soft shadows, and the sky itself as the fill: image-based
+   * light from the dome (blue from above, the plaza's bounce from below),
+   * ambient occlusion, contact shadows, glare and shafts when the sun is in
+   * view, and a sunny grade (render/effects.ts).
+   */
+  private light(sky: THREE.Mesh, sunDir: THREE.Vector3) {
+    const s = this.scene;
+    const sun = new THREE.DirectionalLight('#fff3df', 3.1);
+    sun.position.set(-14, 30, -10);
+    sun.castShadow = true;
+    sun.shadow.bias = -0.0005;
+    sun.shadow.normalBias = 0.02;
+    s.add(sun, sun.target);
+    // a little warm, flat fill on top keeps shadows friendly rather than cold
+    s.add(new THREE.HemisphereLight('#fff2e0', '#d8c4ae', 0.3));
+    this.effects = {
+      // (no PMREM reflections: ~1.4 ms at pr 1.5 for a faint sheen; the probe light is free)
+      ibl: { sky, diffuse: 0.5, saturation: 0.4 },
+      ao: { radius: 0.9, strength: 0.75, intensity: 1.2, protectLit: 0.45 },
+      sun: { dir: sunDir, color: new THREE.Color('#fff0d8'), shafts: 0.5, flare: 0.8 },
+      grade: { tonemap: 'aces', lut: sunnyGrade },
+      contact: { strength: 0.6, color: new THREE.Color('#4a4458') },
+      // the court, its run-off, the stands and the pavilion's columns (shadow map fitted to it)
+      shadow: { light: sun, area: new THREE.Box3(new THREE.Vector3(-16, 0, -23), new THREE.Vector3(16, 10, 19)), softness: 0.07 },
+      dof: true,
+    };
   }
 
   /** Coral court with big, faint painted swirls (Spocco-style). */

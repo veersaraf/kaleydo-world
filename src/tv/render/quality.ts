@@ -1,6 +1,13 @@
 // Dynamic quality: keeps the frame rate locked by trading render resolution and
-// MSAA against the GPU time each frame actually takes.
+// effects against the GPU time each frame actually takes.
 //
+//  • Each level is a render scale and an effects tier (render/effects.ts). At a
+//    given scale the effects go first: from the top, a step down drops the tier
+//    before the resolution.
+//  • Anti-aliasing is FXAA in the final pass, not MSAA: on WebGL/ANGLE-Metal an
+//    MSAA buffer is stored and blitted every frame (three.js can't invalidate it
+//    on Chrome), which cost more than rendering at a higher scale — pr 1.75 with
+//    FXAA is sharper than pr 1.3 with MSAA 4, and cheaper (see scripts/gpu-bench.mjs).
 //  • GPU time comes from timer queries (EXT_disjoint_timer_query_webgl2); without
 //    them we fall back to counting late frames.
 //  • It steps down quickly and up reluctantly: only with clear headroom, only if
@@ -15,22 +22,35 @@ import type * as THREE from 'three';
 export interface QLevel {
   pr: number;
   msaa: number;
+  /** effects tier (render/effects.ts FX_TIERS) */
+  fx: number;
 }
 
 export const LEVELS: QLevel[] = [
-  { pr: 0.6, msaa: 0 },
-  { pr: 0.75, msaa: 2 },
-  { pr: 0.9, msaa: 2 },
-  { pr: 1.0, msaa: 4 },
-  { pr: 1.15, msaa: 4 },
-  { pr: 1.3, msaa: 4 },
-  { pr: 1.5, msaa: 4 },
-  { pr: 1.75, msaa: 4 },
-  { pr: 2.0, msaa: 4 },
+  { pr: 0.75, msaa: 0, fx: 0 },
+  { pr: 0.9, msaa: 0, fx: 1 },
+  { pr: 1.0, msaa: 0, fx: 2 },
+  { pr: 1.0, msaa: 0, fx: 3 },
+  { pr: 1.15, msaa: 0, fx: 2 },
+  { pr: 1.15, msaa: 0, fx: 3 },
+  { pr: 1.3, msaa: 0, fx: 2 },
+  { pr: 1.3, msaa: 0, fx: 3 },
+  { pr: 1.5, msaa: 0, fx: 2 },
+  { pr: 1.5, msaa: 0, fx: 3 },
+  { pr: 1.75, msaa: 0, fx: 3 },
+  { pr: 2.0, msaa: 0, fx: 3 },
 ];
 
-const STORE = 'kaleido.quality';
-const cost = (l: QLevel) => l.pr * l.pr * (1 + l.msaa * 0.12);
+/** where a Retina screen starts: pr 1.5 with every effect */
+const START_RETINA = 9;
+/** …and a 1× screen: native resolution with every effect */
+const START_1X = 3;
+
+// (a new key: the levels' meaning changed with the effects tiers)
+const STORE = 'kaleido.quality.v2';
+/** relative GPU cost of an effects tier (AO, shafts…) on top of the scene */
+const FX_COST = [1, 1.05, 1.15, 1.25];
+const cost = (l: QLevel) => l.pr * l.pr * (1 + l.msaa * 0.4) * FX_COST[l.fx];
 
 export class Quality {
   level: number;
@@ -60,8 +80,8 @@ export class Quality {
       if (l.pr <= Math.max(1, dpr) + 0.01) max = i;
     });
     this.maxLevel = max;
-    // a Retina screen starts at 1.3× (sharp, and affordable on most Macs)
-    this.level = Math.min(max, dpr > 1.2 ? 5 : 3);
+    // a Retina screen starts at 1.5× with every effect (sharp, and affordable on most Macs)
+    this.level = Math.min(max, dpr > 1.2 ? START_RETINA : START_1X);
     try {
       this.saved = JSON.parse(localStorage.getItem(STORE) || '{}');
     } catch {

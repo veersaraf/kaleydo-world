@@ -49,6 +49,7 @@ const SHOT_TINT: Record<string, THREE.Color> = {
 /** ?nobatch in the URL turns static batching off (for A/B checks) */
 const NO_BATCH = typeof location !== 'undefined' && new URLSearchParams(location.search).has('nobatch');
 import { makeRT, finalPass, Pass, Bloom, BLACK } from '../render/post';
+import { PostFX, ContactShadows, bakeSkyProbe, bakeSkyReflections, makeLut, fitShadow, TONEMAPS, FX_TIERS, type WorldEffects, type DofState } from '../render/effects';
 import type { V3 } from '../core/math';
 
 export interface WorldUI {
@@ -166,6 +167,21 @@ export abstract class World {
   flashColor = new THREE.Color(1, 1, 1);
   batchStats: BatchStats | null = null;
   shake = 0;
+  /**
+   * Opt-in lighting and post effects (render/effects.ts), set in build(): sky
+   * light, AO, sun glare and shafts, a grade, contact shadows, a fitted sun
+   * shadow, depth of field. The default render() runs them. A world with its own
+   * render() calls `this.post?.plan(cam)` before drawing its scene (true = resolve
+   * the buffer's depth) and `this.post?.render(r, buffer, cam)` after, then draws
+   * through `this.final`, which has the results.
+   */
+  effects: WorldEffects = {};
+  /** the screen passes the effects need (null when none do) */
+  protected post: PostFX | null = null;
+  private contact: ContactShadows | null = null;
+  /** the baked sky light: kept out of the render-target scan, which would release it */
+  #env: THREE.WebGLRenderTarget | null = null;
+  private fxTier = FX_TIERS.length - 1;
 
   /**
    * How much optional scenery to draw, 0..1 (grass density and reach, clouds,
@@ -211,10 +227,73 @@ export abstract class World {
         this.animate({ t, dt: 0.1, realT: t, realDt: 0.1, ball: { x: bx, y: 1.2, z: bx * 2 }, ballSpeed: 10, ballVisible: true, holder: -1, poses: [], excitement: 0.6, state: 'play', cam: probeCam, beat: 0.7 });
     });
     this.sceneRT = makeRT(1, 1, { depth: true, samples: this.samples() });
+    // after the scenery moved into `env`: contact shadows follow the players in
+    // world space, and must not turn with the backdrop for the far view
+    this.setupEffects();
   }
 
   protected samples() {
     return 4;
+  }
+
+  /** whether the final pass may anti-alias a scene drawn without MSAA (off for deliberately crisp styles) */
+  protected fxaa = true;
+
+  /** Turn on what `effects` asks for: bake the sky light, build the grade, make the passes. */
+  private setupEffects() {
+    const e = this.effects;
+    if (e.ibl) {
+      const probe = bakeSkyProbe(this.renderer, e.ibl.sky, e.ibl.saturation);
+      probe.intensity = e.ibl.diffuse ?? 1;
+      this.scene.add(probe);
+      if (e.ibl.specular) {
+        this.#env = bakeSkyReflections(this.renderer, e.ibl.sky);
+        this.scene.environment = this.#env.texture;
+        this.scene.environmentIntensity = e.ibl.specular;
+      }
+    }
+    if (e.grade) {
+      const f = this.final.u;
+      if (e.grade.tonemap) f.uTonemap.value = TONEMAPS[e.grade.tonemap];
+      if (e.grade.lut) {
+        f.tLut.value = makeLut(e.grade.lut);
+        f.uLut.value = 1;
+      }
+    }
+    if (e.contact) {
+      this.contact = new ContactShadows(e.contact);
+      this.scene.add(this.contact.mesh);
+    }
+    if (e.ao || e.sun || e.dof) {
+      this.post = new PostFX(e, this.final);
+      this.post.setTier(this.fxTier);
+    }
+    this.fitSun();
+  }
+
+  /** The effects tier (render/quality.ts): heavy passes switch off first when the GPU is short. */
+  setFxTier(t: number) {
+    if (t === this.fxTier) return;
+    this.fxTier = t;
+    this.post?.setTier(t);
+    this.fitSun();
+  }
+
+  /** Fit the sun's shadow camera to this sport's area at this tier's map size. */
+  private fitSun() {
+    const s = this.effects.shadow;
+    if (!s) return;
+    fitShadow(s.light, s.sports?.[this.sport] ?? s.area, FX_TIERS[this.fxTier].shadowMap, s.softness ?? 0.07, this.env.rotation.y !== 0);
+  }
+
+  /** Depth of field for cutscenes and replays (needs `effects.dof`): null turns it off. */
+  setDof(d: DofState | null) {
+    if (this.post) this.post.dof = d;
+  }
+
+  /** Stage.prime: run every effect pass once so they all compile now, behind the loader. */
+  set priming(on: boolean) {
+    if (this.post) this.post.priming = on;
   }
 
   /** Subclasses build scenery here (and must set up ball/trail/particles via helpers). */
@@ -484,13 +563,16 @@ export abstract class World {
     return this.rtList;
   }
 
-  /** Make sure the buffers match the view (size, pixel ratio, MSAA). */
-  fitTargets(w: number, h: number, pr: number, msaa: number) {
+  /** Make sure the buffers match the view (size, pixel ratio, MSAA, effects tier). */
+  fitTargets(w: number, h: number, pr: number, msaa: number, fx = this.fxTier) {
     const s = Math.min(msaa, this.samples());
     if (this.sceneRT.samples !== s) {
       this.sceneRT.samples = s;
       this.sceneRT.dispose();
     }
+    // no MSAA: the final pass smooths the edges instead (FXAA, a few taps)
+    this.final.u.uFxaa.value = s === 0 && this.fxaa ? 1 : 0;
+    this.setFxTier(fx);
     if (this.w !== w || this.h !== h || this.pixelRatio !== pr) this.resize(w, h, pr);
   }
 
@@ -504,6 +586,7 @@ export abstract class World {
   update(v: FrameView) {
     this.time = v.realT;
     for (let i = 0; i < this.rigs.length && i < v.poses.length; i++) this.rigs[i].apply(v.poses[i]);
+    this.contact?.update(this.rigs, v.poses);
     // ball
     const b = this.ball;
     if (v.holder >= 0 && this.rigs[v.holder]) {
@@ -584,12 +667,17 @@ export abstract class World {
     if (this.netGroup) this.netGroup.visible = tennis;
     if (this.netMesh) this.netMesh.visible = tennis;
     for (const o of this.tennisOnly) o.visible = tennis;
+    this.fitSun();
   }
 
   /** Which view is about to render: 0 = the normal one, 1 = the far player's split-screen half. */
   setView(i: number, cam?: THREE.PerspectiveCamera) {
     const r = i === 1 ? Math.PI : 0;
-    if (this.env.rotation.y !== r) this.env.rotation.y = r;
+    if (this.env.rotation.y !== r) {
+      this.env.rotation.y = r;
+      // the sun turns with the scenery: so does its shadow camera's up (the fit stays valid)
+      this.effects.shadow?.light.shadow.camera.up.set(0, 0, i === 1 ? 1 : -1);
+    }
     if (cam) this.fitBall(cam);
   }
 
@@ -675,6 +763,7 @@ export abstract class World {
       H = Math.floor(h * pr);
     this.sceneRT.setSize(W, H);
     this.bloom?.setSize(W, H);
+    this.post?.setSize(W, H);
     this.final.u.uRes.value.set(W, H);
     this.onResize(W, H);
   }
@@ -684,11 +773,14 @@ export abstract class World {
   /** Render the world into `target` (null = screen). */
   render(cam: THREE.PerspectiveCamera, target: THREE.WebGLRenderTarget | null) {
     const r = this.renderer;
+    // resolving the MSAA depth costs as much as a full-screen pass: only when an effect reads it
+    this.sceneRT.resolveDepthBuffer = !!this.post?.plan(cam);
     r.setRenderTarget(this.sceneRT);
     r.clear();
     r.render(this.scene, cam);
     const f = this.final.u;
     f.tScene.value = this.sceneRT.texture;
+    this.post?.render(r, this.sceneRT, cam);
     f.tBloom.value = this.bloom ? this.bloom.render(r, this.sceneRT.texture) : BLACK;
     f.uTime.value = this.time;
     f.uFlash.value = this.flash;
@@ -714,5 +806,9 @@ export abstract class World {
     this.final.dispose();
     this.trail.dispose();
     this.particles.dispose();
+    this.post?.dispose();
+    this.contact?.dispose();
+    this.#env?.dispose();
+    (this.final.u.tLut.value as THREE.Texture | null)?.dispose();
   }
 }
