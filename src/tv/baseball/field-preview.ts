@@ -575,12 +575,15 @@ function perf(n = 600) {
 }
 
 /**
- * GPU time of a whole frame (timer queries) with the park on and off, taking
- * turns frame by frame so whatever else loads the GPU hits both alike: the
- * medians and the 10th percentiles (the least disturbed frames) of each.
+ * GPU time of a whole frame (timer queries) with the park — or one of its parts
+ * (`part`: a name from parts()) — on and off, taking turns frame by frame so
+ * whatever else loads the GPU hits both alike: the medians and the 10th
+ * percentiles (the least disturbed frames) of each, and the paired differences.
  */
-async function gpu(frames = 400, camera?: string) {
+async function gpu(frames = 400, camera?: string, part?: string) {
   if (camera) camName = camera;
+  const target = part ? venue.group.children.find((o, i) => partName(o, i) === part) : venue.group;
+  if (!target) return null;
   const gl = renderer.getContext() as WebGL2RenderingContext;
   const ext = gl.getExtension('EXT_disjoint_timer_query_webgl2');
   if (!ext) return null;
@@ -599,7 +602,7 @@ async function gpu(frames = 400, camera?: string) {
   for (let i = 0; i < frames; i++) {
     const on = (i & 1) === ((i >> 1) & 1);
     ons.push(on);
-    venue.group.visible = on;
+    target.visible = on;
     const qq = gl.createQuery()!;
     gl.beginQuery(ext.TIME_ELAPSED_EXT, qq);
     placeCam();
@@ -613,7 +616,7 @@ async function gpu(frames = 400, camera?: string) {
     await new Promise((r) => requestAnimationFrame(r));
     collect();
   }
-  venue.group.visible = true;
+  target.visible = true;
   benching = false;
   const sorted = (a: number[]) => [...a].sort((x, y) => x - y);
   const pct = (a: number[], p: number) => +sorted(a)[Math.min(a.length - 1, Math.floor(p * a.length))].toFixed(3);
@@ -640,6 +643,12 @@ async function gpu(frames = 400, camera?: string) {
   };
 }
 
+/** The park's meshes that draw right now, by name (for gpu()'s `part`). */
+const partName = (o: THREE.Object3D, i: number) => `${i}:${o.name || (o as THREE.Mesh).material?.constructor.name || o.type}`;
+function parts() {
+  return venue.group.children.map((o, i) => [partName(o, i), o.visible] as const).filter(([, v]) => v).map(([n]) => n);
+}
+
 /** seek() and hand back the frame as a PNG data url (read in the same task as the draw) */
 function capture(t: number, camera?: string) {
   seek(t, camera);
@@ -662,7 +671,7 @@ function timings() {
   return Object.fromEntries(pitches.map((p) => [p.name, { windup: p.t0, release: p.release, contact: p.tc, out: p.tOut, land: p.tLand, end: p.end }]));
 }
 
-(window as unknown as { field: unknown }).field = { ready: false, seek, capture, look, stats, perf, gpu, at, timings, cycle: CYCLE, venue, view, world: w };
+(window as unknown as { field: unknown }).field = { ready: false, seek, capture, look, stats, perf, gpu, parts, at, timings, cycle: CYCLE, venue, view, world: w };
 
 if (q.has('t')) seek(Number(q.get('t')));
 else seek(0);
