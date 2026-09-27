@@ -60,9 +60,10 @@ export class BaseballCamera {
   /** Behind the catcher, looking out at the pitcher; the batter on one side. */
   private batView(b: BatterState) {
     const s = b.handed;
-    this.tp.set(0.3 * s, 2.02, FIELD.homeZ + 4.7);
-    this.tl.set(0.06 * s, 1.18, 2.4);
-    this.fov = 33;
+    // high enough over the catcher to see the whole zone, the pitcher out beyond
+    this.tp.set(0.5 * s, 3.8, FIELD.homeZ + 4.4);
+    this.tl.set(-0.1 * s, 0.5, 7.5);
+    this.fov = 40;
   }
 
   /** The new hitter as they step in: from in front of them, out towards the mound. */
