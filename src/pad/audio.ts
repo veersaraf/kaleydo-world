@@ -97,6 +97,68 @@ export class PadAudio {
     this.noiseBurst(t, 0.16 + p * 0.06, 'bandpass', 500, 2600 + p * 1400, 1.4, 0.18 + p * 0.25);
   }
 
+  /** Duel: a sword stroke through the air — quicker and brighter than the racket's swish. */
+  slash(power = 0.6) {
+    if (!this.ok) return;
+    const t = this.ctx!.currentTime + 0.001;
+    const p = Math.max(0.1, Math.min(1, power));
+    this.noiseBurst(t, 0.11 + p * 0.07, 'bandpass', 900, 3400 + p * 2200, 2.2, 0.2 + p * 0.3);
+  }
+
+  /** Duel: a thrust — a short rising "fft". */
+  thrust(power = 0.6) {
+    if (!this.ok) return;
+    const t = this.ctx!.currentTime + 0.001;
+    const p = Math.max(0.1, Math.min(1, power));
+    this.noiseBurst(t, 0.1, 'bandpass', 1300, 4400, 3, 0.18 + p * 0.25);
+    this.tone(t, 280, 0.07, 0.1, 'sine', 620);
+  }
+
+  /** Duel: the guard goes up — a short metallic "shing". */
+  guard() {
+    if (!this.ok) return;
+    const t = this.ctx!.currentTime + 0.001;
+    this.noiseBurst(t, 0.05, 'highpass', 7000, 4500, 0.7, 0.07);
+    this.tone(t, 2637, 0.09, 0.05, 'triangle');
+    this.tone(t + 0.015, 3951, 0.13, 0.035, 'sine');
+  }
+
+  /** Duel: your guard stopped a blow — blades meet, a bright clang. */
+  clank(power = 0.7) {
+    if (!this.ok) return;
+    const t = this.ctx!.currentTime + 0.001;
+    const p = Math.max(0.2, Math.min(1, power));
+    this.noiseBurst(t, 0.06, 'highpass', 6000, 2500, 0.8, 0.3 + p * 0.3);
+    // a struck bar rings at inharmonic partials, the high ones dying first
+    for (const [f, g, d] of [
+      [523, 0.16, 0.55],
+      [1307, 0.13, 0.42],
+      [2213, 0.1, 0.3],
+      [3571, 0.07, 0.2],
+    ])
+      this.tone(t, f * (0.98 + Math.random() * 0.04), d * (0.7 + p * 0.3), g * (0.6 + p * 0.4), 'sine');
+  }
+
+  /** Duel: you took a hit — a dull thud. */
+  thud(power = 0.7) {
+    if (!this.ok) return;
+    const t = this.ctx!.currentTime + 0.001;
+    const p = Math.max(0.2, Math.min(1, power));
+    this.noiseBurst(t, 0.14, 'lowpass', 900, 150, 0.9, 0.5 + p * 0.4);
+    this.tone(t, 150, 0.22, 0.55 + p * 0.3, 'sine', 48);
+    this.tone(t + 0.01, 95, 0.18, 0.3, 'triangle', 40);
+  }
+
+  /** Duel: your blow landed — a padded thwack and a little ding. */
+  thwack(power = 0.7) {
+    if (!this.ok) return;
+    const t = this.ctx!.currentTime + 0.001;
+    const p = Math.max(0.2, Math.min(1, power));
+    this.noiseBurst(t, 0.09, 'bandpass', 2200, 600, 1.4, 0.5 + p * 0.35);
+    this.tone(t, 260 + p * 60, 0.12, 0.4 + p * 0.2, 'triangle', 110);
+    this.tone(t + 0.03, 1760, 0.2, 0.08, 'sine');
+  }
+
   toss() {
     if (!this.ok) return;
     const t = this.ctx!.currentTime + 0.001;

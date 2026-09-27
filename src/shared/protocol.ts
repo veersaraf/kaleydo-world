@@ -56,7 +56,9 @@ export type PadMsg =
    *  held, `arm` = the bowling arm's pendulum angle, radians, −2.2 … 2.2: 0 = hanging
    *  straight down, + = forward/up, − = behind (as BowlerState.arm). Guessed at the
    *  grip from how the phone is held (looked at in front ≈ +1.1), then tracked; the
-   *  swing itself shows where the arm is within a fraction of a second */
+   *  swing itself shows where the arm is within a fraction of a second. In a duel
+   *  s is the blade: ~30 a second (10 over the HTTP fallback); without motion sensors
+   *  the pose the guard toggle says (upright, or across the body) */
   | { type: 'ori'; s: [number, number, number]; n: [number, number, number]; arm?: number }
   /** bowling: the grip (hold the ball) went down / was let go */
   | { type: 'grip'; down: boolean; lat: number }
@@ -66,12 +68,16 @@ export type PadMsg =
    *  across the body = ±), or against the calibrated screen when there was no real backswing */
   | { type: 'bowl'; speed: number; angle: number; spin: number; lat: number; touch?: boolean }
   /** sword duel: the guard button went down / was let go. While it's held the
-   *  sword guards at whatever angle the phone is held (from the 'ori' stream) */
+   *  sword guards at whatever angle the phone is held (from the 'ori' stream; one
+   *  goes just before each 'guard' with the angle it went up / came down at) */
   | { type: 'guard'; down: boolean; lat: number }
   /** sword duel: an attack, measured from the swing. slash: `dir` = which way the
    *  phone's top (the sword's tip) travelled across the player's view, radians:
    *  0 = right, π/2 = up, −π/2 = down (a chop), ±π = left. thrust: a push towards
-   *  the screen (dir unused). power 0..1 = how hard. touch = from an on-screen swipe */
+   *  the screen (dir 0, unused). power 0..1 = how hard. touch = from an on-screen
+   *  swipe (a tap is a thrust). Sent ~35 ms after the swing's peak (a thrust: as the
+   *  arm is half-way out), just after an 'ori' with the pose it struck in; never
+   *  while the guard is held — let go of it to attack */
   | { type: 'slash'; kind: 'slash' | 'thrust'; dir: number; power: number; lat: number; touch?: boolean };
 
 /** bowl = your turn to bowl: the grip pad plus move (◀ ▶ = btn left/right) and
