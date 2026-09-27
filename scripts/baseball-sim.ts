@@ -111,16 +111,18 @@ export function playTurn(who: number | PersonModel, seed: number, t: Tally, opts
   const g = new BaseballGame(hitters, { seed, ...opts });
   const rng = new Rng(seed * 31 + 7);
   const person = cpu ? null : new SimPerson(who, 0, rng);
-  let readyT = -1;
   let hrs = 0;
+  // the pacing: windup to windup, by how the pitch between ended
+  let lastWindup = -1;
+  let lastOutcome: keyof Tally['pace'] | null = null;
   g.onEvent = (e: BaseballEvent) => {
     if (e.type === 'windup') {
-      /* (the pitch cycle is timed from one windup to the next) */
+      if (lastWindup >= 0 && lastOutcome) t.pace[lastOutcome].push(g.t - lastWindup);
+      lastWindup = g.t;
     }
-    if (e.type === 'contact') {
-      if (e.ball.sweet) t.sweet++;
-    }
+    if (e.type === 'contact' && e.ball.sweet) t.sweet++;
     if (e.type === 'result') {
+      lastOutcome = e.outcome;
       t.pitches++;
       const b = g.hit;
       if (e.outcome === 'homerun') {
@@ -137,19 +139,7 @@ export function playTurn(who: number | PersonModel, seed: number, t: Tally, opts
       if (e.outcome === 'strike') t.miss++;
     }
   };
-  let lastWindup = -1;
-  let lastOutcome: keyof Tally['pace'] | null = null;
-  const onEv = g.onEvent;
-  g.onEvent = (e) => {
-    onEv(e);
-    if (e.type === 'windup') {
-      if (lastWindup >= 0 && lastOutcome) t.pace[lastOutcome].push(g.t - lastWindup);
-      lastWindup = g.t;
-    }
-    if (e.type === 'result') lastOutcome = e.outcome;
-  };
   g.skip();
-  void readyT;
   while (g.state !== 'over' && g.t < 600) {
     // a browser's frame times wander
     const dt = (1 / 60) * rng.range(0.7, 1.3);
@@ -172,6 +162,7 @@ const q = (a: number[], p: number) => {
   return s[Math.min(s.length - 1, Math.floor(p * s.length))].toFixed(0).padStart(3);
 };
 const mean = (a: number[]) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
+const pq = (a: number[], p: number) => (a.length ? [...a].sort((x, y) => x - y)[Math.min(a.length - 1, Math.floor(p * a.length))].toFixed(1) : '—');
 
 export function report(label: string, t: Tally) {
   console.log(
@@ -236,7 +227,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const P = all.pace;
   const n = P.strike.length + P.foul.length + P.hit.length + P.homerun.length;
   console.log(
-    `pacing, windup to windup: strike ${mean(P.strike).toFixed(2)} s, foul ${mean(P.foul).toFixed(2)} s, hit ${mean(P.hit).toFixed(2)} s, home run ${mean(P.homerun).toFixed(2)} s (${q(P.homerun, 0.1)}…${q(P.homerun, 0.9)}); ` +
+    `pacing, windup to windup: strike ${mean(P.strike).toFixed(2)} s, foul ${mean(P.foul).toFixed(2)} s, hit ${mean(P.hit).toFixed(2)} s, home run ${mean(P.homerun).toFixed(2)} s (10th–90th pct ${pq(P.homerun, 0.1)}–${pq(P.homerun, 0.9)} s); ` +
       `average ${((P.strike.reduce((a, b) => a + b, 0) + P.foul.reduce((a, b) => a + b, 0) + P.hit.reduce((a, b) => a + b, 0) + P.homerun.reduce((a, b) => a + b, 0)) / Math.max(1, n)).toFixed(2)} s a pitch`,
   );
   console.log(`step(): ${((1000 * all.stepMs) / all.steps).toFixed(2)} µs a frame on average over ${(all.steps / 1e6).toFixed(2)}M frames, worst ${(1000 * all.maxStepMs).toFixed(0)} µs.`);

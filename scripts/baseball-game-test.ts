@@ -18,7 +18,7 @@
 import { BaseballGame, BASEBALL_TIMING, DISPLAY_LAG, WINDOW, SWING_OPEN, HITSTOP, AGE_MAX, WAITING_SPOTS, type BaseballOptions } from '../src/tv/baseball/game';
 import { FIELD, DELIVERY, SWING, fenceAt, realFenceAt, sprayOf, isFair } from '../src/tv/baseball/field';
 import type { BaseballEvent, BatSwing, Hitter, PitchKind } from '../src/tv/baseball/types';
-import { FLY, MITT_Z, PITCH_KINDS, PITCH_RUN, REAL, batBall, pitchAt, planPitch, readout, realFlight, sample, timingQuality, type FlightSample, type WorldFlight } from '../src/tv/baseball/physics';
+import { MITT_Z, PITCH_KINDS, PITCH_RUN, batBall, pitchAt, planPitch, readout, realFlight, sample, timingQuality, type FlightSample, type WorldFlight } from '../src/tv/baseball/physics';
 import { PITCHER, choosePitch, hitterProfile } from '../src/tv/baseball/ai';
 import { Rng } from '../src/tv/core/math';
 
@@ -41,15 +41,6 @@ const cpu = (skill: number, handed: 1 | -1 = 1, color = '#39f'): Hitter => ({ na
 /** frame time for the checks */
 const DT = Number(process.env.BASEBALL_DT ?? 1 / 60);
 
-function run(g: BaseballGame, secs: number, dt = DT) {
-  const end = g.t + secs;
-  while (g.t < end - 1e-9) {
-    const before = g.t;
-    g.step(Math.min(dt, end - g.t));
-    // (a hitstop eats frames without moving the clock)
-    if (g.t === before && g.hitstop <= 0) break;
-  }
-}
 function until(g: BaseballGame, cond: () => boolean, max = 30, dt = DT) {
   let frames = 0;
   const cap = max / dt + 400;
@@ -884,8 +875,6 @@ function cpuDerby(seed: number, dt: number, pitching = 0.5) {
   within(avg(0.3), 1.3, 2.7, 'Rookie: about 2 home runs in 10');
   within(avg(0.6), 3.2, 4.8, 'Pro: about 4');
   within(avg(0.9), 5.6, 7.4, 'Ace: about 6.5');
-  void REAL;
-  void FLY;
 }
 
 console.log(fails ? `${fails} of ${checks} baseball checks FAILED.` : `All ${checks} baseball checks passed.`);
