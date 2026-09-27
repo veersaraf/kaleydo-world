@@ -127,9 +127,9 @@ class ParkWorld extends World {
 
   /**
    * A warm sun with soft shadows, and the sky itself as the fill: image-based
-   * light from the dome (blue from above, the plaza's bounce from below, faint
-   * reflections), ambient occlusion, contact shadows, glare and shafts when
-   * the sun is in view, and a sunny grade (render/effects.ts).
+   * light from the dome (blue from above, the plaza's bounce from below),
+   * ambient occlusion, contact shadows, glare and shafts when the sun is in
+   * view, and a sunny grade (render/effects.ts).
    */
   private light(sky: THREE.Mesh, sunDir: THREE.Vector3) {
     const s = this.scene;
@@ -142,7 +142,8 @@ class ParkWorld extends World {
     // a little warm, flat fill on top keeps shadows friendly rather than cold
     s.add(new THREE.HemisphereLight('#fff2e0', '#d8c4ae', 0.3));
     this.effects = {
-      ibl: { sky, diffuse: 0.5, saturation: 0.4, specular: 0.12 },
+      // (no PMREM reflections: ~1.4 ms at pr 1.5 for a faint sheen; the probe light is free)
+      ibl: { sky, diffuse: 0.5, saturation: 0.4 },
       ao: { radius: 0.9, strength: 0.75, intensity: 1.2, protectLit: 0.45 },
       sun: { dir: sunDir, color: new THREE.Color('#fff0d8'), shafts: 0.5, flare: 0.8 },
       grade: { tonemap: 'aces', lut: sunnyGrade },
