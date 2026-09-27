@@ -550,12 +550,12 @@ export class App {
     const view = g.view();
     this.archCam.update(g, view, realDt, this.realT);
     // the archer up on the line; the others wait to the side, watching
-    const poses = g.archers.map((a, i) => {
-      if (i === g.current) return this.archAnims[i].update(g.t, Math.max(1e-4, gdt), g.archer);
+    const states = g.archers.map((a, i): ArcherState => {
+      if (i === g.current) return g.archer;
       const order = (i - g.current + g.archers.length) % g.archers.length;
-      const s: ArcherState = { x: -(2.2 + (order - 1) * 0.9), z: RANGE.lineZ + 1.6, handed: a.handed, phase: 'idle', t: g.t, draw: 0, yaw: -0.6, pitch: 0 };
-      return this.archAnims[i].update(g.t, Math.max(1e-4, dt), s);
+      return { x: -(2.2 + (order - 1) * 0.9), z: RANGE.lineZ + 1.6, handed: a.handed, phase: 'idle', t: g.t, draw: 0, yaw: -0.6, pitch: 0 };
     });
+    const poses = states.map((s, i) => this.archAnims[i].update(g.t, Math.max(1e-4, i === g.current ? gdt : dt), s));
     const fv: FrameView = {
       t: g.t,
       dt,
@@ -573,10 +573,7 @@ export class App {
       range: view,
     };
     this.stage.update(fv);
-    this.archGear.get(w)?.update(
-      g.archers.map((_, i) => (i === g.current ? g.archer : null)),
-      realDt,
-    );
+    this.archGear.get(w)?.update(states, realDt);
     this.stage.render(this.archCam.cam);
     // the sight: where a full-draw arrow would land on the target's plane with no
     // wind (so the drop is taken care of and you judge the wind); it shakes as the aim does

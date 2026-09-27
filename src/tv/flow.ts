@@ -1119,6 +1119,8 @@ export class Flow {
       }
       case 'over': {
         crowd?.sfx.cheer(1);
+        hud?.hideTurn();
+        hud?.update(g.scores, g.arrows, -1);
         window.setTimeout(() => {
           if (this.app.sport !== 'archery' || this.app.archery !== g) return;
           if (this.app.attract) this.app.startAttract(this.app.stage.current?.def.id ?? 'park', 'archery');

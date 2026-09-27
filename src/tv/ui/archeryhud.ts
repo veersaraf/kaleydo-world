@@ -58,9 +58,15 @@ export class ArcheryHud {
 
   showTurn(a: Archer, end: number, arrow: number, arrows: number) {
     clear(this.turn);
+    this.turn.style.visibility = '';
     this.turn.style.setProperty('--c', a.color);
     this.turn.append(h('b', null, a.name), h('span', null, `End ${end} · arrow ${arrow} of ${arrows}`));
     replay(this.turn, 'show');
+  }
+
+  hideTurn() {
+    this.turn.classList.remove('show');
+    this.turn.style.visibility = 'hidden';
   }
 
   /** The reticle at (x, y) CSS pixels with the string drawn 0..1, or hidden. */

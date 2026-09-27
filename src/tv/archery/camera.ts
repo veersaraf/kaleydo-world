@@ -1,11 +1,13 @@
-// Archery cameras: over the archer's shoulder while aiming (it leans in towards
-// the target at full draw), then behind the arrow as it flies, then a close-up
-// of the target it hit. Between turns it settles back behind the next archer.
+// Archery cameras: behind the archer, out past the draw shoulder, swinging round
+// with the aim and zooming in as the string comes back (aimcam.ts), then behind
+// the arrow as it flies, then a close-up of the target it hit. Between turns it
+// settles back behind the next archer.
 
 import * as THREE from 'three';
 import { RANGE } from './range';
 import type { ArcheryGame } from './game';
 import type { RangeView } from './types';
+import { aimCamera, newAimCam } from './aimcam';
 import { clamp, damp, easeInOutCubic } from '../core/math';
 
 export class ArcheryCamera {
@@ -19,6 +21,9 @@ export class ArcheryCamera {
   private shake = 0;
   /** the arrow being followed, and where it came to rest */
   private rest: THREE.Vector3 | null = null;
+  private ac = newAimCam();
+  /** the push-in while drawing, eased */
+  private zoom = 0;
 
   kick(a: number) {
     this.shake = Math.min(1, this.shake + a);
@@ -29,15 +34,12 @@ export class ArcheryCamera {
     return g.mainTarget() ?? { x: 0, y: 1.4, z: 0, r: RANGE.faceR };
   }
 
-  /** Over the shoulder of the bow arm, low, looking down the range at the target. */
-  private aimView(g: ArcheryGame, lean: number) {
-    const a = g.archer;
-    const f = this.focus(g);
-    const side = -a.handed; // the bow arm is on the other side from the draw hand
-    const k = lean * 0.35;
-    this.tp.set(a.x + side * 0.55 * (1 - k), RANGE.eyeY + 0.35, a.z + 2.4 * (1 - k));
-    this.tl.set(f.x * 0.9, f.y * 0.8 + RANGE.eyeY * 0.2, f.z);
-    this.fov = 36 - lean * 8;
+  /** Behind the archer, down the aim, zoomed `zoom` 0..1 (aimcam.ts). */
+  private aimView(g: ArcheryGame, zoom: number) {
+    const c = aimCamera(g.archer, zoom, this.ac);
+    this.tp.set(c.x, c.y, c.z);
+    this.tl.set(c.lx, c.ly, c.lz);
+    this.fov = c.fov;
   }
 
   /** `v` is this frame's view (the app reads it once: reading clears its effects). */
@@ -50,6 +52,7 @@ export class ArcheryCamera {
       case 'intro': {
         // from high over the targets, back along the range to behind the archer
         const u = easeInOutCubic(clamp(since / 2.6));
+        this.zoom = 0;
         this.aimView(g, 0);
         const f = this.focus(g);
         tp.set(tp.x * u + (1 - u) * 5, tp.y + (1 - u) * 6, tp.z * u + (1 - u) * (f.z + 6));
@@ -58,11 +61,15 @@ export class ArcheryCamera {
         break;
       }
       case 'aim':
-      case 'next':
+      case 'next': {
         this.rest = null;
-        this.aimView(g, g.state === 'aim' ? clamp(g.archer.draw) : 0);
-        lambda = g.state === 'aim' ? 3 : 2.5;
+        // Resort-style: the view pushes in as the string comes back, and eases out after
+        const drawing = g.state === 'aim' && (g.archer.phase === 'draw' || g.archer.phase === 'hold');
+        this.zoom = damp(this.zoom, drawing ? clamp(g.archer.draw) : 0, drawing ? 3.5 : 2, dt);
+        this.aimView(g, this.zoom);
+        lambda = g.state === 'aim' ? 6 : 2.5;
         break;
+      }
       case 'flight':
       case 'result': {
         const arrow = g.shotArrow;
