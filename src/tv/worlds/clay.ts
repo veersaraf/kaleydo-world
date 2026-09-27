@@ -21,7 +21,7 @@ import { Pass, makeRT, BLACK } from '../render/post';
 import type { MatchEvent } from '../tennis/match';
 import { Rng } from '../core/math';
 import { Wind, motion, sway, swayDepth, type SwayOpts } from './park-env/wind';
-import { Foliage, crownBlobs, clumpGeometry, bushBlobs, type Place, type Tone } from './park-env/foliage';
+import { Foliage, crownBlobs, clumpGeometry, bushBlobs, tintMask, type Place, type Tone } from './park-env/foliage';
 import { landGeometry, bumpsAt, scatterBumps, smooth, type Bump } from './park-env/land';
 
 /** the stop-motion frame: bumps once per 1/12 s (the marks shimmer, the scenery boils) */
@@ -165,23 +165,6 @@ function clay(color: THREE.ColorRepresentation, o: ClayOpts = {}) {
       );
   };
   m.customProgramCacheKey = () => `clay-${boils}-${marked}-${fine}`;
-  return m;
-}
-
-/**
- * Instances tint only where `attr` is 1 (a cottage's walls, not its roof; a
- * tree's crown, not its trunk — Foliage's aLeaf): the rest keeps its vertex colour.
- */
-function tintMask<M extends THREE.Material>(m: M, attr = 'aTint'): M {
-  const prev = m.onBeforeCompile.bind(m);
-  m.onBeforeCompile = (sh, r) => {
-    prev(sh, r);
-    sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', `#include <common>\nattribute float ${attr};`)
-      .replace('#include <color_vertex>', `#include <color_vertex>\n#ifdef USE_INSTANCING_COLOR\nvColor.rgb /= mix(vec3(1.0), max(instanceColor.rgb, vec3(1e-3)), 1.0 - ${attr});\n#endif`);
-  };
-  const prevKey = m.customProgramCacheKey.bind(m);
-  m.customProgramCacheKey = () => `${prevKey()}|tint-${attr}`;
   return m;
 }
 

@@ -189,6 +189,24 @@ export function vineBlobs(seed = 13, len = 2.4): Blob[] {
   return out;
 }
 
+/**
+ * Instances tint only where the float attribute `attr` is 1 (a tree's crown,
+ * not its trunk; a cottage's walls, not its roof; alternate gores of a
+ * balloon): elsewhere the vertex colour stays as it is.
+ */
+export function tintMask<M extends THREE.Material>(m: M, attr = 'aTint'): M {
+  const prev = m.onBeforeCompile.bind(m);
+  m.onBeforeCompile = (sh, r) => {
+    prev(sh, r);
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', `#include <common>\nattribute float ${attr};`)
+      .replace('#include <color_vertex>', `#include <color_vertex>\n#ifdef USE_INSTANCING_COLOR\nvColor.rgb /= mix(vec3(1.0), max(instanceColor.rgb, vec3(1e-3)), 1.0 - ${attr});\n#endif`);
+  };
+  const prevKey = m.customProgramCacheKey.bind(m);
+  m.customProgramCacheKey = () => `${prevKey()}|tint-${attr}`;
+  return m;
+}
+
 // ---------------------------------------------------------------- the set
 
 const UP = new THREE.Vector3(0, 1, 0);
