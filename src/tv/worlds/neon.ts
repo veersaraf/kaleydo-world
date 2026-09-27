@@ -1,21 +1,32 @@
 // NEON DRIVE — a synthwave night: a striped sun sinking behind wireframe
-// mountains, an endless glowing grid, and players outlined in light.
+// mountains, an elevated highway streaming with light, flying cars, a city of
+// lit windows, and an endless grid on black glass that mirrors all of it.
+// Players are outlined in light, and everything pulses to the beat.
+//
+// The glass is a real reflection, kept cheap (neon-env/floor.ts): the scene
+// mirrored in the floor at a fraction of the resolution, only what glows
+// (the REFLECT layer). The effects tier sets its resolution; the lowest tier
+// drops it for a painted-on sun streak.
 
 import * as THREE from 'three';
 import { World, type WorldDef, type FrameView } from './base';
 import type { MaterialKit, CharRole } from './types';
-import { stringsMat, skyDome, canvasTex } from './mats';
+import { stringsMat } from './mats';
 import { Crowd, type Stand } from './crowd';
 import { Bloom } from '../render/post';
 import { outlineTree } from '../render/outline';
-import { NOISE } from '../render/glsl';
 import type { MatchEvent } from '../tennis/match';
+import { neonSky, neonSun } from './neon-env/sky';
+import { Reflection, REFLECT, gridFloor, glassy } from './neon-env/floor';
+import { mountains, city, highway, Traffic } from './neon-env/skyline';
 
 const PINK = new THREE.Color('#ff2fb4');
 const CYAN = new THREE.Color('#22e6ff');
 const PURPLE = new THREE.Color('#8b3bff');
 const YELLOW = new THREE.Color('#ffd23f');
 const hdr = (c: THREE.Color, k: number) => c.clone().multiplyScalar(k);
+/** show this object (and everything under it) in the floor's reflection */
+const reflected = (o: THREE.Object3D) => o.traverse((c) => c.layers.enable(REFLECT));
 
 class NeonWorld extends World {
   kit: MaterialKit = {
@@ -39,32 +50,32 @@ class NeonWorld extends World {
     shadowOpacity: 0.6,
   };
 
-  private gridMat!: THREE.ShaderMaterial;
-  private sunMat!: THREE.ShaderMaterial;
-  private sky!: THREE.Mesh;
+  /** one clock and one beat for every shader */
+  private u = { uTime: { value: 0 }, uBeat: { value: 0 } };
+  private reflection = new Reflection();
+  private traffic!: Traffic;
   private sticks!: THREE.InstancedMesh;
-  private stickBase: THREE.Matrix4[] = [];
+  private stickU = { uTime: this.u.uTime, uEx: { value: 0.3 } };
   private lineMat!: THREE.MeshBasicMaterial;
+  private stripMats: THREE.MeshBasicMaterial[] = [];
+  private railMat!: THREE.MeshBasicMaterial;
 
   protected build() {
     const s = this.scene;
     s.fog = new THREE.Fog('#12031f', 60, 420);
-    this.sky = skyDome(new THREE.Color('#030010'), new THREE.Color('#5a0b5e'), { stars: 1.4, sunSize: 0.0001, sunColor: new THREE.Color(0, 0, 0), ground: new THREE.Color('#0a0214') });
-    s.add(this.sky);
     s.add(new THREE.HemisphereLight('#6a3cff', '#1a0630', 1.2));
     const key = new THREE.DirectionalLight('#ff4fd8', 1.2);
     key.position.set(0, 10, -30);
     s.add(key);
 
-    this.buildSun();
-    this.buildGrid();
-    this.buildMountains();
-    this.buildCity();
+    this.buildHorizon();
+    s.add(gridFloor(this.u, this.reflection));
 
     this.lineMat = new THREE.MeshBasicMaterial({ color: hdr(CYAN, 2.4) });
+    // the court is glass too, but satin: a sheen of the lights, calm enough to read the ball on
     this.buildCourt({
-      inner: new THREE.MeshLambertMaterial({ color: '#150a33', emissive: new THREE.Color('#0a0420') }),
-      outer: new THREE.MeshLambertMaterial({ color: '#08041a' }),
+      inner: glassy(new THREE.MeshLambertMaterial({ color: '#150a33', emissive: new THREE.Color('#0a0420') }), this.reflection, 0.22),
+      outer: glassy(new THREE.MeshLambertMaterial({ color: '#08041a' }), this.reflection, 0.3),
       line: this.lineMat,
       innerPad: { x: 1.0, z: 1.8 },
       outerSize: { x: 10.5, z: 18 },
@@ -99,137 +110,45 @@ class NeonWorld extends World {
     f.uGrain.value = 0.035;
     f.uScan.value = 0.06;
     this.flashColor.set('#ffb8ec');
+    // depth of field for replays and cinematics: neon blurs into bokeh
+    this.effects = { dof: true };
   }
 
-  private buildSun() {
-    this.sunMat = new THREE.ShaderMaterial({
-      uniforms: { uTime: { value: 0 }, uBeat: { value: 0 } },
-      vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-      fragmentShader: /* glsl */ `
-        uniform float uTime; uniform float uBeat; varying vec2 vUv;
-        void main() {
-          vec2 p = vUv * 2.0 - 1.0;
-          float r = length(p);
-          if (r > 1.0) discard;
-          vec3 top = vec3(1.0, 0.86, 0.25), bot = vec3(1.0, 0.1, 0.62);
-          vec3 col = mix(bot, top, smoothstep(-0.9, 0.8, p.y));
-          // horizontal slits that thicken toward the bottom and scroll down
-          float y = p.y;
-          if (y < 0.25) {
-            float band = fract(y * 7.0 + uTime * 0.25);
-            float w = mix(0.08, 0.55, smoothstep(0.25, -0.9, y));
-            if (band < w) discard;
-          }
-          float glow = 1.5 + uBeat * 0.5;
-          gl_FragColor = vec4(col * glow * (1.0 - r * 0.25), 1.0);
-        }`,
-      fog: false,
-      depthWrite: false,
-    });
-    const sun = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.sunMat);
-    sun.scale.setScalar(150);
-    sun.position.set(0, 42, -330);
-    sun.renderOrder = -5;
-    this.scene.add(sun);
-    // sun haze
-    const haze = new THREE.Mesh(
-      new THREE.PlaneGeometry(1, 1),
-      new THREE.ShaderMaterial({
-        vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-        fragmentShader: 'varying vec2 vUv; void main(){ float r = length(vUv*2.0-1.0); gl_FragColor = vec4(vec3(1.0,0.2,0.7) * 0.28 * pow(max(0.0,1.0-r),2.2), 1.0); }',
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        fog: false,
-      }),
-    );
-    haze.scale.setScalar(420);
-    haze.position.set(0, 42, -335);
-    haze.renderOrder = -6;
-    this.scene.add(haze);
-  }
-
-  private buildGrid() {
-    this.gridMat = new THREE.ShaderMaterial({
-      uniforms: { uTime: { value: 0 }, uBeat: { value: 0 } },
-      vertexShader: 'varying vec3 vW; void main(){ vec4 w = modelMatrix * vec4(position,1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }',
-      fragmentShader: /* glsl */ `
-        uniform float uTime; uniform float uBeat; varying vec3 vW;
-        ${NOISE}
-        float line(float x, float w) { float f = abs(fract(x - 0.5) - 0.5); float d = fwidth(x); return 1.0 - smoothstep(w - d, w + d, f); }
-        void main() {
-          vec2 p = vW.xz / 4.0;
-          p.y += uTime * 1.6;
-          float g = max(line(p.x, 0.035), line(p.y, 0.035));
-          float dist = length(vW.xz);
-          float fade = exp(-dist * 0.006);
-          vec3 base = vec3(0.02, 0.005, 0.05);
-          vec3 lc = mix(vec3(1.0, 0.12, 0.75), vec3(0.45, 0.2, 1.0), smoothstep(40.0, 250.0, dist));
-          vec3 col = base + lc * g * (1.6 + uBeat * 1.4) * fade;
-          // horizon glow
-          col += vec3(0.6, 0.05, 0.4) * smoothstep(120.0, 380.0, dist) * 0.6;
-          gl_FragColor = vec4(col, 1.0);
-        }`,
-      fog: false,
-    });
-    const g = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1400, 1, 1), this.gridMat);
-    g.rotation.x = -Math.PI / 2;
-    g.position.y = -0.04;
-    this.scene.add(g);
-  }
-
-  private buildMountains() {
-    const mk = (x: number, z: number, w: number, d: number, h: number, seed: number) => {
-      const geo = new THREE.PlaneGeometry(w, d, 28, 10);
-      geo.rotateX(-Math.PI / 2);
-      const pos = geo.attributes.position as THREE.BufferAttribute;
-      for (let i = 0; i < pos.count; i++) {
-        const px = pos.getX(i),
-          pz = pos.getZ(i);
-        const edge = Math.min(1, (1 - Math.abs(px) / (w / 2)) * 3) * Math.min(1, (1 - Math.abs(pz) / (d / 2)) * 3);
-        const n = Math.abs(Math.sin(px * 0.05 + seed) * Math.cos(pz * 0.07 + seed * 2)) + 0.5 * Math.abs(Math.sin(px * 0.13 + pz * 0.11 + seed));
-        pos.setY(i, Math.max(0, edge) * n * h);
-      }
-      geo.computeVertexNormals();
-      const fill = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: '#07020f' }));
-      const wire = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: hdr(new THREE.Color('#b44bff'), 1.8), wireframe: true, fog: true }));
-      wire.position.y = 0.05;
-      const g = new THREE.Group();
-      g.add(fill, wire);
-      g.position.set(x, -0.5, z);
-      this.scene.add(g);
-    };
-    mk(-150, -210, 220, 110, 55, 1);
-    mk(160, -220, 240, 120, 62, 2);
-    mk(-95, -80, 90, 60, 22, 3);
-    mk(100, -90, 100, 60, 26, 4);
-  }
-
-  private buildCity() {
-    const win = canvasTex(128, 256, (x) => {
-      x.fillStyle = '#05020c';
-      x.fillRect(0, 0, 128, 256);
-      for (let yy = 4; yy < 256; yy += 10)
-        for (let xx = 4; xx < 128; xx += 9) {
-          if (Math.random() < 0.22) {
-            x.fillStyle = Math.random() < 0.5 ? '#ff5fd0' : Math.random() < 0.5 ? '#46e8ff' : '#ffe07a';
-            x.fillRect(xx, yy, 5, 6);
-          }
-        }
-    });
-    win.wrapS = win.wrapT = THREE.RepeatWrapping;
-    for (let i = 0; i < 60; i++) {
-      const w = 8 + Math.random() * 14;
-      const hgt = 18 + Math.pow(Math.random(), 1.6) * 70;
-      const t = win.clone();
-      t.needsUpdate = true;
-      t.repeat.set(w / 12, hgt / 24);
-      const m = new THREE.Mesh(new THREE.BoxGeometry(w, hgt, 8), new THREE.MeshBasicMaterial({ map: t, color: hdr(new THREE.Color('#ffffff'), 0.75) }));
-      const x = -260 + (i / 60) * 520 + (Math.random() - 0.5) * 8;
-      // keep the sun clear: towers only flank it
-      if (Math.abs(x) < 95) continue;
-      m.position.set(x, hgt / 2 - 1, -250 - Math.random() * 40);
-      this.scene.add(m);
+  /** Sky, sun, mountains, the city, the highway and its traffic: everything on the horizon. */
+  private buildHorizon() {
+    const s = this.scene;
+    const sky = neonSky(this.u);
+    // sinking between the mountains behind the far end: from the players' end its
+    // striped foot sits on the horizon, over the highway's lights
+    const sun = neonSun(this.u, new THREE.Vector3(0, 26, -380), 80);
+    const mtn = mountains(this.u, [
+      { x: -150, z: -215, w: 230, d: 110, h: 58, seed: 1 },
+      { x: 165, z: -225, w: 250, d: 120, h: 64, seed: 2 },
+      { x: -96, z: -86, w: 92, d: 60, h: 23, seed: 3 },
+      { x: 102, z: -94, w: 104, d: 60, h: 27, seed: 4 },
+      // round the sides and behind the near end, for the side and reverse views
+      { x: -270, z: 10, w: 130, d: 300, h: 50, seed: 8 },
+      { x: 275, z: -5, w: 130, d: 300, h: 55, seed: 9 },
+      { x: -140, z: 245, w: 250, d: 110, h: 52, seed: 5 },
+      { x: 150, z: 250, w: 250, d: 110, h: 60, seed: 6 },
+    ]);
+    const towers = city(this.u, [
+      // flanking the sun, clear of it
+      { from: -0.8, to: 0.8, radius: [255, 300], count: 46, gap: [-0.24, 0.24], seed: 3 },
+      // the downtown behind the near end
+      { from: Math.PI - 0.85, to: Math.PI + 0.85, radius: [165, 215], count: 40, seed: 7 },
+    ]);
+    this.railMat = new THREE.MeshBasicMaterial({ color: hdr(CYAN, 2.2) });
+    const road = highway({ deckY: 5, z: -120, length: 1000, rail: this.railMat, dark: new THREE.MeshBasicMaterial({ color: '#07020f' }) });
+    this.traffic = new Traffic(this.u, { deckY: 5, z: -120, run: 900, cars: 36, flyers: 12, seed: 4 });
+    sky.name = 'neon.sky';
+    sun.name = 'neon.sun';
+    mtn.name = 'neon.mountains';
+    towers.name = 'neon.city';
+    this.traffic.mesh.name = 'neon.traffic';
+    for (const o of [sky, sun, mtn, towers, ...road, this.traffic.mesh]) {
+      reflected(o);
+      s.add(o);
     }
   }
 
@@ -237,16 +156,19 @@ class NeonWorld extends World {
     const s = this.scene;
     const dark = new THREE.MeshLambertMaterial({ color: '#0d0620' });
     const stands: Stand[] = [];
-    const edgeMats = [hdr(PINK, 2.2), hdr(CYAN, 2.2)].map((c) => new THREE.MeshBasicMaterial({ color: c }));
+    this.stripMats = [hdr(PINK, 2.2), hdr(CYAN, 2.2)].map((c) => new THREE.MeshBasicMaterial({ color: c }));
     const mk = (cx: number, cz: number, facing: number, width: number, rows: number, ei: number) => {
       const g = new THREE.Group();
       for (let r = 0; r < rows; r++) {
         const hgt = 0.55 + r * 0.55;
         const step = new THREE.Mesh(new THREE.BoxGeometry(width, hgt, 0.9), dark);
         step.position.set(0, hgt / 2, r * 0.9 + 0.45);
+        // (dark in the glass too: the stand hides what's behind it, and its crowd's lights hang over black)
+        reflected(step);
         g.add(step);
-        const strip = new THREE.Mesh(new THREE.BoxGeometry(width, 0.05, 0.05), edgeMats[(r + ei) % 2]);
+        const strip = new THREE.Mesh(new THREE.BoxGeometry(width, 0.05, 0.05), this.stripMats[(r + ei) % 2]);
         strip.position.set(0, hgt, r * 0.9 + 0.02);
+        reflected(strip);
         g.add(strip);
       }
       g.position.set(cx, 0, cz);
@@ -254,9 +176,11 @@ class NeonWorld extends World {
       s.add(g);
       stands.push({ x: cx, z: cz, facing, width: width - 0.6, rows, rowRise: 0.55, rowDepth: 0.9, y0: 0.55 });
     };
-    mk(-10.5, 0, -Math.PI / 2, 22, 6, 0);
-    mk(10.5, 0, Math.PI / 2, 22, 6, 1);
-    mk(0, -19.5, Math.PI, 16, 7, 0);
+    // (four rows: the courtside attract shot looks over the back row's heads, not through the stand)
+    mk(-10.5, 0, -Math.PI / 2, 22, 4, 0);
+    mk(10.5, 0, Math.PI / 2, 22, 4, 1);
+    // (low behind the far end: from the players' end the horizon shows over it)
+    mk(0, -19.5, Math.PI, 16, 3, 0);
     const heads = [PINK, CYAN, YELLOW, PURPLE, new THREE.Color('#4dff9e')].map((c) => hdr(c, 1.3));
     const crowd = new Crowd({
       stands,
@@ -268,21 +192,37 @@ class NeonWorld extends World {
       fill: 0.85,
     });
     this.addCrowd(crowd);
-    // light sticks held up by some of the crowd
+    // glowing heads show in the glass (not the dark bodies)
+    crowd.heads.layers.enable(REFLECT);
+    // light sticks held up by some of the crowd, waved in the vertex shader
     const n = Math.floor(crowd.bodies.count * 0.35);
-    this.sticks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.03, 0.03, 0.7, 5), new THREE.MeshBasicMaterial({ color: '#ffffff' }), n);
+    const stickMat = new THREE.MeshBasicMaterial({ color: '#ffffff' });
+    stickMat.onBeforeCompile = (sh) => {
+      sh.uniforms.uTime = this.stickU.uTime;
+      sh.uniforms.uEx = this.stickU.uEx;
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform float uTime; uniform float uEx;').replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+        {
+          float fid = float(gl_InstanceID);
+          float a = sin(uTime * (3.0 + mod(fid, 5.0) * 0.4) + fid) * 0.7 * uEx;
+          transformed.xy = mat2(cos(a), sin(a), -sin(a), cos(a)) * transformed.xy;
+        }`,
+      );
+    };
+    stickMat.customProgramCacheKey = () => 'neon-stick';
+    this.sticks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.03, 0.03, 0.7, 5), stickMat, n);
     const m = new THREE.Matrix4();
-    const tmp = new THREE.Matrix4();
+    const tmp = new THREE.Matrix4().makeTranslation(0.25, 1.35, 0);
     for (let i = 0; i < n; i++) {
       const src = Math.floor(Math.random() * crowd.bodies.count);
       crowd.bodies.getMatrixAt(src, m);
-      tmp.makeTranslation(0.25, 1.35, 0);
-      const base = m.clone().multiply(tmp);
-      this.stickBase.push(base);
-      this.sticks.setMatrixAt(i, base);
+      this.sticks.setMatrixAt(i, m.multiply(tmp));
       this.sticks.setColorAt(i, hdr([PINK, CYAN, YELLOW][i % 3], 3));
     }
     this.sticks.frustumCulled = false;
+    this.sticks.userData.noBatch = true;
+    reflected(this.sticks);
     s.add(this.sticks);
   }
 
@@ -304,6 +244,7 @@ class NeonWorld extends World {
       }
       outlineTree(g, CYAN, 0.06, { emissive: 1.8 });
       g.position.set(x, 0, z);
+      reflected(g);
       this.scene.add(g);
     };
     palm(-16, -18, 11, 1.4);
@@ -312,27 +253,53 @@ class NeonWorld extends World {
     palm(23, -2, 9.5, -1);
     palm(-15, 12, 10.5, 1.2);
     palm(16, 13, 11, -1.1);
+    // a row either side of the backdrop, black against the sunset
+    palm(-30, -38, 13, 1.2);
+    palm(33, -42, 14, -1.3);
+    palm(-44, -55, 15, 1.5);
+    palm(47, -58, 13.5, -1);
+  }
+
+  init() {
+    super.init();
+    // the reflection's stand-ins: the scenery once it's batched, and the ball, its
+    // trail and the sparks following along in world space
+    this.reflection.collect(this.env, [this.ball, this.trail.mesh, this.particles.mesh], this.scene.fog as THREE.Fog);
+  }
+
+  protected onResize(W: number, H: number) {
+    this.reflection.setSize(W, H);
+  }
+
+  /** The effects tier also sets the reflection (its resolution, or none at the lowest). */
+  setFxTier(t: number) {
+    super.setFxTier(t);
+    this.reflection.setTier(t);
+  }
+
+  protected onDetail(d: number) {
+    this.traffic.setDetail(d);
   }
 
   protected animate(v: FrameView) {
     const t = v.realT;
-    this.gridMat.uniforms.uTime.value = t;
-    this.gridMat.uniforms.uBeat.value = v.beat;
-    this.sunMat.uniforms.uTime.value = t;
-    this.sunMat.uniforms.uBeat.value = v.beat;
-    (this.sky.material as THREE.ShaderMaterial).uniforms.uTime.value = t;
-    this.lineMat.color.copy(CYAN).multiplyScalar(2.2 + v.beat * 1.2);
-    // light sticks wave
-    const m = new THREE.Matrix4();
-    const r = new THREE.Matrix4();
-    const ex = 0.3 + v.excitement;
-    for (let i = 0; i < this.stickBase.length; i++) {
-      r.makeRotationZ(Math.sin(t * (3 + (i % 5) * 0.4) + i) * 0.7 * ex);
-      m.copy(this.stickBase[i]).multiply(r);
-      this.sticks.setMatrixAt(i, m);
-    }
-    this.sticks.instanceMatrix.needsUpdate = true;
-    this.final.u.uBloom.value = 0.78 + v.beat * 0.2;
+    const b = v.beat;
+    this.u.uTime.value = t;
+    this.u.uBeat.value = b;
+    this.lineMat.color.copy(CYAN).multiplyScalar(2.2 + b * 1.2);
+    this.stripMats[0].color.copy(PINK).multiplyScalar(2 + b * 1.6);
+    this.stripMats[1].color.copy(CYAN).multiplyScalar(2 + b * 1.6);
+    this.railMat.color.copy(CYAN).multiplyScalar(1.8 + b * 1.4);
+    this.stickU.uEx.value = 0.3 + v.excitement;
+    // the beat hits the lens: bloom swells and the colours split
+    const f = this.final.u;
+    f.uBloom.value = 0.78 + b * 0.24;
+    f.uAberration.value = 0.003 + b * b * 0.005;
+  }
+
+  render(cam: THREE.PerspectiveCamera, target: THREE.WebGLRenderTarget | null) {
+    this.reflection.render(this.renderer, cam);
+    super.render(cam, target);
   }
 
   protected fx(e: MatchEvent) {
@@ -350,6 +317,11 @@ class NeonWorld extends World {
       P.burst({ x: 0, y: 6, z: e.winner === 0 ? 6 : -6, count: 120, speed: [4, 12], dir: [0, 1, 0], spread: 0.9, life: [1.5, 2.8], size: [0.08, 0.16], colors: [hdr(PINK, 3), hdr(CYAN, 3), hdr(YELLOW, 3), hdr(PURPLE, 3)], shape: 'star', gravity: 5, drag: 1.4, spin: 8 });
     }
   }
+
+  dispose() {
+    super.dispose();
+    this.reflection.dispose();
+  }
 }
 
 export const NEON: WorldDef = {
@@ -364,7 +336,7 @@ export const NEON: WorldDef = {
     paper: '#fff',
     font: "'Fredoka', system-ui, sans-serif",
     display: "'Monoton', 'Orbitron', sans-serif",
-    panel: 'linear-gradient(160deg, rgba(255,245,255,0.96), rgba(236,228,255,0.94))',
+    panel: 'linear-gradient(160deg, rgba(255,245,255,0.97), rgba(236,228,255,0.94))',
   },
   song: 'neon',
   surface: 1.03,

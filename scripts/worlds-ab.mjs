@@ -8,7 +8,8 @@
 //     fx          effects tier 3 vs 0
 //     fx1         effects tier 3 vs 1
 //     vis:<a.b+c> shows/hides the objects at these paths in the world (w.a.b, w.c;
-//                 a path ending in .mesh or naming an Object3D), e.g. vis:bamboo.mesh
+//                 a path ending in .mesh or naming an Object3D), e.g. vis:bamboo.mesh;
+//                 @name finds an object by its name in the scene, e.g. vis:@neon.city
 //     set:<a.b>=<on>/<off>   sets a world property to one of two values (numbers)
 //     none        on and off are the same state: the noise floor
 //   VIEWS=a,b     only these views (play, far, bowl, side, aerial)
@@ -66,7 +67,7 @@ await p.evaluate(
       if (name === 'detail') return void (w.detail = on ? 1 : 0);
       if (name === 'fx') return void k.stage.setFx(on ? 3 : 0);
       if (name === 'fx1') return void k.stage.setFx(on ? 3 : 1);
-      const at = (path) => path.split('.').reduce((o, k) => o?.[k], w);
+      const at = (path) => (path.startsWith('@') ? w.scene.getObjectByName(path.slice(1)) : path.split('.').reduce((o, k) => o?.[k], w));
       if (name.startsWith('vis:')) {
         for (const p of name.slice(4).split('+')) {
           const o = at(p);
