@@ -8,13 +8,23 @@
 // (W3C signs): so a flat phone with the arm hanging — which the remote first
 // guesses is held up in front — has to be put right by the swing itself.
 //
-// The sword (a program that takes over the pose while it runs): hold() turns
-// the phone to a pose and keeps it there, sword() winds up slowly and strikes
-// through the held pose (the tip travelling at `dir` across the view at the
-// peak), thrust() pushes it along the blade, guard() presses the GUARD pad.
-// The phone swings about the wrist, 0.2 m behind it along the blade.
+// The sensors report as browsers do: rotationRate's alpha, beta, gamma about
+// the device's x, y, z (set window.__phoneConfig = { axes: 'zxy' } before the
+// page loads for the other convention, { ios: true } for iOS's accelerometer
+// signs).
+//
+// The sword (a program that takes over the pose while it runs) moves like a
+// person, not a textbook: hold() turns the phone to a pose at an unhurried
+// pace (≤ ~2.5 rad/s) and keeps it there with a slight tremor; sword() draws
+// the sword back (unless windup: false), strikes through the held pose — the
+// arm turning from somewhere between the wrist and the elbow, a little off
+// the meant direction and axis, a twist of the forearm in it — stops, bounces
+// back a touch and returns to the held pose; thrust() jabs at the screen;
+// guard() presses the GUARD pad. The phone rides on the forearm, 0.3 m from
+// the elbow, so the accelerometer feels every turn.
 export function phone() {
   const D = 180 / Math.PI;
+  const cfg = () => window.__phoneConfig || {};
   const qmul = (a, b) => [
     a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
     a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
@@ -23,7 +33,7 @@ export function phone() {
   ];
   const qconj = (q) => [-q[0], -q[1], -q[2], q[3]];
   const qaxis = (a, ang) => {
-    const n = Math.hypot(...a), s = Math.sin(ang / 2) / n;
+    const n = Math.hypot(...a) || 1, s = Math.sin(ang / 2) / n;
     return [a[0] * s, a[1] * s, a[2] * s, Math.cos(ang / 2)];
   };
   const euler = (q) => {
@@ -50,12 +60,16 @@ export function phone() {
     const s = Math.min(1, Math.max(0, (t - (sw.tBottom - 0.1)) / 0.2));
     return (sw.twist * (1 - Math.cos(Math.PI * s))) / 2;
   };
+  const erf = (v) => {
+    const k = 1 / (1 + 0.3275911 * Math.abs(v));
+    const y = 1 - ((((1.061405429 * k - 1.453152027) * k + 1.421413741) * k - 0.284496736) * k + 0.254829592) * k * Math.exp(-v * v);
+    return v >= 0 ? y : -y;
+  };
   // tennis: a forehand turns the phone counter-clockwise (seen from above), peak 950°/s
   const yaw = (t) => {
     if (!sw || sw.kind !== 'tennis') return 0;
-    const W = (950 / D), sig = 0.0833, x = (t - sw.tp) / sig;
-    const e = (v) => { const k = 1 / (1 + 0.3275911 * Math.abs(v)); const y = 1 - ((((1.061405429 * k - 1.453152027) * k + 1.421413741) * k - 0.284496736) * k + 0.254829592) * k * Math.exp(-v * v); return v >= 0 ? y : -y; };
-    return W * sig * (Math.sqrt(Math.PI) / 2) * (1 + e(x));
+    const W = 950 / D, sig = 0.0833, x = (t - sw.tp) / sig;
+    return W * sig * (Math.sqrt(Math.PI) / 2) * (1 + erf(x));
   };
   const armPose = (t) => qmul(qaxis([0, 0, 1], yaw(t)), qmul(qaxis([1, 0, 0], theta(t)), qmul(qaxis([0, 0, 1], phi(t)), grip)));
   const rot = (q, v) => {
@@ -71,6 +85,17 @@ export function phone() {
   const now = () => performance.now() / 1000;
   // (the script also runs on about:blank first, where the sensor events don't exist)
   if (typeof DeviceOrientationEvent === 'undefined') return;
+  // seeded randomness: runs repeat exactly
+  let seed = 0x5eed;
+  const rand = () => {
+    seed = (seed + 0x6d2b79f5) >>> 0;
+    let t = seed;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const gauss = () => Math.sqrt(-2 * Math.log(rand() + 1e-12)) * Math.cos(2 * Math.PI * rand());
+  const range = (a, b) => a + (b - a) * rand();
   setInterval(() => {
     const t = now();
     const q = pose(t);
@@ -79,7 +104,9 @@ export function phone() {
     if (d[3] < 0) d = d.map((v) => -v);
     const s = Math.hypot(d[0], d[1], d[2]);
     const k = s > 1e-12 ? (2 * Math.atan2(s, d[3])) / (2 * h) / s : 0;
-    const w = [d[0] * k, d[1] * k, d[2] * k];
+    // (a real gyro's noise, while the sword is out)
+    const n = sd ? 0.02 : 0;
+    const w = [d[0] * k + n * gauss(), d[1] * k + n * gauss(), d[2] * k + n * gauss()];
     const [alpha, beta, gamma] = euler(q);
     const upDev = rot(qconj(q), [0, 0, 1]);
     const e = 0.004,
@@ -87,13 +114,14 @@ export function phone() {
       p1 = where(t),
       p2 = where(t + e);
     const acc = rot(qconj(q), [0, 1, 2].map((k) => (p0[k] - 2 * p1[k] + p2[k]) / (e * e)));
+    const sg = cfg().ios ? -1 : 1;
     window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', { alpha, beta, gamma }));
     window.dispatchEvent(
       new DeviceMotionEvent('devicemotion', {
         interval: 16,
-        rotationRate: { alpha: w[2] * D, beta: w[0] * D, gamma: w[1] * D },
-        acceleration: { x: acc[0], y: acc[1], z: acc[2] },
-        accelerationIncludingGravity: { x: acc[0] + upDev[0] * 9.81, y: acc[1] + upDev[1] * 9.81, z: acc[2] + upDev[2] * 9.81 },
+        rotationRate: cfg().axes === 'zxy' ? { alpha: w[2] * D, beta: w[0] * D, gamma: w[1] * D } : { alpha: w[0] * D, beta: w[1] * D, gamma: w[2] * D },
+        acceleration: { x: sg * acc[0], y: sg * acc[1], z: sg * acc[2] },
+        accelerationIncludingGravity: { x: sg * (acc[0] + upDev[0] * 9.81), y: sg * (acc[1] + upDev[1] * 9.81), z: sg * (acc[2] + upDev[2] * 9.81) },
       }),
     );
   }, 16);
@@ -150,17 +178,30 @@ export function phone() {
     const th = Math.acos(d), s = Math.sin(th);
     return a.map((v, i) => (v * Math.sin((1 - u) * th) + bb[i] * Math.sin(u * th)) / s);
   };
+  const qangle = (a, b) => 2 * Math.acos(Math.min(1, Math.abs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3])));
   const ease = (u) => (1 - Math.cos(Math.PI * Math.min(1, Math.max(0, u)))) / 2;
-  const erf = (v) => {
-    const k = 1 / (1 + 0.3275911 * Math.abs(v));
-    const y = 1 - ((((1.061405429 * k - 1.453152027) * k + 1.421413741) * k - 0.284496736) * k + 0.254829592) * k * Math.exp(-v * v);
-    return v >= 0 ? y : -y;
+  /** the angle turned by time t of a blow whose speed peaks at tp (gaussian: σ rise before, fall after) */
+  const blowAngle = (t, tp, peak, rise, fall) => {
+    const k = Math.sqrt(Math.PI / 2);
+    if (t < tp) return peak * rise * k * (1 + erf((t - tp) / (rise * Math.SQRT2)));
+    return peak * rise * k + peak * fall * k * erf((t - tp) / (fall * Math.SQRT2));
   };
-  // the pose the sword rests at between moves (flat in the palm to begin with)
+  // the pose the sword rests at between moves (flat in the palm to begin with), and a slight tremor
   let held = grip;
-  const onWrist = (q) => {
-    const b = rot(q, [0, 1, 0]);
-    return [0.2 * b[0], 0.2 * b[1], 0.2 * b[2]];
+  const tremor = (t, q) => qmul(qaxis([0.3, 1, 0.5], 0.004 * Math.sin(2 * Math.PI * 5.3 * t) + 0.003 * Math.sin(2 * Math.PI * 7.9 * t + 1)), q);
+  // the forearm: the phone 0.3 m ahead of (and a little above) the elbow, turning about it (placed
+  // where the arm model left the phone when the sword first came out, so nothing jumps)
+  const ELBOW = [0, 0.28, 0.12];
+  let anchor = null;
+  const onArm = (q) => {
+    const r = rot(qmul(q, qconj(grip)), ELBOW);
+    return [anchor[0] + r[0], anchor[1] + r[1], anchor[2] + r[2]];
+  };
+  const drawSword = (t) => {
+    if (sd) return;
+    const a = armWhere(t),
+      r = rot(qmul(armPose(t), qconj(grip)), ELBOW);
+    anchor = [a[0] - r[0], a[1] - r[1], a[2] - r[2]];
   };
   const after = (s) => new Promise((done) => setTimeout(done, s * 1000));
   const guardPtr = (type) => {
@@ -199,39 +240,70 @@ export function phone() {
       sw = { kind: 'tennis', tp: now() + inMs / 1000 };
       return new Promise((done) => setTimeout(() => ((sw = null), done()), inMs + 700));
     },
-    /** turn the phone (smoothly, over `ms`) to hold its top along `top`, screen facing `screen` */
+    /** turn the phone (smoothly, over at least `ms` — never faster than ~2.5 rad/s: aiming, not swinging)
+     *  to hold its top along `top`, screen facing `screen` */
     hold({ top = [0, 0.8, 0.6], screen = [0, -1, 0], ms = 900 } = {}) {
-      const t0 = now(), T = ms / 1000;
+      const t0 = now();
+      drawSword(t0);
       const from = pose(t0), to = frame(top, screen);
+      const T = Math.max(ms / 1000, (qangle(from, to) * Math.PI) / (2 * 2.5));
       held = to;
-      sd = { pose: (t) => slerp(from, to, ease((t - t0) / T)), where: (t) => onWrist(slerp(from, to, ease((t - t0) / T))) };
+      const at = (t) => tremor(t, slerp(from, to, ease((t - t0) / T)));
+      sd = { pose: at, where: (t) => onArm(at(t)) };
       return after(T + 0.05);
     },
-    /** a blow through the held pose: wind up slowly (away from it), then strike so the tip
-     *  crosses the view at `dir` (radians, 0 right, π/2 up) at `peak` rad/s; it ends in the follow-through */
-    sword({ dir = 0, peak = 12, rise = 0.06, fall = 0.05, windup = 0.9 } = {}) {
+    /**
+     * A slash through the held pose, meant to send the tip across the view at `dir` (radians, 0 right,
+     * π/2 up) at `peak` rad/s (a relaxed swing is 5–15). Like a person: drawn back first (`windup`, at
+     * 25–50% of the speed) unless windup: false, a little off the meant direction (`sloppy`: σ of the
+     * direction, radians), turning from somewhere between the wrist and the elbow, with a twist of the
+     * forearm in it; then it stops, bounces back and returns to the held pose. Resolves when it's back
+     * ({ tp }: when the strike peaked, performance.now() ms).
+     */
+    sword({ dir = 0, peak = 9, rise = 0.07, fall = 0.08, windup = true, sloppy = 0.12 } = {}) {
+      drawSword(now());
       const base = held;
       const b = unit(rot(base, [0, 1, 0]));
-      // the tip's travel at the peak: square to the blade, seen from the front at `dir`
-      const c = Math.cos(dir), s = Math.sin(dir);
-      const axis = unit(cross(b, unit([c, -(c * b[0] + s * b[2]) / b[1], s])));
-      const pre = peak * rise * Math.sqrt(Math.PI / 2), post = peak * fall * Math.sqrt(Math.PI / 2);
-      const t0 = now(), tp = t0 + windup + 0.05 + 3 * rise;
-      // the angle turned since the peak (− before it)
-      const ang = (t) => {
-        if (t < t0 + windup) return -pre * ease((t - t0) / windup);
-        if (t <= tp) return -pre + peak * rise * Math.sqrt(Math.PI / 2) * (1 + erf((t - tp) / (rise * Math.SQRT2))) - (peak * rise * Math.sqrt(Math.PI / 2)) * (1 + erf((t0 + windup - tp) / (rise * Math.SQRT2)));
-        return post * erf((t - tp) / (fall * Math.SQRT2));
-      };
-      const at = (t) => qmul(qaxis(axis, ang(t)), base);
-      sd = { pose: at, where: (t) => onWrist(at(t)) };
-      held = at(tp + 6 * fall);
-      return after(tp - t0 + 6 * fall + 0.05).then(() => ({ tp: tp * 1000 }));
-    },
-    /** push the phone along its blade `dist` m over `dur` s, hold, and bring it back slowly */
-    thrust({ dist = 0.35, dur = 0.25, back = 0.9 } = {}) {
-      const base = held, b = unit(rot(base, [0, 1, 0]));
+      // the lever the arm turns: the phone's top alone (the wrist) … plus the forearm (the elbow)
+      const lever = unit([b[0], b[1] + range(0, 1.2), b[2]]);
+      const d = dir + sloppy * gauss();
+      let axis = unit(cross(lever, [Math.cos(d), 0, Math.sin(d)]));
+      const off = unit(cross(axis, [gauss(), gauss(), gauss()]));
+      axis = unit([0, 1, 2].map((k) => axis[k] + off[k] * 0.1 * gauss()));
+      const twist = 0.15 * gauss();
+      const k = Math.sqrt(Math.PI / 2);
+      const pre = peak * rise * k;
       const t0 = now() + 0.05;
+      // the windup: about as far back as the strike turns before its peak
+      const wp = windup ? peak * range(0.25, 0.5) : 0;
+      const wa = windup ? pre * range(0.8, 1.1) : 0;
+      const ws = windup ? wa / (wp * 2.5) : 0;
+      const wtp = t0 + 3 * ws;
+      const tp = windup ? wtp + 2.5 * ws + range(0.03, 0.12) + 3 * rise : t0 + 3 * rise;
+      // the stop and the bounce back
+      const rp = peak * range(0.15, 0.3), rs = 0.05, rtp = tp + range(0.12, 0.18);
+      const ra = rp * rs * 2.5;
+      const angW = (t) => (windup ? -blowAngle(t, wtp, wp, ws, ws) : 0);
+      const angR = (t) => -blowAngle(t, rtp, rp, rs, rs);
+      // …and back to the held pose, at a few rad/s
+      const netAfter = pre + peak * fall * k - wa - ra;
+      const tr = rtp + 4 * rs + range(0, 0.1);
+      const Tr = Math.max(0.5, (Math.abs(netAfter) * Math.PI) / (2 * 3.5));
+      const angBack = (t) => -netAfter * ease((t - tr) / Tr);
+      const ang = (t) => angW(t) + blowAngle(t, tp, peak, rise, fall) + angR(t) + angBack(t);
+      const at = (t) => {
+        const a = ang(t);
+        return tremor(t, qmul(qaxis(axis, a), qmul(qaxis(b, twist * a), base)));
+      };
+      sd = { pose: at, where: (t) => onArm(at(t)) };
+      return after(tr + Tr - now() + 0.1).then(() => ({ tp: tp * 1000 }));
+    },
+    /** jab the phone at the screen: `dist` m over `dur` s (the wrist tips the blade forward a little), hold, bring it back */
+    thrust({ dist = 0.35, dur = 0.25, back = 0.9 } = {}) {
+      drawSword(now());
+      const base = held;
+      const t0 = now() + 0.05;
+      const dirv = unit([0.05 * gauss(), 1, -0.05 + 0.05 * gauss()]);
       const push = (t) => {
         const u = t - t0;
         if (u <= 0) return 0;
@@ -240,7 +312,9 @@ export function phone() {
         const r = (u - dur - 0.1) / back;
         return r >= 1 ? 0 : (dist * (1 + Math.cos(Math.PI * r))) / 2;
       };
-      sd = { pose: () => base, where: (t) => onWrist(base).map((v, k) => v + push(t) * b[k]) };
+      const tip = (t) => qaxis([1, 0, 0], (-0.2 * push(t)) / dist);
+      const at = (t) => tremor(t, qmul(tip(t), base));
+      sd = { pose: at, where: (t) => onArm(at(t)).map((v, k) => v + push(t) * dirv[k]) };
       return after(dur + back + 0.25);
     },
     /** press (true) or let go of (false) the GUARD pad */
