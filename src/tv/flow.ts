@@ -417,7 +417,7 @@ export class Flow {
   private mainMenu(): Screen {
     const item = (ico: string, color: string, label: string, sub: string) =>
       h('div', { class: 'item' }, h('div', { class: 'ico', style: `background:${color}` }, ico), h('div', { class: 'txt' }, h('span', null, label), h('span', { class: 'sub' }, sub)));
-    const quick = item('🎾', '#3aa8ff', 'Quick Match', 'Pick a world and play');
+    const quick = item('🎾', '#3aa8ff', 'Tennis', 'Singles or doubles, vs friends or CPU');
     const kal = item('◆', 'linear-gradient(135deg,#ff5a8a,#ffb13d,#4be3a2,#52a7ff)', 'Kaleido Rally', 'The world shatters as you play');
     const tb = loadTour().beaten;
     const tour = item('🏆', '#ffb13d', 'World Tour', tb >= TOUR.length ? 'The Prism is whole — play again' : `${Math.min(tb, 8)} of 8 shards restored`);
@@ -435,15 +435,12 @@ export class Flow {
       { el: archItem, onSelect: () => this.go(this.archerySetup()) },
       { el: hrItem, onSelect: () => this.go(this.baseballSetup()) },
       { el: tour, onSelect: () => this.go(this.tourScreen()) },
-      { el: kal, onSelect: () => this.go(this.setupScreen('kaleido')) },
-      { el: labItem, onSelect: () => this.beginSwingLab() },
-      { el: help, onSelect: () => this.go(this.helpScreen()) },
       { el: set, onSelect: () => this.go(this.settingsScreen()) },
     ]);
     const el = h(
       'div',
       { class: 'screen mainmenu' },
-      h('div', { class: 'col' }, h('div', { class: 'mini-logo' }, h('span', null, 'KALEIDO')), h('div', { class: 'menu' }, quick, bowlItem, duelItem, archItem, tour, kal, labItem, help, set)),
+      h('div', { class: 'col' }, h('div', { class: 'mini-logo' }, h('span', null, 'KALEIDO')), h('div', { class: 'menu' }, quick, bowlItem, duelItem, archItem, hrItem, tour, set)),
       this.join.el,
     );
     this.join.refresh();
