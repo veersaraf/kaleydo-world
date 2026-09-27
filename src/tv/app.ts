@@ -31,7 +31,8 @@ import { BaseballCamera } from './baseball/camera';
 import { FieldVenue } from './baseball/venue';
 import { BatterAnimator, PitcherAnimator, CatcherAnimator } from './baseball/anim';
 import { BaseballGear } from './baseball/gear';
-import type { BaseballEvent, Hitter } from './baseball/types';
+import type { BaseballEvent, BatterState, CatcherState, FieldBall, FieldFx, Hitter, PitcherState } from './baseball/types';
+import { FIELD } from './baseball/field';
 import type { World } from './worlds/base';
 import { hashStr } from '../shared/hash';
 import { PLAYER_COLORS } from '../shared/protocol';
@@ -111,6 +112,13 @@ export class App {
   /** the fielding side's colours (the pitcher and catcher) */
   private fieldColors: string[] = [];
   onBaseballEvent: (e: BaseballEvent) => void = () => {};
+  /** the last few seconds at the plate (for a home-run replay) */
+  private hrRec: HrFrame[] = [];
+  private hrPool: HrFrame[] = [];
+  /** a big home run again, slowly, from the side */
+  hrReplay: { frames: HrFrame[]; i: number; time: number; contact: number; at: { x: number; y: number; z: number }; end: number } | null = null;
+  private hrMarks: { x: number; y: number; z: number }[] = [];
+  onHrReplay: (on: boolean) => void = () => {};
   /** a phone's pose when the draw began, and the aim it started from (the aim follows the turn since) */
   private aimFrom: { q: THREE.Quaternion; yaw: number; pitch: number } | null = null;
   /** how much of the phone's turn the aim takes: well under 1:1 keeps a steady hand's
@@ -457,7 +465,7 @@ export class App {
       this.baseballFrame(realDt);
       this.quality.endFrame();
       // resizing costs a frame: not while a pitch is on its way or a ball in the air
-      if (!document.hidden && this.quality.update(now, gapMs, this.paused || (g.state !== 'windup' && g.state !== 'pitch' && g.state !== 'flight')) !== null) this.applyQuality();
+      if (!document.hidden && this.quality.update(now, gapMs, this.paused || (!this.hrReplay && g.state !== 'windup' && g.state !== 'pitch' && g.state !== 'flight')) !== null) this.applyQuality();
       return;
     }
     if (this.sport === 'archery') {
@@ -515,7 +523,12 @@ export class App {
       if (e.type === 'contact') this.ballCam.kick(e.ball.sweet ? 0.75 : 0.22 + Math.min(0.4, e.ball.exitSpeed / 110));
       else if (e.type === 'catch') this.ballCam.kick(0.08);
       this.onBaseballEvent(e);
+      // a crushed one: see it again
+      if (e.type === 'result' && e.outcome === 'homerun' && g.hit && (g.hit.sweet || g.hit.distance >= 128)) this.startHrReplay();
     };
+    for (const f of this.hrRec) this.hrPool.push(f);
+    this.hrRec.length = 0;
+    this.hrReplay = null;
     this.batAnims = hitters.map((h) => new BatterAnimator(h.handed, h.look));
     // the fielders: the home side in navy, caps on
     const uniform = (look: Look): Look => ({ ...look, shirt: '#2c4a8c', shorts: '#f3f1ea', shoes: '#1d1b2a', hair: 'cap', hat: '#1f3366', racket: '#c8a27a' });
@@ -540,6 +553,7 @@ export class App {
 
   stopBaseball() {
     if (this.sport !== 'baseball') return;
+    if (this.hrReplay) this.endHrReplay();
     this.setDof(null);
     this.sport = 'tennis';
     this.baseball = null;
@@ -554,6 +568,10 @@ export class App {
     const g = this.baseball!;
     const w = this.stage.current!;
     this.prepareBaseballWorld();
+    if (this.hrReplay) {
+      this.hrReplayFrame(g, w, realDt);
+      return;
+    }
     const dt = this.paused ? 0 : Math.min(0.05, realDt);
     // the last moments of a home run's flight go by a touch slower
     let gdt = dt;
@@ -590,7 +608,95 @@ export class App {
     this.stage.update(fv);
     this.batGear.get(w)?.update({ hitters, pitcher: g.pitcher, catcher: g.catcher, ball: view.ball }, realDt);
     this.stage.render(cam);
+    this.hrMarks = view.marks;
+    if (gdt > 0) this.recordHr(g.t, poses, hitters, g.pitcher, g.catcher, view.ball, view.fx);
     this.onFrame(realDt);
+  }
+
+  /** Keep the last few seconds of the plate: poses, states, the ball and its effects. */
+  private recordHr(t: number, poses: Pose[], hitters: BatterState[], pitcher: PitcherState, catcher: CatcherState, ball: FieldBall, fx: FieldFx[]) {
+    const f = this.hrPool.pop() ?? { t: 0, poses: [], hitters: [], pitcher, catcher, ball, fx: [] };
+    f.t = t;
+    while (f.poses.length < poses.length) f.poses.push(newPose());
+    f.poses.length = poses.length;
+    for (let i = 0; i < poses.length; i++) copyPose(f.poses[i], poses[i]);
+    f.hitters = hitters.map((s) => ({ ...s }));
+    f.pitcher = { ...pitcher };
+    f.catcher = { ...catcher };
+    f.ball = { ...ball };
+    f.fx = fx.length ? fx.slice() : NO_FX;
+    this.hrRec.push(f);
+    while (this.hrRec.length && this.hrRec[0].t < t - 9) this.hrPool.push(this.hrRec.shift()!);
+  }
+
+  /** The swing again from a second before the crack to a second after, in slow motion. */
+  private startHrReplay() {
+    const g = this.baseball;
+    if (!g || !g.hit || this.hrReplay) return;
+    const c = g.hitT;
+    const frames: HrFrame[] = [];
+    for (const f of this.hrRec) {
+      if (f.t >= c - 0.95 && f.t <= c + 1.05) frames.push(f);
+      else this.hrPool.push(f);
+    }
+    this.hrRec.length = 0;
+    if (frames.length < 20) {
+      for (const f of frames) this.hrPool.push(f);
+      return;
+    }
+    const b = frames.find((f) => f.t >= c)?.hitters[g.current];
+    this.hrReplay = { frames, i: 0, time: frames[0].t, contact: c, at: { x: b?.aimX ?? 0, y: b?.aimY ?? 0.85, z: FIELD.contactZ }, end: frames[frames.length - 1].t };
+    this.onHrReplay(true);
+  }
+
+  endHrReplay() {
+    const r = this.hrReplay;
+    if (!r) return;
+    for (const f of r.frames) this.hrPool.push(f);
+    this.hrReplay = null;
+    this.ballCam.snap();
+    this.setDof(null);
+    this.onHrReplay(false);
+  }
+
+  private hrReplayFrame(g: BaseballGame, w: World, realDt: number) {
+    const r = this.hrReplay!;
+    // slow motion — slowest right at the crack
+    const d = Math.abs(r.time - r.contact);
+    const speed = this.paused ? 0 : d < 0.08 ? 0.12 : d < 0.4 ? 0.12 + ((d - 0.08) / 0.32) * 0.33 : 0.45;
+    r.time += realDt * speed;
+    const fx: FieldFx[] = [];
+    while (r.i < r.frames.length - 1 && r.frames[r.i + 1].t <= r.time) {
+      r.i++;
+      for (const e of r.frames[r.i].fx) fx.push(e);
+    }
+    const f = r.frames[r.i];
+    const cam = this.ballCam.cam;
+    const b = f.hitters[g.current];
+    this.ballCam.replay(b, f.ball, r.at, (r.time - r.frames[0].t) / Math.max(0.1, r.end - r.frames[0].t), realDt, this.realT);
+    this.setDof(this.ballCam.focus, this.ballCam.aperture);
+    const view = { ball: f.ball, tracer: false, color: g.hitters[g.current]?.color ?? '#ffffff', marks: this.hrMarks, eye: { x: cam.position.x, y: cam.position.y, z: cam.position.z }, fx };
+    const fv: FrameView = {
+      t: f.t,
+      dt: realDt * speed,
+      realT: this.realT,
+      realDt,
+      ball: { x: 0, y: -10, z: 0 },
+      ballSpeed: 0,
+      ballVisible: false,
+      holder: -1,
+      poses: f.poses,
+      excitement: 0.8,
+      state: 'play',
+      cam,
+      beat: this.beat(),
+      field: view,
+    };
+    this.stage.update(fv);
+    this.batGear.get(w)?.update({ hitters: f.hitters, pitcher: f.pitcher, catcher: f.catcher, ball: f.ball }, realDt * speed);
+    this.stage.render(cam);
+    this.onFrame(realDt);
+    if (r.time >= r.end) this.endHrReplay();
   }
 
   // ---------------------------------------------------------------- archery
@@ -1083,6 +1189,17 @@ export class App {
 }
 
 const NO_EVENTS: MatchEvent[] = [];
+const NO_FX: FieldFx[] = [];
+
+interface HrFrame {
+  t: number;
+  poses: Pose[];
+  hitters: BatterState[];
+  pitcher: PitcherState;
+  catcher: CatcherState;
+  ball: FieldBall;
+  fx: FieldFx[];
+}
 
 interface RecFrame {
   t: number;

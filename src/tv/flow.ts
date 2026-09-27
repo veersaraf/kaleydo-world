@@ -164,6 +164,10 @@ export class Flow {
     };
     app.onArcheryEvent = (e) => this.archeryEvent(e);
     app.onBaseballEvent = (e) => this.baseballEvent(e);
+    app.onHrReplay = (on) => {
+      this.hrHud?.setReplay(on);
+      if (on && !this.app.attract) this.audio?.sfx.ui('shift');
+    };
     app.input.onGrip = (slot, down) => {
       if (!this.screen) this.app.bowl?.grip(slot, down);
     };
@@ -1101,6 +1105,10 @@ export class Flow {
   private baseballButton(_slot: number, b: Btn, down: boolean) {
     const g = this.app.baseball;
     if (!g) return false;
+    if (b === 'a' && down && this.app.hrReplay) {
+      this.app.endHrReplay();
+      return true;
+    }
     if (b === 'a' && down && g.state === 'intro') {
       g.skip();
       return true;

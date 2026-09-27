@@ -60,10 +60,15 @@ while (Date.now() - t0 < 240000) {
   const st = await tv.evaluate(() => {
     const g = window.kaleido.baseball;
     if (!g) return { state: 'none' };
-    return { state: g.state, who: g.current, n: g.pitchNo, hr: g.hit ? { home: g.hit.homeRun, foul: g.hit.foul, hang: g.hit.hang, tau: g.t - g.hitT } : null, results: !!document.querySelector('.results') };
+    const r = window.kaleido.hrReplay;
+    return { state: g.state, who: g.current, n: g.pitchNo, hr: g.hit ? { home: g.hit.homeRun, foul: g.hit.foul, hang: g.hit.hang, tau: g.t - g.hitT } : null, results: !!document.querySelector('.results'), replay: r ? r.time - r.contact : null };
   });
   if (st.results || st.state === 'none') break;
   const tag = `${st.who}-${st.n}`;
+  if (st.replay !== null && st.replay > -0.02 && !seen.has('replay' + tag)) {
+    seen.add('replay' + tag);
+    await shot(`replay-h${st.who}-p${st.n}`);
+  }
   if (st.state === 'pitch' && !seen.has('pitch' + tag) && seen.size < 40) {
     seen.add('pitch' + tag);
     if (st.n === 0) await shot(`pitch-h${st.who}`);

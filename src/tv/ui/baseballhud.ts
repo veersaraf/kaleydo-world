@@ -23,6 +23,7 @@ export class BaseballHud {
   private meterWord: HTMLElement;
   private call: HTMLElement;
   private hint: HTMLElement;
+  private replayTag: HTMLElement;
   private meterTimer = 0;
   private lastDist = -1;
 
@@ -45,7 +46,8 @@ export class BaseballHud {
     );
     this.call = h('div', { class: 'callout hrcall' });
     this.hint = h('div', { class: 'hint hrhint' });
-    this.el = h('div', { class: 'hud hrhud' }, this.board, this.dist, this.meter, this.pitchEl, this.turn, this.call, this.hint);
+    this.replayTag = h('div', { class: 'hrreplay' }, h('i'), 'REPLAY', h('span', null, 'A to skip'));
+    this.el = h('div', { class: 'hud hrhud' }, this.board, this.dist, this.meter, this.pitchEl, this.turn, this.call, this.hint, this.replayTag);
   }
 
   /** Redraw the board: per hitter, a pip per pitch (a home run, a hit, a foul, a strike, still to come) and their home runs. */
@@ -133,6 +135,11 @@ export class BaseballHud {
     this.call.append(text);
     if (sub) this.call.append(h('span', { class: 'sub' }, sub));
     replay(this.call, 'show');
+  }
+
+  /** The home-run replay is on: a badge, and the live read-outs step aside. */
+  setReplay(on: boolean) {
+    this.el.classList.toggle('replaying', on);
   }
 
   setHint(html: string) {

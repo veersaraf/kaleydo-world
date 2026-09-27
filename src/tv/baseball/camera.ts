@@ -8,7 +8,7 @@
 
 import * as THREE from 'three';
 import { FIELD } from './field';
-import type { BattedBall, BatterState, FieldView, Pitch } from './types';
+import type { BattedBall, BatterState, FieldBall, FieldView, Pitch } from './types';
 import { clamp, damp, easeInOutCubic } from '../core/math';
 
 /** What the camera reads from the game (BaseballGame has all of it). */
@@ -24,7 +24,7 @@ export interface CamGame {
   batter: BatterState;
 }
 
-type Shot = 'intro' | 'bat' | 'portrait' | 'chase' | 'stands' | 'hero' | 'over';
+type Shot = 'intro' | 'bat' | 'portrait' | 'chase' | 'stands' | 'hero' | 'over' | 'replay';
 
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 
@@ -187,7 +187,33 @@ export class BaseballCamera {
         break;
       }
     }
-    if (lambda >= 1000 || snap) {
+    this.apply(lambda >= 1000 || snap ? 1000 : lambda, dt, t);
+  }
+
+  /**
+   * The home-run replay: side-on at the plate, low, from out in front of the
+   * batter, drifting round as the bat comes through (`u` 0..1 over the replay);
+   * the view follows the ball away after the crack.
+   */
+  replay(b: BatterState, ball: FieldBall, contact: { x: number; y: number; z: number }, u: number, dt: number, t: number) {
+    const s = b.handed;
+    const first = this.shot !== 'replay';
+    this.shot = 'replay';
+    this.shotT = first ? 0 : this.shotT + dt;
+    const e = easeInOutCubic(clamp(u));
+    this.tp.set(contact.x + (2.5 - 0.9 * e) * s, 0.95 + 0.25 * e, contact.z - 1.0 - 1.5 * e);
+    this.tl.set(contact.x - 0.35 * s, contact.y + 0.28, contact.z + 0.15);
+    if (ball.phase === 'play') this.tl.lerp(V(ball.x, ball.y, ball.z), clamp((u - 0.55) * 1.6) * 0.8);
+    this.fov = 30;
+    this.focus = this.tp.distanceTo(V(contact.x, contact.y, contact.z));
+    this.aperture = 1.3;
+    this.apply(first ? 1000 : 6, dt, t);
+  }
+
+  private apply(lambda: number, dt: number, t: number) {
+    const tp = this.tp,
+      tl = this.tl;
+    if (lambda >= 1000) {
       this.pos.copy(tp);
       this.look.copy(tl);
     } else {

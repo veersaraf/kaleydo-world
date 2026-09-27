@@ -2555,3 +2555,57 @@ kbd {
   color: #ffd23a;
   font-size: calc(var(--u) * 14);
 }
+
+.hrreplay {
+  position: absolute;
+  top: calc(var(--u) * 2.6);
+  right: calc(var(--u) * 3);
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 0.9);
+  padding: calc(var(--u) * 0.8) calc(var(--u) * 1.6);
+  border-radius: 99px;
+  background: rgba(15, 14, 40, 0.78);
+  color: #fff;
+  font-family: var(--display);
+  font-size: calc(var(--u) * 2.2);
+  letter-spacing: 0.1em;
+  opacity: 0;
+  transform: translateY(calc(var(--u) * -1));
+  transition: opacity 0.3s, transform 0.3s;
+}
+
+.hrreplay i {
+  width: calc(var(--u) * 1.2);
+  height: calc(var(--u) * 1.2);
+  border-radius: 50%;
+  background: #ff3d64;
+  animation: hrnext 0.6s ease-in-out infinite alternate;
+}
+
+.hrreplay span {
+  font-size: 0.6em;
+  letter-spacing: 0.04em;
+  opacity: 0.6;
+}
+
+.hrhud.replaying .hrreplay {
+  opacity: 1;
+  transform: none;
+}
+
+.hrhud.replaying .hrmeter,
+.hrhud.replaying .hrpitch,
+.hrhud.replaying .hrcall,
+.hrhud.replaying .hrturn {
+  opacity: 0 !important;
+  visibility: hidden;
+}
+
+.hrhud.replaying::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 calc(var(--u) * 14) rgba(10, 8, 30, 0.45);
+}
