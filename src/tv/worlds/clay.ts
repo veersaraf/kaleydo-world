@@ -856,6 +856,8 @@ class ClayWorld extends World {
     this.post?.render(r, this.sceneRT, cam);
     // tilt-shift: two directional blurs that grow away from the focus band
     const u = this.tilt.u;
+    // (at bat the pitch comes in from high up the screen, and the ball flies up there: keep it sharp)
+    u.uFocus.value = this.sport === 'baseball' ? 0.9 : 0.6;
     u.tSrc.value = this.sceneRT.texture;
     u.uDir.value.set(1, 0);
     this.tilt.render(r, this.rtA);

@@ -392,7 +392,7 @@ export class Flow {
       'div',
       { class: 'screen title' },
       logo,
-      h('div', { class: 'subtitle' }, 'WORLD TENNIS'),
+      h('div', { class: 'subtitle' }, 'WORLD SPORTS'),
       h('div', { class: 'press' }, 'Click or press any key — or swing a remote'),
       this.join.el,
     );
@@ -2210,7 +2210,7 @@ export class Flow {
       { class: 'screen ending' },
       h('h1', null, 'The Prism is whole'),
       h('p', null, 'Eight worlds, eight champions, one ball. The Kaleidoscope turns again — and every world remembers your rallies.'),
-      h('div', { class: 'credits' }, 'KALEIDO · World Tennis', h('br'), 'Designed & built by Claude for Veer', h('br'), 'Every model, shader, song and sound made from code'),
+      h('div', { class: 'credits' }, 'KALEIDO · World Sports', h('br'), 'Designed & built by Claude for Veer', h('br'), 'Every model, shader, song and sound made from code'),
       h('div', { class: 'menu' }, back),
     );
     return this.navScreen('ending', el, nav, () => this.quitToMenu(), { title: 'Champion!', hint: 'A to continue' });
@@ -2447,7 +2447,7 @@ export class Flow {
     const w = this.app.stage.current as unknown as { setScoreboard?: (n: [string, string], g: [string, string], p: [string, string]) => void };
     if (!w?.setScoreboard) return;
     if (!m || this.app.attract) {
-      w.setScoreboard(['KALEIDO', 'WORLD TENNIS'], ['', ''], ['', '']);
+      w.setScoreboard(['KALEIDO', 'WORLD SPORTS'], ['', ''], ['', '']);
       return;
     }
     w.setScoreboard([this.teams[0].name, this.teams[1].name], [String(m.score.games[0]), String(m.score.games[1])], [m.score.pointText(0), m.score.pointText(1)]);
