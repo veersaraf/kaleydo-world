@@ -59,7 +59,7 @@ export class ArcheryHud {
   showTurn(a: Archer, end: number, arrow: number, arrows: number) {
     clear(this.turn);
     this.turn.style.setProperty('--c', a.color);
-    this.turn.append(h('b', null, a.name), h('span', null, `End ${end + 1} · arrow ${arrow + 1} of ${arrows}`));
+    this.turn.append(h('b', null, a.name), h('span', null, `End ${end} · arrow ${arrow} of ${arrows}`));
     replay(this.turn, 'show');
   }
 

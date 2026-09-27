@@ -1054,13 +1054,13 @@ export class Flow {
     switch (e.type) {
       case 'end':
         hud?.setWind(e.wind);
-        hud?.say(e.end + 1 === e.ends ? 'FINAL END' : `END ${e.end + 1}`, Math.abs(e.wind) < 0.3 ? 'no wind' : `wind ${Math.abs(e.wind).toFixed(1)} m/s ${e.wind > 0 ? '→' : '←'}`);
+        hud?.say(e.end === e.ends ? 'FINAL END' : `END ${e.end}`, Math.abs(e.wind) < 0.3 ? 'no wind' : `wind ${Math.abs(e.wind).toFixed(1)} m/s ${e.wind > 0 ? '→' : '←'}`);
         this.app.input.aimNudge.yaw = this.app.input.aimNudge.pitch = 0;
         break;
       case 'turn':
         hud?.update(g.scores, g.arrows, e.who);
         hud?.showTurn(g.archers[e.who], g.end, e.arrow, e.arrows);
-        hud?.setHint(g.end === 0 && e.arrow === 0 ? this.archeryHint() : '');
+        hud?.setHint(g.end === 1 && e.arrow === 1 ? this.archeryHint() : '');
         this.syncPads(true);
         break;
       case 'shot':
@@ -2086,7 +2086,7 @@ export class Flow {
         if (mine && (ag.state === 'aim' || ag.state === 'intro' || ag.state === 'next')) {
           mode = 'bow';
           title = 'Your shot!';
-          hint = `End ${ag.end + 1} · arrow ${ag.arrowNo + 1} of ${ag.arrows}`;
+          hint = `End ${ag.end} · arrow ${ag.arrowNo} of ${ag.arrows}`;
         } else {
           mode = 'wait';
           title = mine ? 'Flying…' : up ? `${up.name} is shooting` : 'Archery';

@@ -18,7 +18,8 @@ import { DuelAnimator } from './duel/anim';
 import { DuelGear } from './duel/sword';
 import { aimFromPhone, type Duelist, type DuelEvent, type SlashInput, type SwordAim } from './duel/types';
 import { readyAim, guardAim, cockAim, newAim } from './duel/aim';
-import { ArcheryGame, aimFor } from './archery/game';
+import { ArcheryGame } from './archery/game';
+import { flyTo } from './archery/physics';
 import { ArcheryCamera } from './archery/camera';
 import { RangeVenue } from './archery/venue';
 import { ArcherAnimator } from './archery/anim';
@@ -93,13 +94,15 @@ export class App {
   onArcheryEvent: (e: ArcheryEvent) => void = () => {};
   /** a phone's pose when the draw began, and the aim it started from (the aim follows the turn since) */
   private aimFrom: { q: THREE.Quaternion; yaw: number; pitch: number } | null = null;
-  /** how much of the phone's turn the aim takes (a little less than 1:1 steadies it) */
-  aimGain = 0.85;
+  /** how much of the phone's turn the aim takes: well under 1:1 keeps a steady hand's
+   *  tremor within a ring or two at 30 m (a ring there is 0.09°) */
+  aimGain = 0.55;
   /** the reticle on screen for the HUD (CSS pixels), or null */
   reticle: { x: number; y: number; draw: number } | null = null;
   private tmpQ = new THREE.Quaternion();
   private tmpM = new THREE.Matrix4();
   private tmpV3 = new THREE.Vector3();
+  private cross = { x: 0, y: 0, t: 0, ok: false, speed: 0 };
 
   /** player preference: give each side its own view in local versus */
   splitPref = true;
@@ -435,16 +438,6 @@ export class App {
     });
   }
 
-  /** the main target's centre, and the straight line to it from the bow */
-  private aimBase(g: ArcheryGame) {
-    const f = g.targets.find((t) => t.kind === 'face') ?? g.targets[0];
-    const a = g.archer;
-    if (!f) return { yaw: 0, pitch: 0 };
-    const dx = f.x - a.x,
-      dy = f.y - RANGE.eyeY,
-      dz = f.z - a.z;
-    return { yaw: Math.atan2(-dx, -dz), pitch: Math.atan2(dy, Math.hypot(dx, dz)) };
-  }
 
   /**
    * A phone's aim: when the draw begins the aim sits on the target; from then on
@@ -459,9 +452,10 @@ export class App {
     const q = this.tmpQ.setFromRotationMatrix(this.tmpM.makeBasis(S, N, X));
     const drawing = g.archer.phase === 'draw' || g.archer.phase === 'hold';
     if (!drawing || !this.aimFrom) {
-      const b = this.aimBase(g);
+      // the straight line to the middle of the main target
+      const b = g.home;
       if (drawing) this.aimFrom = { q: q.clone(), yaw: b.yaw, pitch: b.pitch };
-      return b;
+      return { yaw: b.yaw, pitch: b.pitch };
     }
     // the turn since the draw began, a little damped
     const turn = q.clone().multiply(this.aimFrom.q.clone().invert());
@@ -476,7 +470,7 @@ export class App {
 
   /** A mouse/keyboard player's aim: through the cursor (on the target's plane), nudged by the arrows. */
   private mouseAim(g: ArcheryGame) {
-    const f = g.targets.find((t) => t.kind === 'face') ?? g.targets[0];
+    const f = g.mainTarget();
     const m = this.input.mouseNdc;
     const cam = this.archCam.cam;
     const ray = new THREE.Vector3(m.x, m.y, 0.5).unproject(cam).sub(cam.position).normalize();
@@ -539,16 +533,15 @@ export class App {
       realDt,
     );
     this.stage.render(this.archCam.cam);
-    // where the arrow points, on screen: the sight line at the target's distance
+    // the sight: where a full-draw arrow would land on the target's plane with no
+    // wind (so the drop is taken care of and you judge the wind); it shakes as the aim does
     const drawn = g.archer.phase === 'draw' || g.archer.phase === 'hold';
-    if (aimOn && (drawn || !this.input.racket[who!.slot])) {
-      const f = g.targets.find((t) => t.kind === 'face') ?? g.targets[0];
+    const f = g.mainTarget();
+    if (aimOn && f && (drawn || !this.input.racket[who!.slot])) {
       const a = g.archer;
-      const cp = Math.cos(a.pitch);
-      const dir = new THREE.Vector3(-Math.sin(a.yaw) * cp, Math.sin(a.pitch), -Math.cos(a.yaw) * cp);
-      const dist = f ? Math.max(2, (a.z - f.z) / Math.max(0.05, -dir.z)) : 15;
-      const p = new THREE.Vector3(a.x, RANGE.eyeY, a.z).addScaledVector(dir, dist).project(this.archCam.cam);
-      this.reticle = { x: ((p.x + 1) / 2) * this.stage.w, y: ((1 - p.y) / 2) * this.stage.h, draw: a.draw };
+      const c = flyTo(a.yaw, a.pitch, RANGE.fullSpeed, f.z, 0, this.cross);
+      const p = this.tmpV3.set(c.x, c.y, f.z).project(this.archCam.cam);
+      this.reticle = c.ok ? { x: ((p.x + 1) / 2) * this.stage.w, y: ((1 - p.y) / 2) * this.stage.h, draw: a.draw } : null;
     } else this.reticle = null;
     this.onFrame(realDt);
   }

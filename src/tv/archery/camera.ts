@@ -24,10 +24,9 @@ export class ArcheryCamera {
     this.shake = Math.min(1, this.shake + a);
   }
 
-  /** the target the archer is shooting at: the main (first) face */
+  /** the target the archer is shooting at */
   private focus(g: ArcheryGame) {
-    const f = g.targets.find((t) => t.kind === 'face') ?? g.targets[0];
-    return f ?? { x: 0, y: 1.4, z: 0, r: RANGE.faceR };
+    return g.mainTarget() ?? { x: 0, y: 1.4, z: 0, r: RANGE.faceR };
   }
 
   /** Over the shoulder of the bow arm, low, looking down the range at the target. */
@@ -66,7 +65,8 @@ export class ArcheryCamera {
         break;
       case 'flight':
       case 'result': {
-        const arrow = v.arrows[v.arrows.length - 1];
+        const arrow = g.shotArrow;
+        void v;
         if (arrow && arrow.state === 'flying') {
           // just behind and above the arrow, looking where it's going
           tp.set(arrow.x - arrow.dx * 2.2 + 0.25, arrow.y - arrow.dy * 2.2 + 0.45, arrow.z - arrow.dz * 2.2);
