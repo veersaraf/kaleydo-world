@@ -1,6 +1,6 @@
 # KALEIDO — World Sports
 
-Motion-controlled **tennis**, **bowling** and **sword duels** in the spirit of Wii Sports,
+Motion-controlled **tennis**, **bowling**, **sword duels** and **archery** in the spirit of Wii Sports,
 played across nine worlds that each look like a different medium: a Switch
 Sports-style park, a cel-shaded plaza, a sumi-e ink painting, a synthwave
 night drive, an 8-bit castle, a paper pop-up book, a stop-motion clay set, a
@@ -10,8 +10,9 @@ watercolour garden and a court adrift in space.
 like a racket: timing aims the shot, swing speed sets the power, and brushing
 up or chopping down adds topspin or slice. In bowling, hold the ball on the
 screen, swing your arm and let go — twist your wrist to hook it. In a sword
-duel the phone is your sword: swing to strike, hold GUARD to block. Up to four
-phones can join.
+duel the phone is your sword: swing to strike, hold GUARD to block. In archery,
+point the phone at the target, hold DRAW and let go. Up to four phones can join,
+each with a character you make on the phone (⚙ → Your character).
 
 Everything — characters, courts, shaders, music, sound effects — is generated
 in code. There are no image, model or audio files.
@@ -92,6 +93,17 @@ A blocked attacker is stunned for a moment — strike back. Flailing tires your
 arm and weakens your hits. Knock them off the end of the platform to take the
 round; best of three. Two phones get a split screen.
 
+### Archery controls
+
+| | Phone | Mac |
+|---|---|---|
+| Draw | hold **DRAW** (the string comes back over about a second) | hold the mouse button or <kbd>Space</kbd> |
+| Aim | point the phone — the sight starts on the target and follows your turn | the cursor; arrow keys fine-tune |
+| Shoot | let go | let go |
+
+The sight allows for the drop; the wind (flags and gauge) is yours to judge.
+Balloons are worth bonus points. Three ends of three arrows.
+
 ## Modes
 
 - **Quick Match** — singles or doubles, vs CPU or friends (up to 4 phones),
@@ -100,6 +112,8 @@ round; best of three. Two phones get a split screen.
   (Rookie, Pro or Ace), in any world. Pins are real rigid-body physics.
 - **Sword Duel** — you against a CPU (Rookie, Pro or Ace) or a friend on a
   second phone, on a platform over the water in any world.
+- **Archery** — everyone on their own phone, plus an optional CPU: three ends
+  at 15, 22 and 30 m with wind, raised and swaying targets, and balloons.
 - **World Tour** — the Great Prism shattered into eight worlds. Beat each
   world's champion to restore its shard, then face the Prism King.
 - **Kaleido Rally** — every couple of points, or any PERFECT shot deep in a
@@ -147,6 +161,7 @@ npx tsx scripts/bowl-cpu-sim.ts  # headless bowling games per CPU level
 npx tsx scripts/bowl-score-test.ts && npx tsx scripts/bowl-pad-test.ts
 npx tsx scripts/duel-game-test.ts && npx tsx scripts/sword-pad-test.ts
 npx tsx scripts/duel-sim.ts   # CPU duels and simulated players vs each CPU level
+npx tsx scripts/archery-game-test.ts && npx tsx scripts/archery-sim.ts
 ```
 
 - `server/` — Node server: HTTP on localhost for the TV, HTTPS on the LAN for
@@ -160,6 +175,9 @@ npx tsx scripts/duel-sim.ts   # CPU duels and simulated players vs each CPU leve
   animation.
 - `src/tv/duel/` — the duel's rules and CPU fighters, the arena and swords
   (in each world's style), fighter animation and camera.
+- `src/tv/archery/` — arrow physics and wind, target layouts, scoring and CPU
+  archers, the range and bow (in each world's style), the archer's animation
+  and camera.
 - `src/tv/chars/` — procedural characters and animation.
 - `src/tv/worlds/` — one file per world: scenery, materials and its own
   post-processing pipeline.
