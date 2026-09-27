@@ -1468,7 +1468,7 @@ drawPad.addEventListener('pointerdown', (e) => {
   link.send({ type: 'draw', down: true, lat: Math.round(link.lat) });
   drawPad.classList.add('held');
   drawBig.textContent = 'AIM';
-  drawSub.textContent = motionOK ? 'point at the target · let go' : 'drag to aim · let go';
+  drawSub.textContent = motionOK ? 'point · let go' : 'drag · let go';
   bowTv.textContent = '';
   audio.creak();
   cancelAnimationFrame(drawRaf);
