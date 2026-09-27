@@ -22,9 +22,11 @@ export const FIELD = {
   plateFront: 12 - 0.43,
   /** the pitcher's rubber; the pitcher faces +z */
   moundZ: -4.5,
-  /** where the ball leaves the pitcher's hand: out in front of the rubber, head high… */
-  releaseZ: -3.2,
-  releaseY: 1.8,
+  /** where the ball leaves the pitcher's hand: out in front of the rubber, at the pitcher's face — as far as
+   *  the characters reach over the top at the end of their stride (shoulders ~1.06 m up, arms 0.58 m long,
+   *  legs 0.4 m: a real pitcher's 1.8 m high and 1.9 m out is beyond them)… */
+  releaseZ: -3.45,
+  releaseY: 1.5,
   /** …and this far to the side of the pitcher's throwing arm (a right-hander's is at −x) */
   releaseSide: 0.42,
   /** a well-timed swing meets the ball here, a little in front of the plate */

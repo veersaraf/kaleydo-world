@@ -148,6 +148,13 @@ export interface PitcherState {
   t: number;
   kind: PitchKind | null;
   look: LookAt;
+  /**
+   * The catcher's throw back, coming to the pitcher (from when the catcher starts
+   * the throw till the ball's in the glove): where it'll reach him (world) and
+   * in how many seconds (≤ 0: it's there). The glove goes up to meet it, its
+   * pocket exactly there at eta = 0. Absent / null: nothing's coming.
+   */
+  toss?: { x: number; y: number; z: number; eta: number } | null;
 }
 
 /** What the catcher is doing — the input to the catcher animator. The catcher faces −z. */
