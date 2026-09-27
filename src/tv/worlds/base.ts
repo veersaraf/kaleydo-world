@@ -169,9 +169,11 @@ export abstract class World {
   shake = 0;
   /**
    * Opt-in lighting and post effects (render/effects.ts), set in build(): sky
-   * light, AO, sun glare and shafts, a grade, contact shadows, depth of field.
-   * The default render() runs them; a world with its own render() can call
-   * `this.post?.render(...)` after drawing its scene into a buffer with depth.
+   * light, AO, sun glare and shafts, a grade, contact shadows, a fitted sun
+   * shadow, depth of field. The default render() runs them. A world with its own
+   * render() calls `this.post?.plan(cam)` before drawing its scene (true = resolve
+   * the buffer's depth) and `this.post?.render(r, buffer, cam)` after, then draws
+   * through `this.final`, which has the results.
    */
   effects: WorldEffects = {};
   /** the screen passes the effects need (null when none do) */
