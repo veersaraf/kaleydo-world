@@ -302,6 +302,33 @@ async function padSend(req, res) {
   sendJSON(res, 200, { ok: 1, st: Date.now(), pong });
 }
 
+// Motion captures (the remote's record mode, /rec): JSON lines appended to
+// captures/<file>.jsonl — replay one with scripts/replay-capture.ts.
+const CAPTURES = path.join(ROOT, 'captures');
+
+async function captureAppend(req, res, url) {
+  const file = String(url.searchParams.get('file') || '')
+    .replace(/[^a-zA-Z0-9_-]/g, '')
+    .slice(0, 80);
+  if (!file) return sendJSON(res, 400, { error: 'file' });
+  let body;
+  try {
+    body = await readBody(req, 4 * 1024 * 1024);
+  } catch {
+    return sendJSON(res, 413, { error: 'too large' });
+  }
+  const dest = path.join(CAPTURES, file + '.jsonl');
+  await fs.promises.mkdir(CAPTURES, { recursive: true });
+  await fs.promises.appendFile(dest, body.endsWith('\n') ? body : body + '\n');
+  const st = await fs.promises.stat(dest);
+  if (!captureSeen.has(file)) {
+    captureSeen.add(file);
+    log(`recording      captures/${file}.jsonl`);
+  }
+  sendJSON(res, 200, { ok: 1, bytes: st.size });
+}
+const captureSeen = new Set();
+
 let qrCache = { key: '', svg: '' };
 async function qrSvg(res, url) {
   const target = url.searchParams.get('u') || joinUrl() || 'http://localhost';
@@ -377,6 +404,11 @@ async function handle(req, res) {
     if (p === '/api/qr.svg') return await qrSvg(res, url);
     if (p === '/api/pad/events') return padEvents(req, res, url);
     if (p === '/api/pad/send' && req.method === 'POST') return await padSend(req, res);
+    if (p === '/api/capture' && req.method === 'POST') return await captureAppend(req, res, url);
+    if (p === '/rec' || p === '/rec/') {
+      res.writeHead(302, { Location: '/capture.html' + url.search });
+      return res.end();
+    }
     if (p === '/kaleido-ca.crt') {
       res.writeHead(200, {
         'Content-Type': 'application/x-x509-ca-cert',

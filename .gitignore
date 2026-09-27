@@ -4,3 +4,4 @@ server/.certs
 .DS_Store
 *.log
 .claude/worktrees/
+captures/

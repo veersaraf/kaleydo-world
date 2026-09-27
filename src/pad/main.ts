@@ -7,7 +7,9 @@ import { PadLink, type LinkStatus } from './link';
 import { SwingDetector, type SwingEvent } from './swing';
 import { BowlDetector, swipeThrow, MIN_SPEED, MAX_SPEED, type BowlThrow, type SwipePoint } from './bowl';
 import { SwordDetector, swipeStrike, guardLine, type GuardLine, type SwordStrike } from './sword';
-import { Orientation, qrot, type Vec3 } from './orient';
+import { qrot, type Vec3 } from './orient';
+import { MotionFront, rawMotion, swordSample, swingSample } from './pipeline';
+import { Recorder, captureName } from './capture';
 import { PadAudio } from './audio';
 import type { Handed, LookPrefs, PadButton, PadFx, PadMode, PadMsg, ServerToPad } from '../shared/protocol';
 import { HAIRS, HAIR_NAMES, EYES, SKIN_TONES, HAIR_TONES } from '../shared/protocol';
@@ -477,13 +479,27 @@ detector.sensitivity = prefs.sens;
 detector.handed = prefs.handed === 'L' ? -1 : 1;
 // iOS reports accelerometer & gravity with the opposite sign to the W3C spec
 detector.upSign = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ? -1 : 1;
-const orient = new Orientation();
+// the sensors: gyro axes found from the OS's own orientation, fused orientation (pipeline.ts)
+const front = new MotionFront();
+const orient = front.orient;
 const bowl = new BowlDetector();
 bowl.sensitivity = prefs.sens;
 const sword = new SwordDetector();
 sword.sensitivity = prefs.sens;
 sword.upSign = detector.upSign;
 const link = new PadLink(pid, () => prefs.name || 'Player');
+// ?rec (or ?rec=<name>): record the raw motion, the buttons and what the TV said while playing, to
+// captures/<name>-<date>.jsonl on the server (capture.ts; replay with scripts/replay-capture.ts)
+const recParam = new URLSearchParams(location.search).get('rec');
+const rec = recParam !== null ? new Recorder(captureName(recParam || 'play'), { page: 'controller' }) : null;
+if (rec) {
+  // (a functional marker, not part of the design: recording is on)
+  const badge = document.createElement('div');
+  badge.textContent = '● REC';
+  badge.setAttribute('style', 'position:fixed;top:max(6px,env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:99;font:700 11px system-ui;color:#ff6b7a;pointer-events:none');
+  document.body.append(badge);
+  addEventListener('pagehide', () => rec.stop());
+}
 let slot = -1;
 let mode: PadMode = 'wait';
 let motionOK = false;
@@ -606,6 +622,7 @@ let locked = false;
 function setMode(m: PadMode, title?: string, hint?: string, lock = false) {
   const prev = mode;
   mode = m;
+  if (m !== prev) rec?.event('mode', { mode: m });
   locked = lock && (m === 'bowl' || m === 'bow');
   bowlPanel.classList.toggle('locked', locked && m === 'bowl');
   bowPanel.classList.toggle('locked', locked && m === 'bow');
@@ -841,6 +858,7 @@ const DUEL_WORD: Partial<Record<PadFx, string>> = {
 
 /** The TV's verdict in a duel: the line, a sound, a flash. */
 function duelFx(m: Extract<ServerToPad, { type: 'fx' }>) {
+  rec?.event('fx', { fx: m.fx, label: m.label ?? '' });
   const word = m.label || DUEL_WORD[m.fx] || '';
   const line = [word, m.detail].filter(Boolean).join(' · ');
   if (line) {
@@ -998,7 +1016,7 @@ joinFace.addEventListener('click', () => gearBtn.click());
 gearBtn.addEventListener('click', () => {
   setName.value = prefs.name;
   motionState.textContent = motionOK
-    ? 'Motion sensor: on'
+    ? `Motion sensor: on (gyro axes ${front.axes.sure ? front.axes.name : 'not yet checked'})`
     : 'Motion sensor unavailable — the swipe pad is used instead.';
   sheet.classList.add('open');
   audio.tick();
@@ -1102,12 +1120,10 @@ function liveLoop() {
   liveRaf = requestAnimationFrame(liveLoop);
 }
 
-const D2R = Math.PI / 180;
-let lastMotionT = 0;
-const prevRate = [0, 0, 0];
-
 function onOrient(e: DeviceOrientationEvent) {
-  orient.measure(e.alpha, e.beta, e.gamma, performance.now());
+  const now = performance.now();
+  rec?.orient(e, now);
+  front.orientEvent({ t: now, alpha: e.alpha, beta: e.beta, gamma: e.gamma });
   if (orient.heading === null && joined) orient.calibrate();
 }
 
@@ -1159,36 +1175,21 @@ function startOriStream() {
 }
 
 function onMotion(e: DeviceMotionEvent) {
-  const r = e.rotationRate;
-  if (!r || (r.alpha == null && r.beta == null)) return;
-  motionSeen = true;
-  const a = e.acceleration;
-  const g = e.accelerationIncludingGravity;
-  const ax = a?.x ?? 0,
-    ay = a?.y ?? 0,
-    az = a?.z ?? 0;
   const now = performance.now();
-  const rx = (r.beta ?? 0) * D2R,
-    ry = (r.gamma ?? 0) * D2R,
-    rz = (r.alpha ?? 0) * D2R;
-  const dt = lastMotionT ? Math.min(0.05, (now - lastMotionT) / 1000) : 1 / 60;
-  lastMotionT = now;
-  // trapezoidal: the rate over the interval is the mean of its two ends (a one-sided
-  // sum runs a whole sample ahead — ~15° at the peak of a hard swing)
-  orient.integrate((rx + prevRate[0]) / 2, (ry + prevRate[1]) / 2, (rz + prevRate[2]) / 2, dt);
+  rec?.motion(e, now);
+  const m = front.motionEvent(rawMotion(e, now));
+  if (!m) return;
+  motionSeen = true;
+  const { rx, ry, rz, q, dt, ax, ay, az } = m;
   {
     // vertical acceleration (the sign quirks of iOS cancel in this product)
-    const gx0 = (g?.x ?? 0) - ax,
-      gy0 = (g?.y ?? 0) - ay,
-      gz0 = (g?.z ?? 0) - az;
+    const gx0 = m.igx - ax,
+      gy0 = m.igy - ay,
+      gz0 = m.igz - az;
     const gl = Math.hypot(gx0, gy0, gz0);
     const aUp = gl > 1 ? (ax * gx0 + ay * gy0 + az * gz0) / gl : 0;
     liftCheck(now, aUp, Math.hypot(rx, ry, rz), dt);
   }
-  prevRate[0] = rx;
-  prevRate[1] = ry;
-  prevRate[2] = rz;
-  const q: [number, number, number, number] | undefined = orient.have ? [orient.q[0], orient.q[1], orient.q[2], orient.q[3]] : undefined;
   bowl.heading = orient.heading;
   // (the acceleration only if the phone reports it: some Androids don't)
   bowl.push({
@@ -1197,32 +1198,13 @@ function onMotion(e: DeviceMotionEvent) {
     ry,
     rz,
     q,
-    ...(a && a.x != null && g && g.x != null ? { ax, ay, az, gx: (g.x ?? 0) - ax, gy: (g.y ?? 0) - ay, gz: (g.z ?? 0) - az } : {}),
+    ...(m.hasAcc && m.hasIg ? { ax, ay, az, gx: m.igx - ax, gy: m.igy - ay, gz: m.igz - az } : {}),
   });
+  // the duel: "towards the screen" keeps itself honest while the sword is held still facing it
+  if (mode === 'sword') orient.autoCenter(dt);
   sword.heading = orient.heading;
-  sword.push({
-    t: now,
-    rx,
-    ry,
-    rz,
-    q,
-    ...(a && a.x != null ? { ax, ay, az } : {}),
-    ...(g && g.x != null ? { igx: g.x ?? 0, igy: g.y ?? 0, igz: g.z ?? 0 } : {}),
-  });
-  detector.push({
-    t: now,
-    up: orient.have ? orient.upDevice() : undefined,
-    q,
-    rx,
-    ry,
-    rz,
-    ax,
-    ay,
-    az,
-    gx: (g?.x ?? 0) - ax,
-    gy: (g?.y ?? 0) - ay,
-    gz: (g?.z ?? 0) - az,
-  });
+  sword.push(swordSample(m));
+  detector.push(swingSample(m, orient));
 }
 
 function requestMotion(): Promise<boolean> {
@@ -1470,6 +1452,7 @@ function guardDown() {
   guarding = true;
   for (const up of lockedBtnUps) up(); // the palm on pause as the thumb lands isn't a press
   sword.guard(true, performance.now());
+  rec?.event('guard', { down: true });
   sendOri(); // the angle it went up at
   link.send({ type: 'guard', down: true, lat: Math.round(link.lat) });
   guardPad.classList.add('held');
@@ -1480,6 +1463,7 @@ function guardUp() {
   guarding = false;
   const now = performance.now();
   sword.guard(false, now);
+  rec?.event('guard', { down: false });
   sendOri();
   link.send({ type: 'guard', down: false, lat: Math.round(link.lat) });
   guardPad.classList.remove('held');
@@ -1500,6 +1484,7 @@ function guardCancel() {
 
 /** A slash or a thrust — from the motion, or a swipe on the pad. Never with the guard held. */
 function attack(s: SwordStrike, touch: boolean) {
+  rec?.event('strike', { kind: s.kind, dir: +s.dir.toFixed(3), power: +s.power.toFixed(3), peak: +s.peak.toFixed(2), at: +s.t.toFixed(1), touch, sent: mode === 'sword' && joined && !guarding });
   if (mode !== 'sword' || !joined || guarding) return;
   sendOri(); // the pose it struck in
   link.send({ type: 'slash', kind: s.kind, dir: +s.dir.toFixed(3), power: +s.power.toFixed(2), lat: Math.round(link.lat), touch });
@@ -1508,6 +1493,24 @@ function attack(s: SwordStrike, touch: boolean) {
   showStrike(s);
 }
 sword.onStrike = (s) => attack(s, false);
+// a swing that was nearly one, or one made with the guard held: say so, or it feels like the phone missed it
+let hintUntil = 0;
+function swordHintLine(text: string) {
+  const now = performance.now();
+  if (mode !== 'sword' || !joined || now < hintUntil) return;
+  hintUntil = now + 900;
+  swordShot.textContent = text;
+  swordTv.textContent = '';
+}
+sword.onNear = (n) => {
+  rec?.event('near', { peak: +n.peak.toFixed(2), need: +n.need.toFixed(2), dir: +n.dir.toFixed(3), at: +n.t.toFixed(1) });
+  swordHintLine(`${ARROWS[(Math.round(n.dir / (Math.PI / 4)) + 8) % 8]} Swing harder!`);
+  audio.tick();
+};
+sword.onGuarded = (s) => {
+  rec?.event('guarded', { kind: s.kind, dir: +s.dir.toFixed(3), peak: +s.peak.toFixed(2), at: +s.t.toFixed(1) });
+  swordHintLine('Guarding — let go of GUARD to strike');
+};
 
 const ARROWS = ['→', '↗', '↑', '↖', '←', '↙', '↓', '↘'];
 function showStrike(s: SwordStrike) {

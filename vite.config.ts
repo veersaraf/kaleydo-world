@@ -16,6 +16,7 @@ export default defineConfig({
       input: {
         main: r('index.html'),
         controller: r('controller.html'),
+        capture: r('capture.html'),
       },
     },
   },

@@ -1,35 +1,57 @@
 // Sword duel: slash and thrust detection from raw phone motion.
 //
-// The phone is the sword: its top is the blade, as the TV draws it
+// The phone is the sword's grip: its top is the blade, as the TV draws it
 // (duel/types.ts aimFromPhone). Everything is measured in the player frame
 // (x right, y towards the screen, z up) via the orientation quaternion, so it
-// works however the phone sits in the hand — a hilt in a fist (top up or
-// forward, screen to the face) or a TV remote (top at the screen, screen up).
+// works however the phone sits in the hand — upright in a fist (the screen to
+// the face, grip at the bottom), pointed at the TV like a remote, or anything
+// between.
 //
-//  • stroke  — the blade's own angular speed |ω × s| (s = the phone's top):
-//              how fast the tip sweeps round the hand. A twist about the blade
-//              moves nothing. A stroke fires once, as its speed peaks above
-//              the threshold (confirmed a sample or two later: ~30 ms).
-//  • dir     — which way the tip travels across the player's view: ω × s
-//              projected on the view plane (x right, z up), summed over the
-//              stroke up to the peak, weighted by speed² (the fast part
-//              decides, however the stroke began) and by how far in front of
-//              the player the blade is: the part in front, where the blow
-//              lands. A windup behind the head (where the tip travels up and
-//              over) or out to the side (where it travels towards the screen)
-//              hardly counts.
+// Real swings aren't textbook arcs about the wrist. People swing from the
+// elbow and the shoulder, keep an upright phone upright while sweeping it
+// sideways (a turn about the blade itself), twist the forearm, and stop
+// short. So a swing is judged at the tip of an imaginary sword held out in
+// front: the forearm reaching towards the screen (LA) with the blade on its
+// end (LB). The tip's speed and the way it travels across the player's view
+// come from the phone's rotation (ω × lever), so:
+//
+//  • an upright phone swept sideways (ω about the vertical) is a sideways cut
+//    (the forearm carries the tip across), not a twist that moves nothing;
+//  • a chop (ω about the right axis) goes down whether the phone points up,
+//    ahead or anywhere between;
+//  • a heading that's a little off hardly matters: up and down don't depend
+//    on it, and left/right only shrink by its cosine.
+//
+//  • stroke  — the tip's angular speed S = |ω × lever|: a stroke starts above
+//              START and is judged once its peak is past (~40 ms later).
+//  • blow    — the peak reaches MIN_PEAK (≈ 220°/s; a relaxed swing is
+//              300–900°/s), the tip turned at least MIN_SWEEP by then, and it
+//              went one way (not a scribble). A stroke that falls a little
+//              short is a near miss: the phone says "swing harder".
+//  • dir     — which way the tip travelled across the view (x right, z up)
+//              over the last 200 ms up to the peak, weighted by speed² (the
+//              fast part decides).
 //  • power   — from the peak speed: a gentle flick ≈ 0.25, a full swing 1.
-//  • thrust  — a push towards the screen along the blade, from the
-//              accelerometer (a leaky integral: the hand's velocity), with the
-//              blade barely turning.
-//
-// Not attacks: slow aiming and angling the guard (too slow, or too smooth:
-// a controlled turn builds up its speed gradually, a blow snaps), the recoil
-// and the return to guard after a blow (a refractory period: the motion has
-// to settle, the next blow can't peak within 250 ms, and for 1½ s only a blow
-// at least two-thirds as hard as the last one counts), and anything while the
-// guard is held (swinging then only angles the guard — as in Chambara, let go
-// of the guard to attack).
+//  • windups — drawing the sword back (raising it for a chop, out to the
+//              side for a cut) is a stroke too. A blow that follows a windup —
+//              motion the other way just before it — goes at once. One that
+//              doesn't, and could itself be a windup (it goes up, or isn't
+//              hard), waits (up to HOLD ms, or until the phone comes to rest):
+//              if a harder stroke comes back the other way, that was its
+//              windup and only the blow counts. Rising cuts have to be a
+//              little harder than other blows.
+//  • after a blow — the recoil and the return to guard: nothing until the
+//              motion settles below SETTLE of the blow's peak, nothing within
+//              GAP, and for RETURN_MS a stroke back the other way has to be
+//              nearly as hard as the blow (a deliberate back-cut is; the
+//              return isn't).
+//  • thrust  — a push towards the screen (a leaky integral of the
+//              accelerometer: the hand's velocity) with the tip hardly
+//              turning.
+//  • guard   — while GUARD is held nothing attacks (swinging then only angles
+//              the guard — let go to attack, as in Chambara); a swing made
+//              with the guard held is reported (onGuarded) so the phone can
+//              say why nothing happened.
 //
 // iOS reports acceleration with the opposite sign to the W3C spec (see
 // swing.ts); comparing the reported gravity with the orientation's "up" tells
@@ -65,57 +87,103 @@ export interface SwordStrike {
   dir: number;
   /** 0..1 */
   power: number;
-  /** ms: the peak of the stroke (slash: blade speed; thrust: push speed) */
+  /** ms: the peak of the stroke (slash: tip speed; thrust: push speed) */
   t: number;
-  /** for tuning: peak blade speed, rad/s (thrust: push speed, m/s; swipe: px/ms) */
+  /** for tuning: peak tip speed, rad/s (thrust: push speed, m/s; swipe: px/ms) */
   peak: number;
-  /** for tuning: how far the blade turned from the stroke's start to the decision, rad */
+  /** for tuning: how far the tip turned from the stroke's start to the decision, rad */
   sweep: number;
+}
+
+/** Every stroke the detector judged, and what it made of it (for tuning: scripts/replay-capture.ts). */
+export interface SwordJudged {
+  /** its peak: when, how fast (rad/s), which way */
+  t: number;
+  peak: number;
+  dir: number;
+  /** how far the tip turned (rad); how much of its travel was across the view, and one way (0..1) */
+  sweep: number;
+  across: number;
+  coherent: number;
+  /** what a blow needed (base: before the return-after-a-blow rule) */
+  need: number;
+  base: number;
+  /** how much the sword was drawn back the other way just before (its windup: see WOUND) */
+  wound: number;
+  verdict: 'blow' | 'held' | 'windup' | 'weak' | 'near' | 'shapeless' | 'too soon' | 'guard';
+}
+
+/** A stroke that looked meant but was too gentle to be a blow (the phone says "swing harder"). */
+export interface SwordNearMiss {
+  t: number;
+  /** its peak tip speed, and what a blow needed, rad/s */
+  peak: number;
+  need: number;
+  dir: number;
 }
 
 const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
 const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-const cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const qconj = (q: Quat): Quat => [-q[0], -q[1], -q[2], q[3]];
 
-const N = 128; // blade-speed history (≥ 1.2 s at 100 Hz): a stroke's rise
+const N = 128; // sample history (≥ 1.2 s at 100 Hz)
 
-// slashes (rad/s of the blade; divided by the sensitivity setting)
-const START = 2.5; // a stroke begins
-const MIN_PEAK = 5.5; // the least a snappy stroke may peak at…
-const RISE = 0.11; // …when it takes at most this long (s) from half speed to its peak; slower rises need proportionally more
-const FLICK = 6.5; // a gentle flick: power 0.25
-const FULL = 18; // a full swing: power 1 (÷ √sensitivity)
-const CONFIRM = 0.9; // the peak is past once the speed is down to this much of it…
-const CONFIRM_MS = 40; // …or this long without a new high
-const MAX_STROKE = 900; // ms: longer than this without a peak isn't a blow
-const MIN_SWEEP = 0.35; // rad the blade turns by the decision (a jolt doesn't)
-const MIN_SEEN = 0.2; // rad the tip travels across the front of the view
-const COHERENT = 0.55; // |Σ v| / Σ |v|: the stroke goes one way (not a scribble)
+// the imaginary sword: the forearm reaching towards the screen, the blade (the phone's top) on its end
+const LA = 0.45;
+const LB = 0.6;
+// slashes (rad/s of the tip; divided by the sensitivity setting)
+const START = 1.8; // a stroke begins
+const MIN_PEAK = 3.3; // a blow peaks at least this fast (≈ 190°/s)
+const NEAR = 2.2; // …a stroke between this and MIN_PEAK is a near miss ("swing harder")
+const FLICK = 4.2; // a gentle flick: power 0.25
+const FULL = 13; // a full swing: power 1 (÷ √sensitivity)
+const CONFIRM = 0.75; // the peak is past once the speed is down to this much of it…
+const CONFIRM_MS = 45; // …or this long without a new high
+const MAX_STROKE = 1000; // ms: longer than this without a peak isn't a blow (a twirl)
+const MIN_SWEEP = 0.3; // rad the tip turns by the decision (a knock doesn't)
+const COHERENT = 0.5; // |Σ v| / Σ |v|: the stroke goes one way (not a scribble)
+const ACROSS = 0.3; // share of the tip's travel that's across the view (not straight at the screen)
+const DIR_WINDOW = 200; // ms before the peak the direction is read over
+const RISE = 0.25; // s: a stroke that takes longer than this from half speed to its peak (a twirl, a slow
+// turn) needs a faster peak (by the square of how much longer)
+// windups: a stroke that may be the windup of a blow — one going up (raising the sword), back
+// towards the player, or just not hard — waits to see whether a harder one comes back the other way
+const UP_K = 1.3; // a stroke going up has to be this much harder to be a rising cut
+const STRONG = 1.8; // a stroke this much harder than it needs to be is a blow, whatever follows: no wait
+const HOLD = 500; // ms after its peak is past it waits at most for the next stroke to begin…
+const REST = 1.2; // …or until the phone has been below this speed (rad/s)…
+const QUIET = 300; // …for this long (ms): nothing's coming
+// (a stroke that comes straight after the sword was drawn back the other way — its windup, however
+// slow — is the blow: no wait)
+const WOUND_MS = 700; // ms before the stroke began that a windup is looked for
+const WOUND = 0.15; // how much of one there has to be (Σ v·S·dt across the view, going the other way)
+const WINDUP_MAX = 700; // ms after its peak it waits at most (while a stroke is under way)
+const UNWIND = 1.1; // the blow after a windup is at least this much harder than it (a rising windup: 0.6)
 // after an attack
-const GAP = 250; // ms: no two blows peak closer than this
-const FOLLOW = 0.68; // for a while, the next blow has to be two-thirds as hard as the last…
-const FOLLOW_HOLD = 800; // …for this long (ms)…
-const FOLLOW_FADE = 700; // …then it fades out over this long
-const SETTLE = 0.35; // the motion has settled once below this much of the last peak (and START)
-const GUARD_GRACE = 40; // ms: a stroke that peaks this soon after letting go of the guard was the guard moving
+const GAP = 170; // ms: no two blows peak closer than this
+const SETTLE = 0.45; // the motion has settled once below this much of the last peak (and START)
+const RETURN_MS = 1000; // for this long, a stroke back the other way…
+const RETURN_K = 0.75; // …has to be this hard, as a share of the blow's peak…
+const RETURN_FADE = 600; // …which then fades back to the usual over this long
+const NEAR_QUIET = 700; // ms after a blow: no "swing harder" (that's the return)
+const NEAR_WAIT = 450; // ms a near miss waits for a blow (then it was the windup) before it's said
+const GUARD_GRACE = 60; // ms: a stroke that peaks this soon after letting go of the guard was the guard moving
 // thrusts (m/s of the hand, from the accelerometer)
 const TAU = 0.5; // s: leak of the integrated velocity (the accelerometer's bias would run away)
-const PUSH_START = 0.35; // a push begins
+const PUSH_START = 0.3; // a push begins
 // (the leak reads a push at ~85% of its true speed: these are as read)
 const V_MIN = 0.85; // the least a thrust may reach (≈ 1 m/s; ÷ sensitivity)
-const V_GENTLE = 1.1; // power 0.25 (a poke, ≈ 1.3 m/s)
-const V_FULL = 2.5; // power 1 (≈ 3 m/s; ÷ √sensitivity)
-const ROT_MAX = 3.5; // rad/s: a push with the blade turning faster than this is a swing
-const PUSH_FWD = 0.55; // the push is within ~57° of the screen…
-const PUSH_BLADE = 0.55; // …and of the blade…
-const BLADE_FWD = 0.35; // …and the blade points at least this much towards the screen
-const THRUST_GAP = 400; // ms between thrusts
+const V_GENTLE = 1.0; // power 0.25
+const V_FULL = 2.4; // power 1 (÷ √sensitivity)
+const ROT_MAX = 3.2; // rad/s: a push with the phone turning faster than this is a swing moving the hand
+const PUSH_FWD = 0.6; // the push is within ~53° of the screen…
+const BLADE_FWD = -0.2; // …with the blade not pointing back at the player
+const THRUST_GAP = 900; // ms between thrusts (the arm has to come back first: its stop reads as a push)
 const AFTER_SLASH = 300; // ms: no thrust peaks this soon after a slash (the arm is still moving)
-/** a thrust counts as a slash this hard for the follow-up rule */
-const THRUST_AS = 10;
+/** after a thrust, a slash within RETURN_MS has to be this hard (the pull back isn't one) */
+const THRUST_AS = 9;
 
-/** a slash's power from its peak blade speed: a gentle flick ≈ 0.25, a full swing 1 */
+/** a slash's power from its peak tip speed: a gentle flick ≈ 0.25, a full swing 1 */
 export function slashPower(peak: number, sensitivity = 1): number {
   const flick = FLICK / sensitivity,
     full = FULL / Math.sqrt(sensitivity);
@@ -128,6 +196,18 @@ function thrustPower(v: number, sensitivity = 1): number {
   return clamp(0.25 + (0.75 * (v - gentle)) / (full - gentle), 0.1, 1);
 }
 
+/** a stroke judged to be a blow */
+interface Candidate {
+  peak: number;
+  tPeak: number;
+  dir: number;
+  sweep: number;
+  up: boolean;
+  /** when it was judged, and since when the phone has been at rest (ms, −1: it isn't) */
+  at: number;
+  quiet: number;
+}
+
 export class SwordDetector {
   /** 0.75 = needs big swings … 1.35 = light swings count (the remote's setting) */
   sensitivity = 1;
@@ -136,12 +216,23 @@ export class SwordDetector {
   /** sign relating accelerationIncludingGravity to true up when acceleration isn't reported (iOS: −1) */
   upSign = 1;
   onStrike: (s: SwordStrike) => void = () => {};
-  /** live blade speed, rad/s (for the meter) */
+  /** a stroke that looked meant but was too gentle */
+  onNear: (n: SwordNearMiss) => void = () => {};
+  /** a swing (or push) made while holding the guard: it only angled the guard */
+  onGuarded: (s: SwordStrike) => void = () => {};
+  /** every stroke judged (tuning) */
+  onJudge: ((j: SwordJudged) => void) | null = null;
+  /** live tip speed, rad/s (for the meter) */
   live = 0;
 
   private lastT = 0;
+  // history: time, dt, tip speed, the tip's velocity (x across, y towards the screen, z up)
   private T = new Float64Array(N);
-  private B = new Float64Array(N);
+  private DT = new Float64Array(N);
+  private S = new Float64Array(N);
+  private VX = new Float64Array(N);
+  private VY = new Float64Array(N);
+  private VZ = new Float64Array(N);
   private head = 0;
   private count = 0;
 
@@ -150,17 +241,25 @@ export class SwordDetector {
   private t0 = 0;
   private peak = 0;
   private tPeak = 0;
-  private dx = 0;
-  private dz = 0;
-  private dabs = 0;
-  private seen = 0;
   private sweep = 0;
+  /** the stroke's way across the view so far (Σ v·S·dt) */
+  private sx = 0;
+  private sz = 0;
+
+  // a stroke that may have been a windup, waiting for its blow
+  private pending: Candidate | null = null;
   // the last attack
   private settled = true;
+  private settleP = 0;
   private lastAt = -1e9;
   private lastP = 0;
+  private lastDir = 0;
+  private lastThrust = false;
   private lastSlashAt = -1e9;
   private lastThrustAt = -1e9;
+  private lastNearAt = -1e9;
+  /** a near miss, said only if no blow follows it soon (it may have been a windup) */
+  private near: SwordNearMiss | null = null;
   // the guard
   private guarding = false;
   private guardUpAt = -1e9;
@@ -172,14 +271,18 @@ export class SwordDetector {
   private turned = false;
   private lastTurnAt = -1e9;
   private pushSettled = true;
+  /** how fast the hand was lately moving back, away from the screen (m/s, fading), and as a push began */
+  private backV = 0;
+  private pushBias = 0;
   private gSign = 0;
   private igUp = 0;
 
   /** Forget the motion so far (e.g. the duel starts). */
   reset() {
     this.inStroke = false;
+    this.pending = null;
     this.settled = true;
-    this.lastAt = this.lastSlashAt = this.lastThrustAt = -1e9;
+    this.lastAt = this.lastSlashAt = this.lastThrustAt = this.lastNearAt = -1e9;
     this.pushing = false;
     this.pushSettled = true;
     this.vel = [0, 0, 0];
@@ -188,7 +291,8 @@ export class SwordDetector {
   /** The guard pad went down / up at time t (ms). While it's held, swings only angle the guard. */
   guard(down: boolean, t = this.lastT) {
     this.guarding = down;
-    if (!down) this.guardUpAt = t;
+    if (down) this.pending = null;
+    else this.guardUpAt = t;
   }
 
   private idx(back: number) {
@@ -213,92 +317,217 @@ export class SwordDetector {
     }
     const w = this.toPlayer(qrot(s.q, [s.rx, s.ry, s.rz]));
     const b = this.toPlayer(qrot(s.q, [0, 1, 0]));
-    // the tip's velocity (per metre of blade) and the blade's angular speed
-    const v = cross(w, b);
-    const bw = Math.hypot(v[0], v[1], v[2]);
-    this.T[this.head] = s.t;
-    this.B[this.head] = bw;
-    this.head = (this.head + 1) % N;
+    // the imaginary sword's tip, from the elbow (unit length)
+    const lx = LB * b[0],
+      ly = LA + LB * b[1],
+      lz = LB * b[2];
+    const ll = Math.hypot(lx, ly, lz) || 1;
+    const r0 = lx / ll,
+      r1 = ly / ll,
+      r2 = lz / ll;
+    // its velocity per metre (ω × r) and speed
+    const vx = w[1] * r2 - w[2] * r1,
+      vy = w[2] * r0 - w[0] * r2,
+      vz = w[0] * r1 - w[1] * r0;
+    const sp = Math.hypot(vx, vy, vz);
+    const h = this.head;
+    this.T[h] = s.t;
+    this.DT[h] = dt;
+    this.S[h] = sp;
+    this.VX[h] = vx;
+    this.VY[h] = vy;
+    this.VZ[h] = vz;
+    this.head = (h + 1) % N;
     this.count = Math.min(N, this.count + 1);
-    this.live = 0.6 * bw + 0.4 * this.live;
-    if (bw > ROT_MAX) this.lastTurnAt = s.t;
-    this.slash(s.t, dt, v, bw, b);
-    this.thrust(s, dt, b, bw);
+    this.live = 0.6 * sp + 0.4 * this.live;
+    // (a push with the phone turning isn't a thrust: the hand moves because the arm swings)
+    if (Math.max(sp, 0.8 * Math.hypot(w[0], w[1], w[2])) > ROT_MAX) this.lastTurnAt = s.t;
+    this.slash(s.t, dt, sp);
+    this.thrust(s, dt, b);
   }
 
-  private slash(t: number, dt: number, v: Vec3, bw: number, b: Vec3) {
-    const k = this.sensitivity;
-    const start = START / k;
+  private slash(t: number, dt: number, sp: number) {
+    const start = START / this.sensitivity;
+    const nm = this.near;
+    if (nm && t - nm.t > NEAR_WAIT && !this.inStroke) {
+      this.near = null;
+      this.onNear(nm);
+    }
+    const p = this.pending;
+    if (p) {
+      // a possible windup: no blow followed (the phone came to rest, or nothing came in time), or the
+      // next stroke isn't coming back the other way — it was a blow after all
+      let go = t - p.tPeak > WINDUP_MAX;
+      if (!this.inStroke) {
+        if (sp < REST) {
+          if (p.quiet < 0) p.quiet = t;
+        } else p.quiet = -1;
+        if ((p.quiet >= 0 && t - p.quiet >= QUIET) || t - p.at >= HOLD) go = true;
+      } else if (t - this.t0 >= 30 && (this.sx || this.sz) && Math.cos(Math.atan2(this.sz, this.sx) - p.dir) > -0.2) go = true;
+      if (go) {
+        this.pending = null;
+        this.emit(p);
+      }
+    }
     if (!this.settled) {
-      // still the last blow (its follow-through, or a push's wobble)
-      if (bw < Math.max(start, SETTLE * this.lastP)) this.settled = true;
+      // still the last blow (its follow-through, or a push's wobble) — or, after a possible windup,
+      // still that (the next stroke is the one that comes back the other way)
+      if (sp < (this.pending ? start : Math.max(start, SETTLE * this.settleP))) this.settled = true;
       else return;
     }
     if (!this.inStroke) {
-      if (bw <= start) return;
+      if (sp <= start) return;
       this.inStroke = true;
       this.t0 = t;
       this.peak = 0;
-      this.dx = this.dz = this.dabs = this.seen = this.sweep = 0;
+      this.sweep = 0;
+      this.sx = this.sz = 0;
     }
-    // In front of the player (the blade pointing at the screen: b·y = 1) the
-    // tip's travel across the view is the blow; behind the head or out to
-    // the side it's the windup and hardly counts.
-    const front = clamp((b[1] + 0.2) / 0.6, 0, 1);
-    const vv = Math.hypot(v[0], v[2]);
-    const wgt = bw * bw * front * dt;
-    this.dx += v[0] * wgt;
-    this.dz += v[2] * wgt;
-    this.dabs += vv * wgt;
-    this.seen += vv * front * dt;
-    this.sweep += bw * dt;
-    if (bw > this.peak) {
-      this.peak = bw;
+    this.sweep += sp * dt;
+    const j = this.idx(0);
+    this.sx += this.VX[j] * sp * dt;
+    this.sz += this.VZ[j] * sp * dt;
+    if (sp > this.peak) {
+      this.peak = sp;
       this.tPeak = t;
-    } else if (bw < CONFIRM * this.peak || t - this.tPeak >= CONFIRM_MS) {
+    } else if (sp < CONFIRM * this.peak || t - this.tPeak >= CONFIRM_MS) {
       this.inStroke = false;
-      this.decide();
+      this.decide(t);
       return;
     }
     if (t - this.t0 > MAX_STROKE) {
       // a steady spin, not a blow: let it calm down first
       this.inStroke = false;
       this.settled = false;
-      this.lastP = this.peak;
+      this.settleP = this.peak;
     }
   }
 
-  /** The stroke's peak is past: a blow? */
-  private decide() {
+  /** The stroke's peak is past (at time t): a blow? */
+  private decide(t: number) {
     const k = this.sensitivity;
-    const { peak, tPeak } = this;
-    // A blow snaps: its speed builds up fast. Aiming and angling the guard
-    // build it up gradually — a slower rise needs a proportionally faster peak.
-    let tHalf = this.t0;
+    const { peak, tPeak, sweep } = this;
+    // which way the tip went across the view: the fast part up to the peak (and the moment since)
+    const from = Math.max(this.t0, tPeak - DIR_WINDOW) - 1;
+    let dx = 0,
+      dz = 0,
+      across = 0,
+      all = 0;
     for (let i = 0; i < this.count; i++) {
       const j = this.idx(i);
-      if (this.T[j] > tPeak) continue;
-      if (this.B[j] < 0.5 * peak || tPeak - this.T[j] > 600) {
-        tHalf = this.T[j];
-        break;
-      }
+      if (this.T[j] < from) break;
+      const s = this.S[j];
+      const w = s * s * this.DT[j];
+      dx += this.VX[j] * w;
+      dz += this.VZ[j] * w;
+      across += Math.hypot(this.VX[j], this.VZ[j]) * w;
+      all += s * w;
     }
-    const rise = (tPeak - tHalf) / 1000;
-    let need = (MIN_PEAK / k) * Math.max(1, rise / RISE);
-    // soon after a blow, only another hard one counts: the recoil and the
-    // return to guard are weaker
+    const d = Math.hypot(dx, dz);
+    const dir = Math.atan2(dz, dx);
+    // the motion just before the stroke began, the other way: its windup
+    let wx = 0,
+      wz = 0;
+    for (let i = 0; i < this.count; i++) {
+      const j = this.idx(i);
+      if (this.T[j] >= this.t0) continue;
+      if (this.T[j] < this.t0 - WOUND_MS) break;
+      const s = this.S[j];
+      if (s < 0.8) continue;
+      wx += this.VX[j] * s * this.DT[j];
+      wz += this.VZ[j] * s * this.DT[j];
+    }
+    const wound = Math.max(0, -(wx * Math.cos(dir) + wz * Math.sin(dir)));
+    const J: SwordJudged | null = this.onJudge
+      ? { t: tPeak, peak, dir, sweep, across: all > 0 ? across / all : 0, coherent: across > 0 ? d / across : 0, need: 0, base: 0, wound, verdict: 'shapeless' }
+      : null;
+    const judged = (v: SwordJudged['verdict'], need = 0, base = 0) => {
+      if (!J) return;
+      J.verdict = v;
+      J.need = need;
+      J.base = base;
+      this.onJudge!(J);
+    };
+    // a knock, a push at the screen with a turn in it, or a scribble
+    if (sweep < MIN_SWEEP || all <= 0 || across < ACROSS * all || d < COHERENT * across) return judged('shapeless');
+    const up = Math.sin(dir) > 0.35;
+    const c: Candidate = { peak, tPeak, dir, sweep, up, at: t, quiet: -1 };
+
+    // a stroke after one that may have been its windup: harder, and back the other way → it was
+    // (forget it); else that was a blow, and this is judged after it
+    const p = this.pending;
+    if (p) {
+      this.pending = null;
+      if (!(Math.cos(dir - p.dir) < -0.2 && peak >= Math.max(MIN_PEAK / k, (p.up ? 0.6 : UNWIND) * p.peak) && !this.guarding)) this.emit(p);
+      else if (this.onJudge) this.onJudge({ t: p.tPeak, peak: p.peak, dir: p.dir, sweep: p.sweep, across: 0, coherent: 0, need: 0, base: 0, wound: 0, verdict: 'windup' });
+    }
+
     const since = tPeak - this.lastAt;
-    if (since < GAP) return;
-    if (since < FOLLOW_HOLD + FOLLOW_FADE) need = Math.max(need, FOLLOW * this.lastP * Math.min(1, (FOLLOW_HOLD + FOLLOW_FADE - since) / FOLLOW_FADE));
-    if (peak < need || this.sweep < MIN_SWEEP || this.seen < MIN_SEEN) return;
-    const d = Math.hypot(this.dx, this.dz);
-    if (d < COHERENT * this.dabs) return;
+    if (since < GAP) return judged('too soon');
+    // a slow build-up (a twirl, a controlled turn) needs more; so does going up (it may be a windup)
+    const base = (MIN_PEAK / k) * Math.max(1, (this.rise() / RISE) ** 2) * (up ? UP_K : 1);
+    let need = base;
+    // soon after a blow, a stroke back the other way is the return, unless it's nearly as hard (after a thrust, any stroke)
+    if (since < RETURN_MS + RETURN_FADE && (this.lastThrust || Math.cos(dir - this.lastDir) < -0.2)) {
+      const f = since < RETURN_MS ? 1 : 1 - (since - RETURN_MS) / RETURN_FADE;
+      need = Math.max(base, base + (RETURN_K * this.lastP - base) * f);
+    }
+    if (peak < need) {
+      // (a return that was held back isn't a near miss)
+      const returning = since < RETURN_MS + RETURN_FADE && need > base;
+      if (peak < base && peak >= NEAR / k && !returning && since > NEAR_QUIET && tPeak - this.lastNearAt > 600 && !this.guarding) {
+        this.lastNearAt = tPeak;
+        this.near = { t: tPeak, peak, need: base, dir };
+        return judged('near', need, base);
+      }
+      return judged('weak', need, base);
+    }
     // no attacks with the guard up, nor a swing that was the guard still moving as it was let go
-    if (this.guarding || tPeak < this.guardUpAt + GUARD_GRACE) return;
-    this.lastAt = this.lastSlashAt = tPeak;
-    this.lastP = peak;
+    // (it began while the guard was held, or peaked just after)
+    if (this.guarding || tPeak < this.guardUpAt + GUARD_GRACE || this.t0 < this.guardUpAt - 50) {
+      if (this.guarding) this.onGuarded({ kind: 'slash', dir, power: slashPower(peak, k), t: tPeak, peak, sweep });
+      // (its return isn't an attack either)
+      this.lastAt = tPeak;
+      this.lastP = peak;
+      this.lastDir = dir;
+      this.lastThrust = false;
+      this.settled = false;
+      this.settleP = peak;
+      return judged('guard', need, base);
+    }
+    // going up (raising the sword), or not so hard: maybe the windup of a blow —
+    // unless the sword had just been drawn back the other way (then this is the blow)
+    if (wound < WOUND && (up || peak < STRONG * base)) {
+      this.pending = c;
+      // the motion comes back down through the turnaround before the blow
+      this.settled = false;
+      this.settleP = peak;
+      return judged('held', need, base);
+    }
+    judged('blow', need, base);
+    this.emit(c);
+  }
+
+  /** how long the stroke just judged took from half its peak speed to the peak, s */
+  private rise() {
+    const half = 0.5 * this.peak;
+    for (let i = 0; i < this.count; i++) {
+      const j = this.idx(i);
+      if (this.T[j] > this.tPeak) continue;
+      if (this.S[j] < half) return (this.tPeak - this.T[j]) / 1000;
+    }
+    return (this.tPeak - this.t0) / 1000;
+  }
+
+  private emit(c: Candidate) {
+    this.near = null;
+    this.lastAt = this.lastSlashAt = c.tPeak;
+    this.lastP = c.peak;
+    this.lastDir = c.dir;
+    this.lastThrust = false;
     this.settled = false;
-    this.onStrike({ kind: 'slash', dir: Math.atan2(this.dz, this.dx), power: slashPower(peak, k), t: tPeak, peak, sweep: this.sweep });
+    this.settleP = c.peak;
+    this.onStrike({ kind: 'slash', dir: c.dir, power: slashPower(c.peak, this.sensitivity), t: c.tPeak, peak: c.peak, sweep: c.sweep });
   }
 
   /** The hand's acceleration (gravity out, the W3C sense), device axes — whichever way the browser reports it. */
@@ -323,7 +552,7 @@ export class SwordDetector {
     return null;
   }
 
-  private thrust(s: SwordSample, dt: number, b: Vec3, bw: number) {
+  private thrust(s: SwordSample, dt: number, b: Vec3) {
     const a = this.accel(s, s.q!);
     if (!a) return;
     const ap = this.toPlayer(qrot(s.q!, a));
@@ -332,8 +561,11 @@ export class SwordDetector {
     for (let i = 0; i < 3; i++) vel[i] = vel[i] * keep + ap[i] * dt;
     const sp = Math.hypot(vel[0], vel[1], vel[2]);
     const k = this.sensitivity;
-    // towards the screen, along the blade, the blade pointing that way too
-    const ahead = sp > 1e-6 && vel[1] >= PUSH_FWD * sp && dot(vel, b) >= PUSH_BLADE * sp && b[1] >= BLADE_FWD;
+    // the arm coming back and stopping reads (leaky as the integral is) as a push forward: a push
+    // straight after moving back has to beat that
+    this.backV = Math.max(Math.max(0, -vel[1]), this.backV * Math.exp(-dt / 0.3));
+    // towards the screen, the blade not pointing back at the player
+    const ahead = sp > 1e-6 && vel[1] >= PUSH_FWD * sp && b[1] >= BLADE_FWD;
     if (!this.pushing) {
       if (!this.pushSettled) {
         if (sp < 0.3) this.pushSettled = true;
@@ -341,6 +573,7 @@ export class SwordDetector {
       }
       if (sp > PUSH_START && ahead) {
         this.pushing = true;
+        this.pushBias = this.backV;
         this.vmax = sp;
         this.tvmax = s.t;
         // (a blade that was turning just before is a swing's follow-through)
@@ -348,7 +581,7 @@ export class SwordDetector {
       }
       return;
     }
-    if (bw > ROT_MAX) this.turned = true;
+    if (this.lastTurnAt === s.t) this.turned = true;
     if (!ahead) {
       this.pushing = false;
       return;
@@ -362,12 +595,17 @@ export class SwordDetector {
     // past the push's peak: the arm is reaching full stretch
     this.pushing = false;
     const t = this.tvmax;
-    if (this.vmax < V_MIN / k || this.turned || this.guarding || t < this.guardUpAt + GUARD_GRACE) return;
+    if (this.vmax < V_MIN / k + this.pushBias || this.turned) return;
+    if (this.guarding || t < this.guardUpAt + GUARD_GRACE) {
+      if (this.guarding) this.onGuarded({ kind: 'thrust', dir: 0, power: thrustPower(this.vmax, k), t, peak: this.vmax, sweep: 0 });
+      return;
+    }
     if (t - this.lastSlashAt < AFTER_SLASH || t - this.lastThrustAt < THRUST_GAP) return;
     this.pushSettled = false;
+    this.pending = null;
     this.lastAt = this.lastThrustAt = t;
-    // a slash straight after has to be a real one (the pull back isn't)
     this.lastP = THRUST_AS;
+    this.lastThrust = true;
     this.onStrike({ kind: 'thrust', dir: 0, power: thrustPower(this.vmax, k), t, peak: this.vmax, sweep: 0 });
   }
 }
