@@ -520,8 +520,12 @@ export class App {
     const g = new BaseballGame(hitters, { seed: this.rng.int(1, 1 << 30), ...opts });
     this.baseball = g;
     g.onEvent = (e) => {
-      if (e.type === 'contact') this.ballCam.kick(e.ball.sweet ? 0.75 : 0.22 + Math.min(0.4, e.ball.exitSpeed / 110));
-      else if (e.type === 'catch') this.ballCam.kick(0.08);
+      if (e.type === 'contact') {
+        this.ballCam.kick(e.ball.sweet ? 0.75 : 0.22 + Math.min(0.4, e.ball.exitSpeed / 110));
+        // the crowd comes up out of their seats for one that's going a long way
+        if (!e.ball.foul && e.ball.exitSpeed > 38) this.stage.current?.crowd?.cheerNow(0.35);
+      } else if (e.type === 'catch') this.ballCam.kick(0.08);
+      else if (e.type === 'land' && e.ball.homeRun && !e.ball.foul) this.stage.current?.crowd?.cheerNow(1);
       this.onBaseballEvent(e);
       // a crushed one: see it again
       if (e.type === 'result' && e.outcome === 'homerun' && g.hit && (g.hit.sweet || g.hit.distance >= 128)) this.startHrReplay();
