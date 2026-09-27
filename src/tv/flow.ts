@@ -120,6 +120,8 @@ export class Flow {
   private stats: Stats = this.freshStats();
   private padModes = new Map<string, string>();
   private attractShiftAt = 14;
+  /** when the menu's background moves on to the next sport */
+  private attractSportAt = 44;
   private time = 0;
   private teams: [TeamInfo, TeamInfo] = [
     { name: '', color: '' },
@@ -1068,6 +1070,8 @@ export class Flow {
 
   private archeryEvent(e: ArcheryEvent) {
     const a = this.audio;
+    // behind the menu (a showcase game) the play sounds, the crowd doesn't
+    const crowd = this.app.attract ? null : this.audio;
     const hud = this.archHud;
     const g = this.app.archery;
     if (!g) return;
@@ -1101,12 +1105,12 @@ export class Flow {
         if (e.bullseye) {
           text = 'BULLSEYE!';
           cls = 'good';
-          a?.sfx.cheer(0.9);
-          a?.music.jingle('point');
-        } else if (e.points >= 8) a?.sfx.applause(0.5);
+          crowd?.sfx.cheer(0.9);
+          crowd?.music.jingle('point');
+        } else if (e.points >= 8) crowd?.sfx.applause(0.5);
         else if (e.points === 0) {
           cls = 'bad';
-          a?.sfx.aww();
+          crowd?.sfx.aww();
         }
         hud?.say(text, e.points > 0 && !e.bullseye && e.ring === 0 ? 'bonus!' : '', cls);
         const pid = padOf(e.who);
@@ -1114,9 +1118,11 @@ export class Flow {
         break;
       }
       case 'over': {
-        a?.sfx.cheer(1);
+        crowd?.sfx.cheer(1);
         window.setTimeout(() => {
-          if (this.app.sport === 'archery' && this.app.archery === g) this.go(this.archeryResults(e.ranking));
+          if (this.app.sport !== 'archery' || this.app.archery !== g) return;
+          if (this.app.attract) this.app.startAttract(this.app.stage.current?.def.id ?? 'park', 'archery');
+          else this.go(this.archeryResults(e.ranking));
         }, 1800);
         break;
       }
@@ -1286,6 +1292,8 @@ export class Flow {
 
   private duelEvent(e: DuelEvent) {
     const a = this.audio;
+    // behind the menu (a showcase game) the play sounds, the crowd doesn't
+    const crowd = this.app.attract ? null : this.audio;
     const hud = this.duelHud;
     const g = this.app.duel;
     if (!g) return;
@@ -1308,7 +1316,7 @@ export class Flow {
         break;
       case 'fight':
         hud?.say('FIGHT!', '', 'good');
-        a?.sfx.cheer(0.5);
+        crowd?.sfx.cheer(0.5);
         this.syncPads(true);
         break;
       case 'attack':
@@ -1316,7 +1324,7 @@ export class Flow {
         break;
       case 'hit':
         a?.sfx.thwack(e.strength, pan(e.x));
-        if (e.strength > 0.65) a?.sfx.ooh();
+        if (e.strength > 0.65) crowd?.sfx.ooh();
         pad(e.by, 'hit', 'HIT!', `${name(e.who)} knocked back`);
         pad(e.who, 'ouch', 'OUCH!', 'guard across their swing');
         break;
@@ -1331,14 +1339,14 @@ export class Flow {
         hud?.say('CLASH!', '', 'small');
         break;
       case 'edge':
-        a?.sfx.ooh();
+        crowd?.sfx.ooh();
         break;
       case 'fall':
-        a?.sfx.aww();
+        crowd?.sfx.aww();
         break;
       case 'splash':
         a?.sfx.splash(pan(e.x), this.app.stage.current?.def.id === 'cosmic');
-        a?.sfx.cheer(0.8);
+        crowd?.sfx.cheer(0.8);
         break;
       case 'round-end': {
         hud?.setScore(e.score);
@@ -1353,13 +1361,15 @@ export class Flow {
       case 'over': {
         hud?.setScore(e.score);
         hud?.say(`${name(e.winner)} WINS!`, `${e.score[e.winner]} – ${e.score[1 - e.winner]}`, 'good');
-        a?.sfx.cheer(1);
-        a?.music.jingle('point');
+        crowd?.sfx.cheer(1);
+        crowd?.music.jingle('point');
         pad(e.winner, 'win', 'YOU WIN!', `${e.score[e.winner]} – ${e.score[1 - e.winner]}`);
         pad(1 - e.winner, 'lose', 'DEFEATED', `${e.score[1 - e.winner]} – ${e.score[e.winner]}`);
         this.syncPads(true);
         window.setTimeout(() => {
-          if (this.app.sport === 'duel' && this.app.duel === g) this.go(this.duelResults(e.winner));
+          if (this.app.sport !== 'duel' || this.app.duel !== g) return;
+          if (this.app.attract) this.app.startAttract(this.app.stage.current?.def.id ?? 'park', 'duel');
+          else this.go(this.duelResults(e.winner));
         }, 2600);
         break;
       }
@@ -1513,6 +1523,8 @@ export class Flow {
 
   private bowlEvent(e: BowlEvent) {
     const a = this.audio;
+    // behind the menu (a showcase game) the play sounds, the crowd doesn't
+    const crowd = this.app.attract ? null : this.audio;
     const hud = this.bowlHud;
     const g = this.app.bowl;
     if (!g) return;
@@ -1557,11 +1569,11 @@ export class Flow {
         hud?.update(g.current);
         hud?.setPins(e.mark === 'strike' || e.mark === 'spare' ? null : e.standing);
         if (e.mark === 'strike') {
-          a?.sfx.cheer(1);
-          a?.music.jingle('point');
-        } else if (e.mark === 'spare') a?.sfx.cheer(0.7);
-        else if (e.mark === 'split' || e.mark === 'gutter') a?.sfx.aww();
-        else if (e.pins >= 7) a?.sfx.applause(0.4);
+          crowd?.sfx.cheer(1);
+          crowd?.music.jingle('point');
+        } else if (e.mark === 'spare') crowd?.sfx.cheer(0.7);
+        else if (e.mark === 'split' || e.mark === 'gutter') crowd?.sfx.aww();
+        else if (e.pins >= 7) crowd?.sfx.applause(0.4);
         const pid = padOf(e.bowler.slot);
         if (pid) this.app.link.toPad(pid, { type: 'fx', fx: e.mark === 'strike' || e.mark === 'spare' ? 'perfect' : 'hit', label: text, detail: `Frame ${e.frame + 1} · ${e.bowler.score.total()} total` });
         break;
@@ -1581,9 +1593,11 @@ export class Flow {
         hud?.setPins(null);
         hud?.hideTurn();
         a?.sfx.roll(0);
-        a?.sfx.cheer(1);
+        crowd?.sfx.cheer(1);
         window.setTimeout(() => {
-          if (this.app.sport === 'bowling') this.go(this.bowlResults(e.ranking));
+          if (this.app.sport !== 'bowling') return;
+          if (this.app.attract) this.app.startAttract(this.app.stage.current?.def.id ?? 'park', 'bowling');
+          else this.go(this.bowlResults(e.ranking));
         }, 1600);
         break;
       default:
@@ -2208,8 +2222,17 @@ export class Flow {
       }
       if (m.state === 'serve' && !this.tossHintShown) this.tossHintShown = true;
     }
-    // attract mode showcases the worlds
-    if (this.app.attract && this.screen && (this.screen.name === 'title' || this.screen.name === 'menu') && WORLDS.length > 1) {
+    // attract mode showcases the worlds — and the sports, one after another
+    if (this.app.attract && this.screen && (this.screen.name === 'title' || this.screen.name === 'menu')) {
+      if (this.time > this.attractSportAt) {
+        const order = ['tennis', 'bowling', 'duel', 'archery'] as const;
+        const next = order[(order.indexOf(this.app.attractSport) + 1) % order.length];
+        this.attractSportAt = this.time + (next === 'tennis' ? 44 : 30);
+        this.attractShiftAt = this.time + 14;
+        this.app.startAttract(this.app.stage.current?.def.id ?? 'park', next);
+      }
+    }
+    if (this.app.attract && this.app.sport === 'tennis' && this.screen && (this.screen.name === 'title' || this.screen.name === 'menu') && WORLDS.length > 1) {
       if (this.time > this.attractShiftAt) {
         this.attractShiftAt = this.time + 14;
         const i = WORLDS.findIndex((w) => w.id === this.app.stage.current?.def.id);

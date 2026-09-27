@@ -28,6 +28,7 @@ import { RANGE } from './archery/range';
 import type { Archer, ArcheryEvent, ArcherState } from './archery/types';
 import type { World } from './worlds/base';
 import { hashStr } from '../shared/hash';
+import { PLAYER_COLORS } from '../shared/protocol';
 import { CHAR_SCALE } from './chars/rig';
 import { newPose, copyPose } from './chars/pose';
 import { WORLDS } from './worlds';
@@ -177,7 +178,37 @@ export class App {
 
   // ---------------------------------------------------------------- matches
 
-  startAttract(worldId = this.worldId) {
+  /** which sport the menu's background is showing */
+  attractSport: 'tennis' | 'bowling' | 'duel' | 'archery' = 'tennis';
+
+  /** CPUs to fill a showcase game: random looks, the player colours */
+  private attractCpus(n: number) {
+    return Array.from({ length: n }, (_, i) => ({
+      name: 'CPU',
+      color: PLAYER_COLORS[(i + this.rng.int(0, 3)) % 4],
+      look: randomLook(this.rng),
+      handed: (this.rng.chance(0.15) ? -1 : 1) as 1 | -1,
+      slot: -1,
+      cpu: this.rng.range(0.6, 0.95),
+    }));
+  }
+
+  /** The menu's background: CPUs playing one of the sports (they take turns showing off). */
+  startAttract(worldId = this.worldId, sport = this.attractSport) {
+    this.attractSport = sport;
+    if (sport === 'bowling') {
+      void this.startBowling(this.attractCpus(2), worldId, true);
+      return;
+    }
+    if (sport === 'duel') {
+      const [a, b] = this.attractCpus(2);
+      this.startDuel([a, b], worldId, true);
+      return;
+    }
+    if (sport === 'archery') {
+      this.startArchery(this.attractCpus(2), worldId, true);
+      return;
+    }
     const doubles = this.rng.chance(0.3);
     const players: PlayerSpec[] = [];
     for (const team of [0, 1] as const) {
@@ -349,31 +380,36 @@ export class App {
     const realDt = Math.min(0.1, Math.max(0, gapMs / 1000));
     this.last = now;
     this.realT += realDt;
+    // (each sport's frame ends by calling onFrame, which can start another sport —
+    // the menu's showcase moving on — so hold on to this frame's game)
     if (this.sport === 'bowling') {
-      if (!this.bowl || !this.stage.current) return;
+      const g = this.bowl;
+      if (!g || !this.stage.current) return;
       this.quality.beginFrame();
       this.bowlFrame(realDt);
       this.quality.endFrame();
       if (!document.hidden) {
-        const st = this.bowl.state;
+        const st = g.state;
         if (this.quality.update(now, gapMs, this.paused || (st !== 'approach' && st !== 'lane' && st !== 'pins')) !== null) this.applyQuality();
       }
       return;
     }
     if (this.sport === 'archery') {
-      if (!this.archery || !this.stage.current) return;
+      const g = this.archery;
+      if (!g || !this.stage.current) return;
       this.quality.beginFrame();
       this.archeryFrame(realDt);
       this.quality.endFrame();
-      if (!document.hidden && this.quality.update(now, gapMs, this.paused || this.archery.state !== 'aim') !== null) this.applyQuality();
+      if (!document.hidden && this.quality.update(now, gapMs, this.paused || g.state !== 'aim') !== null) this.applyQuality();
       return;
     }
     if (this.sport === 'duel') {
-      if (!this.duel || !this.stage.current) return;
+      const g = this.duel;
+      if (!g || !this.stage.current) return;
       this.quality.beginFrame();
       this.duelFrame(realDt);
       this.quality.endFrame();
-      if (!document.hidden && this.quality.update(now, gapMs, this.paused || this.duel.state !== 'fight') !== null) this.applyQuality();
+      if (!document.hidden && this.quality.update(now, gapMs, this.paused || g.state !== 'fight') !== null) this.applyQuality();
       return;
     }
     const m = this.match;
@@ -395,13 +431,13 @@ export class App {
   // ---------------------------------------------------------------- archery
 
   /** Turn the current world's court into a range and start a round. */
-  startArchery(archers: Archer[], worldId: string) {
+  startArchery(archers: Archer[], worldId: string, attract = false) {
     this.stopBowling();
     this.stopDuel();
     this.stopArchery();
     this.match = null;
     this.replay = null;
-    this.attract = false;
+    this.attract = attract;
     this.paused = false;
     this.sport = 'archery';
     this.input.archeryMode = true;
@@ -559,13 +595,13 @@ export class App {
 
   /** Turn the current world's court into a duel arena and start a match. Two
    *  people on the same screen get half each. */
-  startDuel(duelists: [Duelist, Duelist], worldId: string) {
+  startDuel(duelists: [Duelist, Duelist], worldId: string, attract = false) {
     this.stopBowling();
     this.stopDuel();
     this.stopArchery();
     this.match = null;
     this.replay = null;
-    this.attract = false;
+    this.attract = attract;
     this.paused = false;
     this.bowl = null;
     this.sport = 'duel';
@@ -691,13 +727,13 @@ export class App {
   // ---------------------------------------------------------------- bowling
 
   /** Turn the current world's court into lanes and start a game. */
-  async startBowling(specs: Omit<Bowler, 'score' | 'x' | 'aim'>[], worldId: string) {
+  async startBowling(specs: Omit<Bowler, 'score' | 'x' | 'aim'>[], worldId: string, attract = false) {
     this.phys ??= await BowlPhysics.load();
     this.stopDuel();
     this.stopArchery();
     this.match = null;
     this.replay = null;
-    this.attract = false;
+    this.attract = attract;
     this.paused = false;
     this.split = false;
     this.sport = 'bowling';
