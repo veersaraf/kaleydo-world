@@ -22,6 +22,9 @@ export class ArcheryCamera {
   /** the arrow being followed, and where it came to rest */
   private rest: THREE.Vector3 | null = null;
   private ac = newAimCam();
+  /** depth of field: on the target as you draw (the archer softens in the corner), on the arrow in the close-up */
+  focus: number | null = null;
+  aperture = 1;
   /** the push-in while drawing, eased */
   private zoom = 0;
 
@@ -30,7 +33,7 @@ export class ArcheryCamera {
   }
 
   /** the target the archer is shooting at */
-  private focus(g: ArcheryGame) {
+  private target(g: ArcheryGame) {
     return g.mainTarget() ?? { x: 0, y: 1.4, z: 0, r: RANGE.faceR };
   }
 
@@ -54,7 +57,7 @@ export class ArcheryCamera {
         const u = easeInOutCubic(clamp(since / 2.6));
         this.zoom = 0;
         this.aimView(g, 0);
-        const f = this.focus(g);
+        const f = this.target(g);
         tp.set(tp.x * u + (1 - u) * 5, tp.y + (1 - u) * 6, tp.z * u + (1 - u) * (f.z + 6));
         this.fov += (1 - u) * 8;
         lambda = 1000;
@@ -108,6 +111,14 @@ export class ArcheryCamera {
       this.look.y = damp(this.look.y, tl.y, lambda * 1.3, dt);
       this.look.z = damp(this.look.z, tl.z, lambda * 1.3, dt);
     }
+    const main = g.mainTarget();
+    if (g.state === 'result' && this.rest) {
+      this.focus = this.pos.distanceTo(this.rest);
+      this.aperture = 1.2;
+    } else if (g.state === 'aim' && this.zoom > 0.05 && main) {
+      this.focus = Math.hypot(main.x - this.pos.x, main.y - this.pos.y, main.z - this.pos.z);
+      this.aperture = 0.9 * this.zoom;
+    } else this.focus = null;
     this.shake = Math.max(0, this.shake - dt * 3);
     const sh = this.shake * this.shake * 0.05;
     const n = (k: number) => Math.sin(t * 51 + k * 13.1) * 0.6 + Math.sin(t * 79 + k * 3.7) * 0.4;

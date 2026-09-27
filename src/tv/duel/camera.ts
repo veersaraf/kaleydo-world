@@ -28,6 +28,8 @@ export class DuelCamera {
   private shake = 0;
   /** who fell (for the fall shot) and which side to watch it from */
   private fallSide = 1;
+  /** depth of field for the cinematic shots (the fall, the winner): metres, or null */
+  focus: number | null = null;
 
   get cams() {
     return this.views.map((v) => v.cam);
@@ -126,6 +128,8 @@ export class DuelCamera {
       this.aim(v, t);
     }
     this.shake = Math.max(0, this.shake - dt * 3);
+    const v0 = this.views[0];
+    this.focus = g.state === 'fall' || g.state === 'round-end' || g.state === 'over' ? v0.pos.distanceTo(v0.look) : null;
   }
 
   private aim(v: View, t: number) {

@@ -350,6 +350,7 @@ export class App {
   }
 
   endReplay() {
+    this.setDof(null);
     if (!this.replay) return;
     this.replay = null;
     this.rig.setMode('play');
@@ -374,6 +375,9 @@ export class App {
     }
     const f = r.frames[r.i];
     this.rig.replayUpdate(f.ball, realDt, r.side);
+    // the replay is a cinematic: the ball in focus, the stands soft behind it
+    const c = this.rig.cam.position;
+    this.setDof(Math.hypot(c.x - f.ball.x, c.y - f.ball.y, c.z - f.ball.z), 1.1);
     const view: FrameView = {
       t: f.t,
       dt: realDt * speed,
@@ -484,6 +488,7 @@ export class App {
 
   stopArchery() {
     if (this.sport !== 'archery') return;
+    this.setDof(null);
     this.sport = 'tennis';
     this.input.archeryMode = false;
     this.archery = null;
@@ -569,6 +574,7 @@ export class App {
     if (gdt > 0) g.step(gdt);
     const view = g.view();
     this.archCam.update(g, view, realDt, this.realT);
+    this.setDof(this.archCam.focus, this.archCam.aperture);
     // the archer up on the line; the others wait to the side, watching
     const states = g.archers.map((a, i): ArcherState => {
       if (i === g.current) return g.archer;
@@ -654,6 +660,7 @@ export class App {
 
   stopDuel() {
     if (this.sport !== 'duel') return;
+    this.setDof(null);
     this.sport = 'tennis';
     this.input.duelMode = false;
     this.duel = null;
@@ -718,6 +725,7 @@ export class App {
     const gdt = dt * slow;
     if (gdt > 0) g.step(gdt);
     this.duelCam.update(g, realDt, this.realT);
+    this.setDof(this.splitOn ? null : this.duelCam.focus, 1);
     const poses = g.fighters.map((f, i) => this.duelAnims[i].update(g.t, Math.max(1e-4, gdt), f));
     const view: FrameView = {
       t: g.t,
@@ -778,6 +786,7 @@ export class App {
 
   stopBowling() {
     if (this.sport !== 'bowling') return;
+    this.setDof(null);
     this.sport = 'tennis';
     this.input.bowlMode = false;
     this.bowl = null;
@@ -797,6 +806,7 @@ export class App {
     const dt = this.paused ? 0 : Math.min(0.05, realDt);
     if (dt > 0) g.step(dt);
     this.bowlCam.update(g, realDt, this.realT);
+    this.setDof(this.bowlCam.focus, 1);
     // the bowler up, and the others waiting at the back of the approach, off to
     // the side and turned to watch (out of the aiming view's way)
     const poses = g.bowlers.map((b, i) => {

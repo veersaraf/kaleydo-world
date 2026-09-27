@@ -17,6 +17,8 @@ export class BowlCamera {
   private tl = new THREE.Vector3();
   /** the ball's lane z when the chase switched to the pin view */
   private pinCut = false;
+  /** depth of field for the cinematic shots (the pin crash, the push-in, the reaction): metres, or null */
+  focus: number | null = null;
   /** cut to the bowler's reaction (strike, spare, gutter, split) */
   private reactCut = false;
 
@@ -116,6 +118,7 @@ export class BowlCamera {
       this.look.z = damp(this.look.z, tl.z, lambda * 1.3, dt);
       this.fov = damp(this.fov, fov, lambda, dt);
     }
+    this.focus = (g.state === 'pins' || g.state === 'result') && (this.pinCut || this.reactCut) ? this.pos.distanceTo(this.look) : null;
     this.shake = Math.max(0, this.shake - dt * 2.5);
     const sh = this.shake * this.shake * 0.08;
     const n = (k: number) => Math.sin(t * 47 + k * 13.1) * 0.6 + Math.sin(t * 73 + k * 3.7) * 0.4;
