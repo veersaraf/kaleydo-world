@@ -108,7 +108,7 @@ export interface SwordJudged {
   /** what a blow needed (base: before the return-after-a-blow rule) */
   need: number;
   base: number;
-  /** how much the sword was drawn back the other way just before (its windup: see WOUND) */
+  /** how fast the sword was drawn back the other way just before (its windup, rad/s: see WOUND) */
   wound: number;
   verdict: 'blow' | 'held' | 'windup' | 'weak' | 'near' | 'shapeless' | 'too soon' | 'guard';
 }
@@ -134,13 +134,15 @@ const LB = 0.6;
 // slashes (rad/s of the tip; divided by the sensitivity setting)
 const START = 1.8; // a stroke begins
 const MIN_PEAK = 3.3; // a blow peaks at least this fast (≈ 190°/s)
-const NEAR = 2.2; // …a stroke between this and MIN_PEAK is a near miss ("swing harder")
+const NEAR = 2.4; // …a snappy stroke between this and MIN_PEAK is a near miss ("swing harder")…
+const NEAR_RISE = 0.15; // …one that got up to speed this fast (s, from half its peak)
 const FLICK = 4.2; // a gentle flick: power 0.25
 const FULL = 13; // a full swing: power 1 (÷ √sensitivity)
 const CONFIRM = 0.75; // the peak is past once the speed is down to this much of it…
 const CONFIRM_MS = 45; // …or this long without a new high
 const MAX_STROKE = 1000; // ms: longer than this without a peak isn't a blow (a twirl)
-const MIN_SWEEP = 0.3; // rad the tip turns by the decision (a knock doesn't)
+const MIN_SWEEP = 0.3; // rad the tip turns by the decision (a knock doesn't)…
+const NEAR_SWEEP = 0.15; // …a near miss, at least this
 const COHERENT = 0.5; // |Σ v| / Σ |v|: the stroke goes one way (not a scribble)
 const ACROSS = 0.3; // share of the tip's travel that's across the view (not straight at the screen)
 const DIR_WINDOW = 200; // ms before the peak the direction is read over
@@ -155,8 +157,9 @@ const REST = 1.2; // …or until the phone has been below this speed (rad/s)…
 const QUIET = 300; // …for this long (ms): nothing's coming
 // (a stroke that comes straight after the sword was drawn back the other way — its windup, however
 // slow — is the blow: no wait)
-const WOUND_MS = 700; // ms before the stroke began that a windup is looked for
-const WOUND = 0.15; // how much of one there has to be (Σ v·S·dt across the view, going the other way)
+const WOUND_MS = 700; // ms before the stroke began that a windup is looked for: motion the other way…
+const WOUND = 0.2; // …at least this fast, as a share of the blow's peak (and START)…
+const WOUND_K = 2; // …but the blow at least this much faster than it (else they're a pair of moves alike)
 const WINDUP_MAX = 700; // ms after its peak it waits at most (while a stroke is under way)
 const UNWIND = 1.1; // the blow after a windup is at least this much harder than it (a rising windup: 0.6)
 // after an attack
@@ -425,19 +428,18 @@ export class SwordDetector {
     }
     const d = Math.hypot(dx, dz);
     const dir = Math.atan2(dz, dx);
-    // the motion just before the stroke began, the other way: its windup
-    let wx = 0,
-      wz = 0;
+    // the motion just before the stroke began, the other way: its windup (how fast)
+    let wound = 0;
+    const cx = Math.cos(dir),
+      cz = Math.sin(dir);
     for (let i = 0; i < this.count; i++) {
       const j = this.idx(i);
       if (this.T[j] >= this.t0) continue;
       if (this.T[j] < this.t0 - WOUND_MS) break;
       const s = this.S[j];
-      if (s < 0.8) continue;
-      wx += this.VX[j] * s * this.DT[j];
-      wz += this.VZ[j] * s * this.DT[j];
+      if (s > wound && this.VX[j] * cx + this.VZ[j] * cz < -0.3 * s) wound = s;
     }
-    const wound = Math.max(0, -(wx * Math.cos(dir) + wz * Math.sin(dir)));
+    const wasWound = wound >= Math.max(START / k, WOUND * peak) && peak >= WOUND_K * wound;
     const J: SwordJudged | null = this.onJudge
       ? { t: tPeak, peak, dir, sweep, across: all > 0 ? across / all : 0, coherent: across > 0 ? d / across : 0, need: 0, base: 0, wound, verdict: 'shapeless' }
       : null;
@@ -448,8 +450,9 @@ export class SwordDetector {
       J.base = base;
       this.onJudge!(J);
     };
-    // a knock, a push at the screen with a turn in it, or a scribble
-    if (sweep < MIN_SWEEP || all <= 0 || across < ACROSS * all || d < COHERENT * across) return judged('shapeless');
+    // a knock, a push at the screen with a turn in it, or a scribble (a short flick can still be a near miss)
+    if (sweep < NEAR_SWEEP || all <= 0 || across < ACROSS * all || d < COHERENT * across) return judged('shapeless');
+    const thin = sweep < MIN_SWEEP;
     const up = Math.sin(dir) > 0.35;
     const c: Candidate = { peak, tPeak, dir, sweep, up, at: t, quiet: -1 };
 
@@ -472,10 +475,11 @@ export class SwordDetector {
       const f = since < RETURN_MS ? 1 : 1 - (since - RETURN_MS) / RETURN_FADE;
       need = Math.max(base, base + (RETURN_K * this.lastP - base) * f);
     }
-    if (peak < need) {
+    if (peak < need || thin) {
       // (a return that was held back isn't a near miss)
       const returning = since < RETURN_MS + RETURN_FADE && need > base;
-      if (peak < base && peak >= NEAR / k && !returning && since > NEAR_QUIET && tPeak - this.lastNearAt > 600 && !this.guarding) {
+      // (and only a snappy one: a quick move into position isn't a swing that fell short)
+      if ((peak < base || thin) && peak >= NEAR / k && !returning && since > NEAR_QUIET && tPeak - this.lastNearAt > 600 && !this.guarding && this.rise() <= NEAR_RISE) {
         this.lastNearAt = tPeak;
         this.near = { t: tPeak, peak, need: base, dir };
         return judged('near', need, base);
@@ -497,7 +501,7 @@ export class SwordDetector {
     }
     // going up (raising the sword), or not so hard: maybe the windup of a blow —
     // unless the sword had just been drawn back the other way (then this is the blow)
-    if (wound < WOUND && (up || peak < STRONG * base)) {
+    if (!wasWound && (up || peak < STRONG * base)) {
       this.pending = c;
       // the motion comes back down through the turnaround before the blow
       this.settled = false;

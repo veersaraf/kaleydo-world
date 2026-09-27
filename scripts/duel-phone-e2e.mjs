@@ -1,9 +1,14 @@
 // The whole chain for the sword duel: a simulated phone (the real remote page with
-// synthetic motion) duels on the real TV page through the real server. Checks the
-// sword follows the phone, a swing strikes in its direction, GUARD guards at the
-// phone's angle, a push thrusts, and home pauses.
+// synthetic motion that moves like a hand: windups, sloppy directions, tremor,
+// gyro noise — scripts/lib/fake-phone.mjs) duels on the real TV page through the
+// real server. Checks the sword follows the phone, a swing strikes in its
+// direction (a lazy one too, a windup never), a nudge asks for a harder swing,
+// a swing with GUARD held says so, GUARD guards at the phone's angle, a push
+// thrusts, and home pauses.
 //
 //   node scripts/duel-phone-e2e.mjs [outDir]      (BASE=http://localhost:3200 by default)
+//   AXES=zxy   the phone reports rotationRate the other way round (alpha about z…); IOS=1 its accelerometer as iOS does
+//   REC=name   record the phone's raw motion to captures/ (replay: npx tsx scripts/replay-capture.ts)
 import { chromium } from 'playwright-core';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -31,10 +36,12 @@ await tv.goto(BASE + '/');
 await tv.waitForFunction(() => document.querySelector('.boot.done') || !document.querySelector('.boot'), null, { timeout: 30000 });
 
 const padCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
+if (process.env.AXES || process.env.IOS) await padCtx.addInitScript(`window.__phoneConfig = ${JSON.stringify({ axes: process.env.AXES || 'xyz', ios: !!process.env.IOS })}`);
 await padCtx.addInitScript(phone);
 const pad = await padCtx.newPage();
 pad.on('pageerror', (e) => logs.push('[pad] ' + e.message));
-await pad.goto(BASE + '/controller.html?auto');
+// (REC=name records the phone's raw motion to captures/name-….jsonl: replay it with scripts/replay-capture.ts)
+await pad.goto(BASE + '/controller.html?auto' + (process.env.REC ? '&rec=' + process.env.REC : ''));
 await tv.waitForFunction(() => window.kaleido.input.activeSeats.some((s) => !s.local), null, { timeout: 20000 });
 await wait(1600);
 
@@ -49,6 +56,11 @@ await tv.waitForFunction(() => window.kaleido.duel?.state === 'fight', null, { t
 await tv.evaluate(() => {
   const g = window.kaleido.duel;
   for (const c of g.cpus) if (c) c.think = () => {};
+  // (and the round doesn't end mid-test: no clock, and strikes don't land — this counts attacks)
+  g.timeLeft = 600;
+  g.contact = function (i) {
+    this.sides[i].contactAt = NaN;
+  };
   window.__ev = [];
   const on = g.onEvent;
   g.onEvent = (e) => {
@@ -80,7 +92,48 @@ for (const [name, dir] of [
   await wait(250);
   const at = await tv.evaluate(() => window.__ev.find((e) => e.type === 'attack' && e.who === 0));
   let err = at ? Math.abs(Math.atan2(Math.sin(at.attack.dir - dir), Math.cos(at.attack.dir - dir))) : 9;
-  check(`${name} strikes that way`, !!at && at.attack.kind === 'slash' && err < 0.35, at ? `dir ${deg(at.attack.dir)} (wanted ${deg(dir)}), power ${at.attack.power.toFixed(2)}` : 'no attack');
+  check(`${name} strikes that way`, !!at && at.attack.kind === 'slash' && err < 0.5, at ? `dir ${deg(at.attack.dir)} (wanted ${deg(dir)}), power ${at.attack.power.toFixed(2)}` : 'no attack');
+  await wait(900);
+}
+
+// 2b. sloppier, lazier, and not quite swings
+const attacks = () => tv.evaluate(() => window.__ev.filter((e) => e.type === 'attack' && e.who === 0).map((e) => e.attack));
+const shot = () => pad.evaluate(() => document.querySelector('.panel.sword .shotline')?.textContent ?? '');
+const near = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+{
+  // a lazy swing (~290°/s), no windup, sloppy: still a strike, that way
+  await pad.evaluate(() => window.__phone.hold({ top: [0.1, 0.5, 0.86], screen: [0, -0.86, 0.5], ms: 400 }));
+  await tv.evaluate(() => (window.__ev.length = 0));
+  await pad.evaluate(() => window.__phone.sword({ dir: Math.PI, peak: 5, windup: false, sloppy: 0.25, rise: 0.09, fall: 0.1 }));
+  await wait(300);
+  let a = await attacks();
+  check('a lazy, sloppy swing to the left (~290°/s) strikes, that way', a.length === 1 && near(a[0].dir, Math.PI) < Math.PI / 4, a.map((x) => `${deg(x.dir)} ${x.power.toFixed(2)}`).join(', ') || 'no attack');
+  await wait(700);
+  // raise the sword for a chop: one attack — the chop, not the raise
+  await pad.evaluate(() => window.__phone.hold({ top: [0, 0.6, 0.8], screen: [0, -0.8, 0.6], ms: 400 }));
+  await tv.evaluate(() => (window.__ev.length = 0));
+  await pad.evaluate(() => window.__phone.sword({ dir: -Math.PI / 2, peak: 11, windup: true }));
+  await wait(300);
+  a = await attacks();
+  check('a windup and a chop: one attack, down', a.length === 1 && near(a[0].dir, -Math.PI / 2) < Math.PI / 4, a.map((x) => deg(x.dir)).join(', ') || 'no attack');
+  await wait(700);
+  // a snappy nudge that falls short (~160°/s): no attack, and the phone says swing harder
+  await tv.evaluate(() => (window.__ev.length = 0));
+  await pad.evaluate(() => window.__phone.sword({ dir: 0, peak: 2.8, windup: false, rise: 0.05, fall: 0.06 }));
+  await wait(300);
+  a = await attacks();
+  const said = await shot();
+  check('a nudge that falls short: no attack, "swing harder"', a.length === 0 && /harder/i.test(said), `${a.length} attacks, the phone says "${said}"`);
+  await wait(500);
+  // a swing with GUARD held: no attack, and the phone says why
+  await pad.evaluate(() => window.__phone.guard(true));
+  await wait(150);
+  await tv.evaluate(() => (window.__ev.length = 0));
+  await pad.evaluate(() => window.__phone.sword({ dir: 0, peak: 10 }));
+  const gsaid = await shot();
+  a = await attacks();
+  await pad.evaluate(() => window.__phone.guard(false));
+  check('a swing with GUARD held: no attack, "let go of GUARD"', a.length === 0 && /GUARD/.test(gsaid), `${a.length} attacks, the phone says "${gsaid}"`);
   await wait(900);
 }
 
