@@ -42,7 +42,7 @@ export class JoinPanel {
           'div',
           null,
           h('h3', null, 'Grab your phone'),
-          h('p', null, 'Scan with your iPhone camera to turn it into a remote. Same Wi-Fi as this Mac. The first time, it walks you through a one-minute setup.'),
+          h('p', null, 'Scan with your iPhone camera, on this Mac’s Wi-Fi. The first time, a one-minute setup.'),
           this.url,
         ),
       ),
