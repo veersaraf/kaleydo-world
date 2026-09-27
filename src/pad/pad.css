@@ -1,11 +1,68 @@
+/* KALEIDO remote.
+ *
+ * The page may be turned (portrait.ts): sizes come from the remote's own box
+ * (container units cqw/cqh on .pad, never vw/vh) and the safe-area insets from
+ * --sat/--sar/--sab/--sal, which follow the phone's edges when it's turned. */
+
 :root {
   --pc: #8a7dff;
+  --pc-deep: color-mix(in oklab, var(--pc) 70%, black);
+  --pc-soft: color-mix(in oklab, var(--pc) 18%, transparent);
   --ink: #1d1c2b;
-  --pearl: #f6f5fb;
-  --pearl2: #e4e2ee;
+  --ink-2: rgba(29, 28, 43, 0.66);
+  --pearl: #f7f6fb;
+  --pearl2: #e6e4f0;
+  --good: #3ee08f;
+  --warn: #f5c542;
+  --bad: #ff5a5a;
   --ui: 'Fredoka', ui-rounded, system-ui, sans-serif;
+  --ease-out: cubic-bezier(0.2, 1, 0.3, 1);
+  --spring: cubic-bezier(0.2, 2, 0.4, 1);
+  --sat: env(safe-area-inset-top, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --rot: 0deg;
   color-scheme: dark;
 }
+
+/* ------------------------------------------------------------ portrait lock */
+
+/* turned to landscape: turn the remote back, sized to the phone's portrait axes */
+html[data-rot] #app {
+  inset: auto;
+  top: 50%;
+  left: 50%;
+  width: var(--app-w);
+  height: var(--app-h);
+  transform: translate(-50%, -50%) rotate(var(--rot));
+}
+
+/* (the top of the phone to the left) the remote's top is the page's left, its right the page's top… */
+html[data-rot='-90'] {
+  --rot: -90deg;
+  --sat: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-right, 0px);
+  --sal: env(safe-area-inset-bottom, 0px);
+}
+
+/* (the top of the phone to the right) */
+html[data-rot='90'] {
+  --rot: 90deg;
+  --sat: env(safe-area-inset-right, 0px);
+  --sar: env(safe-area-inset-bottom, 0px);
+  --sab: env(safe-area-inset-left, 0px);
+  --sal: env(safe-area-inset-top, 0px);
+}
+
+html.rotating *,
+html.rotating *::before,
+html.rotating *::after {
+  transition: none !important;
+}
+
+/* ------------------------------------------------------------ base */
 
 * {
   box-sizing: border-box;
@@ -25,6 +82,7 @@ body {
   font-family: var(--ui);
   color: #fff;
   overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
@@ -39,9 +97,11 @@ body {
 }
 
 .pad {
+  container: pad / size;
+  overflow: hidden;
   background:
-    radial-gradient(120% 70% at 50% -10%, color-mix(in oklab, var(--pc) 55%, transparent), transparent 70%),
-    radial-gradient(90% 60% at 50% 115%, color-mix(in oklab, var(--pc) 22%, transparent), transparent 70%),
+    radial-gradient(120% 60% at 50% -10%, color-mix(in oklab, var(--pc) 55%, transparent), transparent 70%),
+    radial-gradient(90% 50% at 50% 115%, color-mix(in oklab, var(--pc) 24%, transparent), transparent 70%),
     #0c0b12;
   transition: background 0.6s;
 }
@@ -53,6 +113,10 @@ button {
   background: none;
   padding: 0;
   cursor: pointer;
+}
+
+svg {
+  display: block;
 }
 
 section {
@@ -72,8 +136,8 @@ section {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 18px;
-  padding: calc(env(safe-area-inset-top) + 24px) 22px calc(env(safe-area-inset-bottom) + 20px);
+  gap: 16px;
+  padding: calc(var(--sat) + 20px) calc(var(--sar) + 20px) calc(var(--sab) + 18px) calc(var(--sal) + 20px);
   overflow-y: auto;
 }
 
@@ -81,7 +145,7 @@ section {
   display: flex;
   gap: 2px;
   font-weight: 700;
-  font-size: clamp(44px, 15vw, 64px);
+  font-size: clamp(40px, 15cqw, 64px);
   letter-spacing: 0.02em;
   line-height: 1;
 }
@@ -107,22 +171,24 @@ section {
 }
 
 .tagline {
-  font-size: 17px;
-  opacity: 0.7;
-  margin-top: -6px;
+  font-size: 18px;
+  font-weight: 500;
+  opacity: 0.75;
+  margin-top: -4px;
 }
 
 .card {
-  width: min(100%, 380px);
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 28px;
+  width: min(100%, 390px);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 30px;
   padding: 20px;
   display: flex;
   flex-direction: column;
   gap: 14px;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
 }
 
 .name-input {
@@ -137,8 +203,14 @@ section {
   border: 2px solid rgba(255, 255, 255, 0.14);
   border-radius: 18px;
   padding: 14px;
+  min-height: 56px;
   outline: none;
   width: 100%;
+  transition: border-color 0.15s;
+}
+
+.name-input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
 }
 
 .name-input:focus {
@@ -151,7 +223,7 @@ section {
   gap: 6px;
   background: rgba(0, 0, 0, 0.35);
   padding: 5px;
-  border-radius: 16px;
+  border-radius: 18px;
 }
 
 .seg.three {
@@ -159,35 +231,54 @@ section {
 }
 
 .seg-btn {
-  padding: 12px 6px;
-  border-radius: 12px;
-  font-size: 15px;
+  min-height: 46px;
+  padding: 10px 6px;
+  border-radius: 13px;
+  font-size: 16px;
   font-weight: 600;
-  opacity: 0.6;
-  transition: 0.15s;
+  opacity: 0.66;
+  transition:
+    background 0.18s,
+    color 0.18s,
+    opacity 0.18s,
+    transform 0.08s;
+}
+
+.seg-btn:active {
+  transform: scale(0.96);
 }
 
 .seg-btn.on {
   background: #fff;
   color: var(--ink);
   opacity: 1;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25);
 }
 
 .join-btn {
   position: relative;
-  margin-top: 4px;
-  padding: 20px;
-  border-radius: 22px;
-  font-size: 24px;
+  margin-top: 2px;
+  min-height: 66px;
+  padding: 18px;
+  border-radius: 24px;
+  font-size: 25px;
   font-weight: 700;
   color: #fff;
-  background: linear-gradient(110deg, #ff5a8a, #ffb13d, #4be3a2, #52a7ff, #a07cff, #ff5a8a);
+  background: linear-gradient(110deg, #f0457a, #f09a1c, #23c486, #3b8ff0, #8a63f0, #f0457a);
   background-size: 300% 100%;
   animation: prism 6s linear infinite;
   box-shadow:
-    0 6px 0 rgba(0, 0, 0, 0.35),
-    0 14px 40px rgba(255, 120, 160, 0.35);
-  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.25);
+    0 6px 0 rgba(0, 0, 0, 0.38),
+    0 14px 40px rgba(255, 120, 160, 0.3);
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.28);
+  transition:
+    transform 0.08s,
+    box-shadow 0.08s;
+}
+
+.join-btn:active {
+  transform: translateY(4px);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.38);
 }
 
 /* (the round remote buttons' .small sets size, shape and colour: a sheet button undoes all three) */
@@ -195,25 +286,21 @@ section {
   display: block;
   width: auto;
   height: auto;
+  min-height: 56px;
   border-radius: 18px;
-  font-size: 19px;
-  padding: 15px;
+  font-size: 20px;
+  padding: 14px;
   color: #fff;
-  background: linear-gradient(110deg, #ff5a8a, #ffb13d, #4be3a2, #52a7ff, #a07cff, #ff5a8a);
-  background-size: 300% 100%;
-  box-shadow: 0 5px 0 rgba(0, 0, 0, 0.35);
+  box-shadow: 0 5px 0 rgba(0, 0, 0, 0.38);
 }
 
 .join-btn.small.recenter {
   background: rgba(255, 255, 255, 0.12);
-  box-shadow: none;
-  font-size: 16px;
+  animation: none;
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
+  font-size: 17px;
+  min-height: 50px;
   padding: 12px;
-}
-
-.join-btn:active {
-  transform: translateY(4px);
-  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.35);
 }
 
 @keyframes prism {
@@ -225,47 +312,67 @@ section {
 .join-note {
   margin: 0;
   text-align: center;
-  font-size: 14px;
-  opacity: 0.65;
+  font-size: 15px;
+  opacity: 0.72;
   line-height: 1.35;
 }
 
 .cert {
-  width: min(100%, 380px);
-  font-size: 13px;
-  opacity: 0.7;
-  line-height: 1.4;
+  width: min(100%, 390px);
+  font-size: 14px;
+  line-height: 1.45;
+  background: rgba(255, 197, 61, 0.1);
+  border: 1px solid rgba(255, 197, 61, 0.28);
+  border-radius: 18px;
+  padding: 12px 14px;
+  color: #ffe7b0;
+}
+
+.cert[hidden] {
+  display: none;
 }
 
 .cert summary {
   cursor: pointer;
+  font-weight: 600;
+  list-style: none;
   text-align: center;
 }
 
+.cert summary::-webkit-details-marker {
+  display: none;
+}
+
 .cert a {
-  color: #8fd1ff;
+  color: #9fd4ff;
+  font-weight: 600;
 }
 
 .cert ol {
   padding-left: 20px;
+  margin: 10px 0 6px;
+}
+
+.cert p {
+  margin: 0;
+  opacity: 0.8;
 }
 
 /* ------------------------------------------------------------ remote */
 
 .remote {
   flex-direction: column;
-  padding: calc(env(safe-area-inset-top) + 10px) 14px calc(env(safe-area-inset-bottom) + 10px);
-  gap: 0;
+  padding: calc(var(--sat) + 8px) calc(var(--sar) + 12px) calc(var(--sab) + 6px) calc(var(--sal) + 12px);
 }
 
 .remote > header {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 14px;
-  margin: 0 8px;
-  border-radius: 26px 26px 10px 10px;
-  background: linear-gradient(#26243a, #151421);
+  min-height: 58px;
+  padding: 6px 6px 6px 8px;
+  border-radius: 24px;
+  background: linear-gradient(#262439, #16151f);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.12),
     0 8px 20px rgba(0, 0, 0, 0.4);
@@ -273,77 +380,155 @@ section {
   z-index: 2;
 }
 
+/* you: your face, with your player number on it */
+.me {
+  position: relative;
+  flex: none;
+}
+
+.face.mini {
+  width: 44px;
+  height: 44px;
+  background: color-mix(in oklab, var(--pc) 35%, #1b1a28);
+  box-shadow: 0 0 0 2.5px var(--pc);
+}
+
 .badge {
+  position: absolute;
+  right: -7px;
+  bottom: -4px;
   font-weight: 700;
-  font-size: 18px;
-  padding: 4px 11px;
-  border-radius: 12px;
+  font-size: 12px;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 7px;
   background: var(--pc);
   color: #fff;
   text-shadow: 0 1px 0 rgba(0, 0, 0, 0.3);
-  box-shadow: 0 0 18px color-mix(in oklab, var(--pc) 70%, transparent);
+  box-shadow:
+    0 0 0 2px #1a1926,
+    0 0 14px color-mix(in oklab, var(--pc) 70%, transparent);
+}
+
+.id {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+  padding-left: 4px;
 }
 
 .who {
   font-weight: 600;
-  font-size: 17px;
-  flex: 1;
+  font-size: 18px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .score {
-  font-size: 13px;
-  opacity: 0.75;
+  font-size: 14px;
+  opacity: 0.72;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
+.score:empty {
+  display: none;
+}
+
+/* the link to the TV: a pill that says how it is */
 .net {
+  flex: none;
   display: flex;
   align-items: center;
-  gap: 5px;
-  font-size: 12px;
-  opacity: 0.8;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px 0 9px;
+  border-radius: 99px;
+  font-size: 13px;
+  background: rgba(255, 255, 255, 0.08);
+  transition: background 0.3s;
 }
 
 .net b {
-  font-weight: 500;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.net.connecting {
+  background: rgba(245, 197, 66, 0.16);
+  color: #ffe08a;
+}
+
+.net.offline {
+  background: rgba(255, 90, 90, 0.18);
+  color: #ffb0b0;
 }
 
 .dot {
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  background: #f5c542;
+  background: var(--warn);
   box-shadow: 0 0 8px currentColor;
 }
 
 .dot.online {
-  background: #3ee08f;
+  background: var(--good);
+  color: var(--good);
+}
+
+.dot.connecting {
+  animation: blink 1s ease-in-out infinite;
 }
 
 .dot.offline {
-  background: #ff5a5a;
+  background: var(--bad);
+  color: var(--bad);
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0.25;
+  }
 }
 
 .gear {
-  font-size: 20px;
-  width: 34px;
-  height: 34px;
+  flex: none;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.09);
   display: grid;
   place-items: center;
+  transition:
+    transform 0.08s,
+    background 0.15s;
 }
 
+.gear svg {
+  width: 23px;
+  height: 23px;
+  opacity: 0.9;
+}
+
+.gear:active {
+  transform: scale(0.9);
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* the remote's body */
 .shell {
   flex: 1;
+  min-height: 0;
   position: relative;
-  margin-top: -8px;
-  border-radius: 12px 12px 44px 44px;
+  margin-top: 10px;
+  border-radius: 34px;
   background:
-    radial-gradient(120% 40% at 50% 0%, rgba(255, 255, 255, 0.9), transparent 60%),
+    radial-gradient(120% 40% at 50% 0%, rgba(255, 255, 255, 0.95), transparent 60%),
     linear-gradient(180deg, var(--pearl), var(--pearl2));
   box-shadow:
     inset 0 -6px 18px rgba(40, 30, 80, 0.12),
@@ -353,6 +538,51 @@ section {
   overflow: hidden;
 }
 
+/* a hit: the remote kicks in the hand */
+.shell.rumble {
+  animation: rumble 0.22s linear;
+}
+
+.shell.rumble.big {
+  animation: rumble-big 0.42s linear;
+}
+
+@keyframes rumble {
+  20% {
+    transform: translate(-2px, 1px);
+  }
+  40% {
+    transform: translate(2px, -1px);
+  }
+  60% {
+    transform: translate(-1px, 1px);
+  }
+  80% {
+    transform: translate(1px, 0);
+  }
+}
+
+@keyframes rumble-big {
+  10% {
+    transform: translate(-4px, 2px) rotate(-0.6deg);
+  }
+  25% {
+    transform: translate(4px, -2px) rotate(0.6deg);
+  }
+  40% {
+    transform: translate(-3px, 1px) rotate(-0.4deg);
+  }
+  55% {
+    transform: translate(3px, -1px);
+  }
+  70% {
+    transform: translate(-2px, 0);
+  }
+  85% {
+    transform: translate(1px, 0);
+  }
+}
+
 .panel {
   position: absolute;
   inset: 0;
@@ -360,51 +590,154 @@ section {
   flex-direction: column;
   align-items: center;
   justify-content: space-evenly;
-  padding: 26px 22px 22px;
+  gap: 8px;
+  padding: 14px 14px 16px;
 }
 
 .panel.on {
   display: flex;
-  animation: fadein 0.25s ease-out;
+  animation: panel-in 0.32s var(--ease-out);
 }
 
-@keyframes fadein {
+@keyframes panel-in {
   from {
     opacity: 0;
-    transform: scale(0.98);
+    transform: translateY(14px) scale(0.985);
   }
 }
 
-/* d-pad */
+/* the TV lost: the panel waits, a banner says why */
+.netbar {
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-radius: 99px;
+  background: var(--ink);
+  color: #fff;
+  font-weight: 600;
+  font-size: 16px;
+  white-space: nowrap;
+  box-shadow: 0 10px 30px rgba(20, 10, 60, 0.35);
+  opacity: 0;
+  transform: translate(-50%, -24px);
+  pointer-events: none;
+  transition:
+    opacity 0.25s,
+    transform 0.35s var(--ease-out);
+}
+
+.remote.lost .netbar {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.remote.lost .panel.on {
+  filter: saturate(0.3);
+  opacity: 0.55;
+  transition:
+    opacity 0.3s,
+    filter 0.3s;
+}
+
+.mini-spin {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2.5px solid rgba(255, 255, 255, 0.25);
+  border-top-color: #fff;
+  animation: spin 0.8s linear infinite;
+}
+
+/* ------------------------------------------------------------ buttons: they press in */
+
+.pb,
+.small {
+  position: relative;
+  transition:
+    transform 0.07s,
+    box-shadow 0.07s,
+    background 0.12s;
+}
+
+/* a ring that goes out from a press */
+.pb::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: 0 0 0 0 color-mix(in oklab, var(--pc) 60%, transparent);
+  opacity: 0;
+}
+
+.pb.down::after {
+  animation: ring 0.4s ease-out;
+}
+
+@keyframes ring {
+  from {
+    opacity: 1;
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--pc) 60%, transparent);
+  }
+  to {
+    opacity: 0;
+    box-shadow: 0 0 0 14px color-mix(in oklab, var(--pc) 0%, transparent);
+  }
+}
+
+/* ------------------------------------------------------------ the pad (menus, pause) */
+
+.mhead,
+.shead {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+}
+
+.mhead {
+  width: 100%;
+  padding: 0 8px;
+}
+
 .dpad {
+  --k: min(70px, 19cqw, 9cqh);
   display: grid;
-  grid-template: repeat(3, 62px) / repeat(3, 62px);
+  grid-template: repeat(3, var(--k)) / repeat(3, var(--k));
   filter: drop-shadow(0 5px 0 #a8a6b6) drop-shadow(0 10px 12px rgba(20, 10, 60, 0.18));
 }
 
+/* one flat piece of plastic (per-cell gradients would show seams) */
 .dpad .pb,
 .d-mid {
-  background: linear-gradient(#4a4858, #33313f);
+  background: #3f3d4d;
 }
 
+.d-mid {
+  grid-area: 2 / 2;
+  background: radial-gradient(circle, rgba(0, 0, 0, 0.3) 0 27%, transparent 29%), #3f3d4d;
+}
 .d-up {
   grid-area: 1 / 2;
-  border-radius: 12px 12px 0 0;
+  border-radius: 14px 14px 0 0;
 }
 .d-left {
   grid-area: 2 / 1;
-  border-radius: 12px 0 0 12px;
-}
-.d-mid {
-  grid-area: 2 / 2;
+  border-radius: 14px 0 0 14px;
 }
 .d-right {
   grid-area: 2 / 3;
-  border-radius: 0 12px 12px 0;
+  border-radius: 0 14px 14px 0;
 }
 .d-down {
   grid-area: 3 / 2;
-  border-radius: 0 0 12px 12px;
+  border-radius: 0 0 14px 14px;
 }
 
 .dpad .pb {
@@ -413,68 +746,73 @@ section {
 }
 
 .dpad .pb.down {
-  background: linear-gradient(#2c2a36, #24222d);
+  background: #292733;
+}
+
+.dpad .pb.down .tri {
+  opacity: 1;
 }
 
 .tri {
   width: 0;
   height: 0;
-  border: 9px solid transparent;
-  opacity: 0.55;
+  border: 10px solid transparent;
+  opacity: 0.6;
+  transition: opacity 0.1s;
 }
 .tri.up {
-  border-bottom: 12px solid #fff;
-  margin-bottom: 8px;
+  border-bottom: 13px solid #fff;
+  margin-bottom: 9px;
 }
 .tri.down {
-  border-top: 12px solid #fff;
-  margin-top: 8px;
+  border-top: 13px solid #fff;
+  margin-top: 9px;
 }
 .tri.left {
-  border-right: 12px solid #fff;
-  margin-right: 8px;
+  border-right: 13px solid #fff;
+  margin-right: 9px;
 }
 .tri.right {
-  border-left: 12px solid #fff;
-  margin-left: 8px;
+  border-left: 13px solid #fff;
+  margin-left: 9px;
 }
 
 .a-btn {
-  width: 112px;
-  height: 112px;
+  --s: min(124px, 32cqw, 15cqh);
+  width: var(--s);
+  height: var(--s);
   border-radius: 50%;
-  font-size: 46px;
+  font-size: calc(var(--s) * 0.42);
   font-weight: 700;
-  color: #6c6a7c;
-  background: radial-gradient(circle at 40% 30%, #fff, #e6e4ef 70%);
+  color: #625f76;
+  background: radial-gradient(circle at 40% 30%, #fff, #e4e2ee 70%);
   box-shadow:
-    0 0 0 6px color-mix(in oklab, var(--pc) 85%, white),
-    0 7px 0 6px color-mix(in oklab, var(--pc) 60%, black),
-    0 16px 30px 6px rgba(30, 20, 70, 0.25);
-  transition: transform 0.06s;
+    0 0 0 7px color-mix(in oklab, var(--pc) 85%, white),
+    0 8px 0 7px color-mix(in oklab, var(--pc) 58%, black),
+    0 18px 30px 7px rgba(30, 20, 70, 0.25);
 }
 
 .a-btn.down {
-  transform: translateY(5px);
+  transform: translateY(6px);
   box-shadow:
-    0 0 0 6px color-mix(in oklab, var(--pc) 85%, white),
-    0 2px 0 6px color-mix(in oklab, var(--pc) 60%, black);
+    0 0 0 7px color-mix(in oklab, var(--pc) 85%, white),
+    0 2px 0 7px color-mix(in oklab, var(--pc) 58%, black);
 }
 
 .row3 {
   display: grid;
-  grid-template-columns: repeat(3, 60px);
-  gap: 22px;
+  grid-template-columns: repeat(3, 56px);
+  gap: 26px;
   justify-items: center;
 }
 
 .small {
-  width: 46px;
-  height: 46px;
+  width: 50px;
+  height: 50px;
   border-radius: 50%;
-  font-size: 26px;
+  font-size: 28px;
   font-weight: 700;
-  color: #6c6a7c;
+  color: #625f76;
   background: radial-gradient(circle at 40% 30%, #fff, #dcdae6);
   box-shadow:
     0 4px 0 #b3b1c1,
@@ -483,26 +821,37 @@ section {
   place-items: center;
 }
 
-.small.down {
+.small.down,
+.small:not(.pb):active {
   transform: translateY(3px);
   box-shadow: 0 1px 0 #b3b1c1;
 }
 
 .house {
-  width: 18px;
-  height: 16px;
+  width: 20px;
+  height: 18px;
   background: #3a8dff;
   clip-path: polygon(50% 0, 100% 45%, 86% 45%, 86% 100%, 14% 100%, 14% 45%, 0 45%);
 }
 
+/* up in a game panel's corner, home is "pause" and looks it */
+.stop .house {
+  width: 15px;
+  height: 17px;
+  clip-path: none;
+  border-radius: 1.5px;
+  background: linear-gradient(90deg, var(--ink) 0 36%, transparent 36% 64%, var(--ink) 64%);
+  opacity: 0.75;
+}
+
 .b-btn {
-  width: 150px;
-  height: 58px;
+  width: min(170px, 46cqw);
+  height: 60px;
   border-radius: 30px;
-  font-size: 26px;
+  font-size: 27px;
   font-weight: 700;
   color: #fff;
-  background: linear-gradient(#4a4858, #33313f);
+  background: linear-gradient(#4d4b5c, #33313f);
   box-shadow:
     0 5px 0 #1f1e27,
     0 12px 18px rgba(30, 20, 70, 0.22);
@@ -513,21 +862,178 @@ section {
   box-shadow: 0 1px 0 #1f1e27;
 }
 
-/* play */
-.ptitle {
-  font-size: 26px;
+/* ------------------------------------------------------------ game panels: shared */
+
+/* the top row: pause · title & what to do now · a corner button (all the sports) */
+.stop {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 56px 1fr 56px;
+  align-items: start;
+  gap: 4px;
+  flex: none;
+}
+
+.shead {
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.sbtn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+
+.sbtn > span {
+  font-size: 10px;
   font-weight: 700;
-  color: color-mix(in oklab, var(--pc) 75%, black);
-  min-height: 1.2em;
+  letter-spacing: 0.14em;
+  opacity: 0.5;
+  white-space: nowrap;
+}
+
+.stop .small {
+  width: 48px;
+  height: 48px;
+}
+
+.ptitle {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--pc-deep);
+  min-height: 1.1em;
+  text-align: center;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+/* what to do right now */
+.phint {
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.25;
+  color: var(--ink-2);
   text-align: center;
 }
 
+.ptitle.long {
+  font-size: min(22px, 6cqw);
+}
+
+.ptitle.xlong {
+  font-size: min(19px, 5.2cqw);
+}
+
+.ptitle.pop,
+.wtitle.pop {
+  animation: pop 0.4s var(--spring);
+}
+
+@keyframes pop {
+  from {
+    transform: scale(0.88);
+  }
+}
+
+/* the middle: the TV's verdict, the big pad, your last move */
+.sstage {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+/* the TV's verdict ("STRIKE! · 7.6 m/s"): a dark pill that pops */
+.tvline {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-align: center;
+  color: #fff;
+  background: var(--ink);
+  padding: 7px 16px;
+  border-radius: 99px;
+  max-width: 100%;
+  box-shadow: 0 6px 16px rgba(20, 10, 60, 0.2);
+}
+
+.tvline:empty {
+  visibility: hidden;
+  padding: 7px 0;
+  min-height: calc(1.2em + 14px);
+}
+
+.tvline.pop {
+  animation: pop 0.4s var(--spring);
+}
+
+/* your last move ("72% power · aim ↑") */
+.shotline {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--pc-deep);
+  min-height: 1.3em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* a pad's swing meter: an arc round it that fills with the swing */
+.grip-meter,
+.guard-meter {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(from 210deg, var(--pc) calc(var(--p) * 300deg), rgba(60, 50, 110, 0.1) 0 300deg, transparent 0);
+  -webkit-mask: radial-gradient(closest-side, transparent calc(100% - 12px), #000 calc(100% - 11px));
+  mask: radial-gradient(closest-side, transparent calc(100% - 12px), #000 calc(100% - 11px));
+}
+
+/* your ball is rolling / your arrow is flying: the panel stays, the pad rests */
+.panel.locked .grip,
+.panel.locked .guard {
+  filter: saturate(0.55);
+  opacity: 0.72;
+  animation: none;
+  pointer-events: none;
+}
+
+@keyframes breathe {
+  50% {
+    transform: scale(0.975);
+  }
+}
+
+@keyframes glow {
+  from {
+    box-shadow:
+      inset 0 -8px 0 rgba(0, 0, 0, 0.14),
+      0 0 0 5px color-mix(in oklab, var(--pc) 40%, transparent),
+      0 0 24px 6px color-mix(in oklab, var(--pc) 65%, transparent);
+  }
+  to {
+    box-shadow:
+      inset 0 -8px 0 rgba(0, 0, 0, 0.14),
+      0 0 0 9px color-mix(in oklab, var(--pc) 28%, transparent),
+      0 0 46px 16px color-mix(in oklab, var(--pc) 80%, transparent);
+  }
+}
+
+/* ------------------------------------------------------------ tennis & baseball */
+
 .gauge {
   position: relative;
-  width: min(64vw, 260px);
+  width: min(66cqw, 260px, 36cqh);
   aspect-ratio: 1;
   display: grid;
   place-items: center;
+  flex: none;
 }
 
 .gauge > * {
@@ -542,17 +1048,11 @@ section {
   background:
     radial-gradient(closest-side, var(--pearl) 78%, transparent 79%),
     conic-gradient(from 210deg, var(--pc) calc(var(--p) * 300deg), rgba(60, 50, 110, 0.1) 0 300deg, transparent 0);
-  transition: --p 0.2s;
+  box-shadow: 0 12px 30px rgba(30, 20, 70, 0.12);
 }
 
 .ring.pop {
-  animation: pop 0.35s cubic-bezier(0.2, 2, 0.4, 1);
-}
-
-@keyframes pop {
-  from {
-    transform: scale(0.9);
-  }
+  animation: pop 0.35s var(--spring);
 }
 
 .live {
@@ -571,115 +1071,268 @@ section {
   flex-direction: column;
   align-items: center;
   line-height: 1;
+  pointer-events: none;
 }
 
 .gtext b {
-  font-size: 44px;
+  font-size: 32px;
   font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .gtext span {
   font-size: 17px;
-  opacity: 0.6;
-  margin-top: 6px;
+  font-weight: 500;
+  color: var(--ink-2);
+  margin-top: 7px;
   min-height: 1em;
 }
 
-.phint {
-  font-size: 17px;
-  opacity: 0.55;
-  text-align: center;
-}
-
+/* no motion sensor: swipe here */
 .swipe-zone {
   display: none;
+  flex: none;
   width: 100%;
-  padding: 26px 10px;
-  border-radius: 22px;
-  border: 2px dashed rgba(40, 30, 90, 0.25);
+  min-height: min(170px, 22cqh);
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: 26px;
+  border: 2.5px dashed color-mix(in oklab, var(--pc) 45%, transparent);
+  background: var(--pc-soft);
   text-align: center;
-  font-size: 14px;
-  opacity: 0.7;
   touch-action: none;
+  transition: background 0.15s;
 }
 
 .swipe-zone.on {
-  display: block;
+  display: flex;
 }
 
-/* serve */
+.swipe-zone:active {
+  background: color-mix(in oklab, var(--pc) 28%, transparent);
+}
+
+.swipe-zone svg {
+  width: 44px;
+  height: 44px;
+  color: var(--pc-deep);
+  animation: sway 1.8s ease-in-out infinite;
+}
+
+.swipe-zone b {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--pc-deep);
+}
+
+.swipe-zone span {
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+@keyframes sway {
+  50% {
+    transform: translateX(8px);
+  }
+}
+
+/* with the swipe pad the gauge makes room */
+.play:has(.swipe-zone.on) .gauge {
+  width: min(50cqw, 200px, 26cqh);
+}
+
+/* at bat (baseball): a ball for a gauge */
+.play.bat .ring {
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='none' stroke='%23e0394b' stroke-linecap='round' opacity='.5'%3E%3Cpath d='M19 9C37 33 37 67 19 91M81 9C63 33 63 67 81 91' stroke-width='1.4'/%3E%3Cpath d='M23.5 11C41.5 35 41.5 65 23.5 89M76.5 11C58.5 35 58.5 65 76.5 89' stroke-width='3.2' stroke-dasharray='.1 5.2'/%3E%3C/g%3E%3C/svg%3E") center / 76% no-repeat,
+    radial-gradient(closest-side, #fdfcf8 78%, transparent 79%),
+    conic-gradient(from 210deg, var(--pc) calc(var(--p) * 300deg), rgba(60, 50, 110, 0.1) 0 300deg, transparent 0);
+}
+
+/* the serve: one big pad in your colour */
 .toss {
+  position: relative;
   width: 100%;
   flex: 1;
+  min-height: 0;
   border-radius: 34px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 10px;
+  padding: 16px;
   color: #fff;
-  background: radial-gradient(circle at 50% 35%, color-mix(in oklab, var(--pc) 80%, white), var(--pc) 60%, color-mix(in oklab, var(--pc) 70%, black));
+  background:
+    radial-gradient(40% 26% at 30% 18%, rgba(255, 255, 255, 0.4), transparent 72%),
+    radial-gradient(circle at 50% 35%, color-mix(in oklab, var(--pc) 80%, white), var(--pc) 60%, color-mix(in oklab, var(--pc) 70%, black));
   box-shadow:
     inset 0 -10px 0 rgba(0, 0, 0, 0.15),
-    0 12px 30px color-mix(in oklab, var(--pc) 50%, transparent);
+    0 12px 30px color-mix(in oklab, var(--pc) 45%, transparent);
   animation: breathe 1.4s ease-in-out infinite;
   touch-action: none;
+  transition: transform 0.1s;
+}
+
+.toss:active {
+  transform: scale(0.97);
 }
 
 .toss b {
-  font-size: 40px;
+  font-size: min(42px, 11cqw);
   font-weight: 700;
+  line-height: 1.05;
+  text-align: center;
   text-shadow: 0 3px 0 rgba(0, 0, 0, 0.2);
 }
 
 .toss span {
   font-size: 18px;
-  opacity: 0.9;
+  font-weight: 500;
+  opacity: 0.92;
+  text-align: center;
+}
+
+/* the ball, going up */
+.toss-ball {
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cdefs%3E%3CradialGradient id='g' cx='.36' cy='.3' r='.75'%3E%3Cstop offset='0' stop-color='%23f6ffa8'/%3E%3Cstop offset='.6' stop-color='%23d2ea3c'/%3E%3Cstop offset='1' stop-color='%23a6c01a'/%3E%3C/radialGradient%3E%3C/defs%3E%3Ccircle cx='20' cy='20' r='19' fill='url(%23g)'/%3E%3Cpath d='M6 7c7 5 7 21 0 26M34 7c-7 5-7 21 0 26' fill='none' stroke='%23fff' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  filter: drop-shadow(0 8px 10px rgba(0, 0, 0, 0.22));
+  animation: toss-up 1.4s var(--ease-out) infinite;
+}
+
+@keyframes toss-up {
+  0%,
+  100% {
+    transform: translateY(8px);
+  }
+  45% {
+    transform: translateY(-16px);
+  }
 }
 
 .toss.tossed {
   background: radial-gradient(circle at 50% 35%, #fff, #f0eef8);
-  color: var(--pc);
+  color: var(--pc-deep);
   animation: none;
+  box-shadow:
+    inset 0 -10px 0 rgba(0, 0, 0, 0.06),
+    0 0 0 6px var(--pc);
+}
+
+.toss.tossed .toss-ball {
+  animation: toss-high 0.5s var(--ease-out) forwards;
+}
+
+@keyframes toss-high {
+  to {
+    transform: translateY(-30px) scale(0.8);
+    opacity: 0.4;
+  }
 }
 
 .toss.tossed b {
   text-shadow: none;
-  font-size: 56px;
+  font-size: min(60px, 15cqw);
 }
 
-@keyframes breathe {
-  50% {
-    transform: scale(0.975);
-  }
+/* skip the replay */
+.toss.skip {
+  flex: 0 1 auto;
+  height: min(52%, 280px);
+  background: radial-gradient(circle at 50% 35%, #ffffff, #efedf7);
+  color: var(--ink);
+  animation: none;
+  box-shadow:
+    inset 0 -8px 0 rgba(0, 0, 0, 0.08),
+    0 0 0 6px color-mix(in oklab, var(--pc) 80%, white),
+    0 14px 30px rgba(30, 20, 70, 0.15);
 }
 
-/* wait */
+.toss.skip:active {
+  transform: translateY(4px);
+}
+
+.toss.skip b {
+  font-size: min(56px, 14cqw);
+  text-shadow: none;
+}
+
+.panel.serve,
+.panel.skip {
+  justify-content: flex-start;
+  gap: 14px;
+}
+
+.panel.skip {
+  justify-content: space-between;
+}
+
+.panel.skip::after {
+  content: '';
+}
+
+/* ------------------------------------------------------------ waiting / watching */
+
 .wait {
-  gap: 16px;
+  gap: 14px;
   justify-content: center;
+  padding: 24px;
 }
 
-.wtitle {
-  font-size: 30px;
-  font-weight: 700;
-  text-align: center;
+.wicon {
+  width: 96px;
+  height: 96px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 4px;
 }
 
-.whint {
-  font-size: 17px;
-  opacity: 0.6;
-  text-align: center;
+.wicon > * {
+  grid-area: 1 / 1;
 }
 
 .spinner {
-  width: 70px;
-  height: 70px;
+  width: 72px;
+  height: 72px;
   border-radius: 50%;
   background: conic-gradient(var(--pc), transparent 70%);
   -webkit-mask: radial-gradient(closest-side, transparent 64%, #000 66%);
   mask: radial-gradient(closest-side, transparent 64%, #000 66%);
   animation: spin 1s linear infinite;
+  display: none;
+}
+
+.tvglyph {
+  width: 96px;
+  height: 96px;
+  border-radius: 30px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: radial-gradient(circle at 50% 30%, color-mix(in oklab, var(--pc) 80%, white), var(--pc));
+  box-shadow:
+    inset 0 -6px 0 rgba(0, 0, 0, 0.14),
+    0 12px 26px color-mix(in oklab, var(--pc) 40%, transparent);
+  animation: bob 3s ease-in-out infinite;
+}
+
+.tvglyph svg {
+  width: 54px;
+  height: 54px;
+}
+
+.wait.busy .spinner {
+  display: block;
+}
+
+.wait.busy .tvglyph {
+  display: none;
 }
 
 @keyframes spin {
@@ -688,18 +1341,32 @@ section {
   }
 }
 
-/* footer */
+.wtitle {
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1.1;
+  text-align: center;
+}
+
+.whint {
+  font-size: 18px;
+  color: var(--ink-2);
+  text-align: center;
+}
+
+/* ------------------------------------------------------------ footer, flash, toast */
+
 .remote > footer {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 14px 0 4px;
+  justify-content: center;
+  gap: 16px;
+  padding: 10px 0 2px;
 }
 
 .leds {
   display: flex;
-  gap: 14px;
+  gap: 12px;
 }
 
 .leds i {
@@ -708,6 +1375,9 @@ section {
   border-radius: 3px;
   background: #2b2a37;
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
+  transition:
+    background 0.3s,
+    box-shadow 0.3s;
 }
 
 .leds i.on {
@@ -718,7 +1388,7 @@ section {
 }
 
 .brand {
-  font-size: 12px;
+  font-size: 11px;
   letter-spacing: 0.4em;
   opacity: 0.35;
   font-weight: 600;
@@ -747,38 +1417,54 @@ section {
   }
 }
 
+/* flash tints: hit (red), guard held (steel) */
+.flash.red {
+  background: radial-gradient(circle at 50% 45%, #fff, #ff3b4f 70%);
+}
+
+.flash.steel {
+  background: radial-gradient(circle at 50% 45%, #fff, #9cc4ff 70%);
+}
+
 .toast {
   position: absolute;
   left: 50%;
-  top: calc(env(safe-area-inset-top) + 80px);
-  transform: translate(-50%, -20px);
-  padding: 10px 20px;
-  border-radius: 99px;
+  /* low, over the pads' read-outs rather than the heading */
+  bottom: calc(var(--sab) + 64px);
+  transform: translate(-50%, 20px) scale(0.9);
+  padding: 12px 24px;
+  border-radius: 26px;
   background: #fff;
   color: var(--ink);
   font-weight: 700;
-  font-size: 18px;
+  font-size: 20px;
   opacity: 0;
   pointer-events: none;
   z-index: 6;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-  white-space: nowrap;
+  box-shadow:
+    0 0 0 4px var(--pc),
+    0 12px 30px rgba(0, 0, 0, 0.35);
+  width: max-content;
+  max-width: calc(100% - 40px);
+  text-align: center;
+  line-height: 1.2;
   transition:
     opacity 0.2s,
-    transform 0.2s;
+    transform 0.3s var(--spring);
 }
 
 .toast.show {
   opacity: 1;
-  transform: translate(-50%, 0);
+  transform: translate(-50%, 0) scale(1);
 }
 
-/* settings sheet */
+/* ------------------------------------------------------------ settings sheet */
+
 .sheet {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  background: rgba(5, 4, 12, 0.6);
+  background: rgba(5, 4, 12, 0.62);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.25s;
@@ -793,131 +1479,102 @@ section {
 .sheet-card {
   width: 100%;
   max-width: 460px;
+  max-height: calc(100cqh - var(--sat) - 8px);
+  overflow-y: auto;
   background: #1b1a28;
   border-radius: 30px 30px 0 0;
-  padding: 22px 20px calc(env(safe-area-inset-bottom) + 20px);
+  padding: 10px calc(var(--sar) + 20px) calc(var(--sab) + 20px) calc(var(--sal) + 20px);
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  transform: translateY(40px);
-  transition: transform 0.3s cubic-bezier(0.2, 1.4, 0.4, 1);
+  gap: 12px;
+  box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.5);
+  transform: translateY(60px);
+  transition: transform 0.35s var(--spring);
 }
 
 .sheet.open .sheet-card {
   transform: none;
 }
 
+.grabber {
+  align-self: center;
+  width: 40px;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.25);
+}
+
 .sheet h2 {
-  margin: 0;
-  font-size: 22px;
+  margin: 2px 0 0;
+  font-size: 23px;
   text-align: center;
 }
 
-.label {
-  font-size: 14px;
-  opacity: 0.6;
-  margin-bottom: -6px;
-}
-
-@media (max-height: 640px) {
-  .dpad {
-    grid-template: repeat(3, 50px) / repeat(3, 50px);
-  }
-  .a-btn {
-    width: 90px;
-    height: 90px;
-    font-size: 38px;
-  }
-  .b-btn {
-    height: 48px;
-  }
-}
-
-.shotline {
-  font-size: 17px;
-  font-weight: 600;
-  color: color-mix(in oklab, var(--pc) 60%, black);
-  min-height: 1.3em;
-  text-align: center;
-}
-
-.tvline {
-  font-size: 19px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  min-height: 1.3em;
-  text-align: center;
-  color: var(--ink);
-}
-
-.gtext b {
-  font-size: 30px;
-  letter-spacing: 0.02em;
-}
-
-.toss.skip {
-  background: radial-gradient(circle at 50% 35%, #ffffff, #efedf7);
-  color: var(--ink);
-  animation: none;
-  box-shadow:
-    inset 0 -8px 0 rgba(0, 0, 0, 0.08),
-    0 0 0 6px color-mix(in oklab, var(--pc) 80%, white);
-}
-
-.toss.skip b {
-  font-size: 52px;
-  text-shadow: none;
-}
-
-.panel.skip {
-  gap: 18px;
-}
-
-.recenter {
-  background: linear-gradient(135deg, #52a7ff, #4be3a2);
-  animation: none;
-}
-
-/* bowl */
-.panel.bowl {
-  justify-content: space-between;
-  padding: 18px 18px 16px;
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 6px;
 }
 
-.bhead {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
+.chip {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 5px 11px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.08);
 }
 
-.bowl .tvline.pop {
-  animation: pop 0.35s cubic-bezier(0.2, 2, 0.4, 1);
+.chip:empty {
+  display: none;
+}
+
+.chip.good {
+  background: rgba(62, 224, 143, 0.15);
+  color: #9ff0c6;
+}
+
+.chip.meh {
+  background: rgba(245, 197, 66, 0.15);
+  color: #ffe08a;
+}
+
+.chip.bad {
+  background: rgba(255, 90, 90, 0.18);
+  color: #ffb0b0;
+}
+
+.label {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.55;
+  margin: 4px 0 -4px 4px;
+}
+
+/* ------------------------------------------------------------ bowling */
+
+.panel.bowl {
+  justify-content: space-between;
+}
+
+.bowl .sstage {
+  gap: 10px;
 }
 
 .grip-wrap {
   --p: 0;
   position: relative;
   flex: none;
-  width: min(76vw, 292px, 40vh);
+  width: min(84cqw, 330px, 42cqh);
   aspect-ratio: 1;
   display: grid;
   place-items: center;
 }
 
-/* the swing meter: the tennis gauge's arc, as a ring round the ball */
-.grip-meter {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: conic-gradient(from 210deg, var(--pc) calc(var(--p) * 300deg), rgba(60, 50, 110, 0.1) 0 300deg, transparent 0);
-  -webkit-mask: radial-gradient(closest-side, transparent calc(100% - 12px), #000 calc(100% - 11px));
-  mask: radial-gradient(closest-side, transparent calc(100% - 12px), #000 calc(100% - 11px));
-}
-
 .grip-wrap.pop .grip-meter {
-  animation: pop 0.35s cubic-bezier(0.2, 2, 0.4, 1);
+  animation: pop 0.35s var(--spring);
 }
 
 /* the grip: a bowling ball in the player's colour */
@@ -978,7 +1635,7 @@ section {
 
 .grip b {
   margin-top: 24%;
-  font-size: 46px;
+  font-size: min(48px, 12cqw);
   font-weight: 700;
   line-height: 1;
   letter-spacing: 0.04em;
@@ -989,28 +1646,13 @@ section {
   margin-top: 6px;
   font-size: 17px;
   font-weight: 600;
-  opacity: 0.92;
+  opacity: 0.94;
 }
 
 .grip.held {
   cursor: grabbing;
-  transform: scale(0.96);
+  transform: scale(0.95);
   animation: glow 0.9s ease-in-out infinite alternate;
-}
-
-@keyframes glow {
-  from {
-    box-shadow:
-      inset 0 -8px 0 rgba(0, 0, 0, 0.14),
-      0 0 0 5px color-mix(in oklab, var(--pc) 40%, transparent),
-      0 0 24px 6px color-mix(in oklab, var(--pc) 65%, transparent);
-  }
-  to {
-    box-shadow:
-      inset 0 -8px 0 rgba(0, 0, 0, 0.14),
-      0 0 0 9px color-mix(in oklab, var(--pc) 28%, transparent),
-      0 0 46px 16px color-mix(in oklab, var(--pc) 80%, transparent);
-  }
 }
 
 .grip.thrown {
@@ -1018,7 +1660,7 @@ section {
 }
 
 .grip.thrown b {
-  font-size: 54px;
+  font-size: min(56px, 14cqw);
   letter-spacing: 0;
 }
 
@@ -1028,118 +1670,46 @@ section {
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
-  padding: 0 2px;
+  flex: none;
 }
 
 .bgroup {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 24px;
+  background: rgba(40, 30, 90, 0.06);
 }
 
 .bgroup > div {
   display: flex;
-  gap: 12px;
+  gap: 10px;
 }
 
 .bgroup > span {
   font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.22em;
-  opacity: 0.45;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  opacity: 0.5;
 }
 
 .bowl-row .small {
-  width: 50px;
-  height: 50px;
+  width: 54px;
+  height: 54px;
 }
 
 .bowl-row svg {
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
 }
 
-/* pause, up in a corner of the bowl panel: out of reach of a thumb sliding off the grip */
-.bowl .bhome {
-  position: absolute;
-  top: 16px;
-  left: 16px;
-  width: 42px;
-  height: 42px;
-  z-index: 1;
-}
+/* ------------------------------------------------------------ sword duel */
 
-/* flash tints: hit (red), guard held (steel) */
-.flash.red {
-  background: radial-gradient(circle at 50% 45%, #fff, #ff3b4f 70%);
-}
-
-.flash.steel {
-  background: radial-gradient(circle at 50% 45%, #fff, #9cc4ff 70%);
-}
-
-/* sword duel */
-.panel.sword {
+.panel.sword,
+.panel.bow {
   justify-content: flex-start;
-  padding: 16px 16px 14px;
-  gap: 8px;
-}
-
-.sstage {
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-}
-
-/* the top row: pause · title · re-center, the buttons up in the corners, away from the thumb */
-.stop {
-  width: 100%;
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-}
-
-.shead {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  padding-top: 4px;
-}
-
-.shead .phint {
-  font-size: 15px;
-  line-height: 1.25;
-}
-
-.sbtn {
-  flex: none;
-  width: 58px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-}
-
-.sbtn > span {
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.16em;
-  opacity: 0.45;
-  white-space: nowrap;
-}
-
-.sword .small {
-  width: 44px;
-  height: 44px;
 }
 
 .recenter-wrap svg {
@@ -1148,33 +1718,19 @@ section {
   color: #3a8dff;
 }
 
-.sword .tvline.pop {
-  animation: pop 0.35s cubic-bezier(0.2, 2, 0.4, 1);
-}
-
 /* the guard: a round shield in the player's colour, and on it the sword lying as the blade does */
 .guard-wrap {
   --p: 0;
   position: relative;
   flex: none;
-  width: min(82vw, 320px, 44vh);
+  width: min(86cqw, 340px, 44cqh);
   aspect-ratio: 1;
   display: grid;
   place-items: center;
 }
 
-/* the swing meter: the bowling grip's ring */
-.guard-meter {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: conic-gradient(from 210deg, var(--pc) calc(var(--p) * 300deg), rgba(60, 50, 110, 0.1) 0 300deg, transparent 0);
-  -webkit-mask: radial-gradient(closest-side, transparent calc(100% - 12px), #000 calc(100% - 11px));
-  mask: radial-gradient(closest-side, transparent calc(100% - 12px), #000 calc(100% - 11px));
-}
-
 .guard-wrap.pop .guard-meter {
-  animation: pop 0.35s cubic-bezier(0.2, 2, 0.4, 1);
+  animation: pop 0.35s var(--spring);
 }
 
 /* blades met: the shield takes the knock */
@@ -1243,7 +1799,7 @@ section {
 }
 
 .guard b {
-  font-size: 40px;
+  font-size: min(42px, 11cqw);
   font-weight: 700;
   line-height: 1;
   letter-spacing: 0.06em;
@@ -1254,13 +1810,13 @@ section {
   margin-top: 5px;
   font-size: 16px;
   font-weight: 600;
-  opacity: 0.92;
+  opacity: 0.94;
   letter-spacing: 0.04em;
 }
 
 /* held: the shield's rim lights up and it glows */
 .guard.held {
-  transform: scale(0.96);
+  transform: scale(0.95);
   background:
     radial-gradient(circle, transparent 59.5%, rgba(255, 255, 255, 0.85) 60.5%, rgba(255, 255, 255, 0.85) 65%, transparent 66%),
     radial-gradient(30% 22% at 32% 22%, rgba(255, 255, 255, 0.55), transparent 72%),
@@ -1289,7 +1845,8 @@ section {
   justify-content: center;
   gap: 4px;
   border-radius: 26px;
-  border: 2px dashed rgba(40, 30, 90, 0.22);
+  border: 2.5px dashed color-mix(in oklab, var(--pc) 45%, transparent);
+  background: var(--pc-soft);
   touch-action: none;
   transition:
     background 0.15s,
@@ -1300,21 +1857,21 @@ section {
   font-size: 22px;
   font-weight: 700;
   letter-spacing: 0.06em;
-  color: color-mix(in oklab, var(--pc) 70%, black);
+  color: var(--pc-deep);
 }
 
 .slash-zone span {
   font-size: 14px;
-  opacity: 0.55;
+  color: var(--ink-2);
 }
 
 .slash-zone.down {
-  background: color-mix(in oklab, var(--pc) 12%, transparent);
+  background: color-mix(in oklab, var(--pc) 28%, transparent);
   border-color: var(--pc);
 }
 
 .sword.touch .guard-wrap {
-  width: min(52vw, 200px, 26vh);
+  width: min(52cqw, 200px, 26cqh);
 }
 
 .sword.touch .guard b {
@@ -1336,8 +1893,9 @@ section {
   gap: 6px;
   width: 100%;
   padding: 5px;
-  border-radius: 16px;
+  border-radius: 18px;
   background: rgba(40, 30, 90, 0.08);
+  flex: none;
 }
 
 .gseg-btn {
@@ -1345,13 +1903,21 @@ section {
   align-items: center;
   justify-content: center;
   gap: 9px;
-  padding: 11px 6px;
-  border-radius: 12px;
-  font-size: 15px;
+  min-height: 46px;
+  padding: 10px 6px;
+  border-radius: 13px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--ink);
-  opacity: 0.6;
-  transition: 0.15s;
+  opacity: 0.62;
+  transition:
+    background 0.15s,
+    opacity 0.15s,
+    transform 0.08s;
+}
+
+.gseg-btn:active {
+  transform: scale(0.96);
 }
 
 .gseg-btn.on {
@@ -1374,31 +1940,7 @@ section {
   height: 4px;
 }
 
-@media (max-height: 700px) {
-  .guard b {
-    font-size: 32px;
-  }
-  .shead .phint {
-    font-size: 14px;
-  }
-}
-
 /* ------------------------------------------------------------ archery */
-
-.panel.bow {
-  justify-content: flex-start;
-  padding: 16px 16px 14px;
-  gap: 8px;
-}
-
-.bow .small {
-  width: 44px;
-  height: 44px;
-}
-
-.bow .tvline.pop {
-  animation: pop 0.35s cubic-bezier(0.2, 2, 0.4, 1);
-}
 
 /* the bow lies across the pad, arrow nocked, pointing at the screen */
 .draw .bowglyph {
@@ -1411,29 +1953,25 @@ section {
   transform: scale(0.94) translateX(4%);
 }
 
-/* your ball is rolling / your arrow is flying: the panel stays, the pad rests */
-.panel.locked .grip,
-.panel.locked .guard {
-  filter: saturate(0.55);
-  opacity: 0.72;
-  animation: none;
-  pointer-events: none;
-}
-
 /* ------------------------------------------------------------ your character */
 
 .face-btn {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
-  margin: -4px auto 2px;
+  gap: 5px;
+  margin: -2px auto 0;
+  transition: transform 0.08s;
+}
+
+.face-btn:active {
+  transform: scale(0.95);
 }
 
 .face {
   display: block;
-  width: 84px;
-  height: 84px;
+  width: 88px;
+  height: 88px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.14);
   overflow: hidden;
@@ -1446,11 +1984,13 @@ section {
 }
 
 .face-btn span {
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  opacity: 0.6;
+  padding: 3px 10px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .look {
@@ -1480,41 +2020,52 @@ section {
 
 .look-row .label {
   margin: 0;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .cycle {
   display: grid;
-  grid-template-columns: 36px 1fr 36px;
+  grid-template-columns: 44px 1fr 44px;
   align-items: center;
   background: rgba(0, 0, 0, 0.35);
-  border-radius: 12px;
+  border-radius: 13px;
 }
 
 .cycle b {
   text-align: center;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
 }
 
 .cyc {
-  height: 36px;
+  height: 42px;
   font-size: 13px;
   opacity: 0.8;
+  border-radius: 13px;
+  transition: background 0.1s;
+}
+
+.cyc:active {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .swatches {
   display: flex;
   flex-wrap: wrap;
-  gap: 7px;
+  gap: 8px;
 }
 
 .sw {
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   background: var(--c);
   box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.18);
+  transition: transform 0.1s;
+}
+
+.sw:active {
+  transform: scale(0.88);
 }
 
 .sw.on {
@@ -1526,24 +2077,59 @@ section {
 .seg-btn.surprise {
   background: rgba(255, 255, 255, 0.1);
   opacity: 1;
-  padding: 10px;
-  font-size: 14px;
+  min-height: 42px;
+  font-size: 15px;
 }
 
-/* with the character editor the settings can outgrow a short screen */
-.sheet-card {
-  max-height: 100dvh;
-  overflow-y: auto;
+/* ------------------------------------------------------------ small phones (SE, a turned phone in Safari) */
+
+@container pad (max-height: 700px) {
+  .ptitle {
+    font-size: 24px;
+  }
+  .phint {
+    font-size: 15px;
+  }
+  .guard b {
+    font-size: 32px;
+  }
+  .tvline {
+    font-size: 16px;
+    padding: 5px 14px;
+  }
+  .row3 {
+    gap: 18px;
+  }
+  .b-btn {
+    height: 50px;
+  }
+  .remote > footer {
+    padding-top: 6px;
+  }
 }
 
-/* ---- at bat (baseball): the play panel with a ball for a gauge */
-.play.bat .ring {
-  background:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='none' stroke='%23e0394b' stroke-linecap='round' opacity='.5'%3E%3Cpath d='M19 9C37 33 37 67 19 91M81 9C63 33 63 67 81 91' stroke-width='1.4'/%3E%3Cpath d='M23.5 11C41.5 35 41.5 65 23.5 89M76.5 11C58.5 35 58.5 65 76.5 89' stroke-width='3.2' stroke-dasharray='.1 5.2'/%3E%3C/g%3E%3C/svg%3E") center / 76% no-repeat,
-    radial-gradient(closest-side, #fdfcf8 78%, transparent 79%),
-    conic-gradient(from 210deg, var(--pc) calc(var(--p) * 300deg), rgba(60, 50, 110, 0.1) 0 300deg, transparent 0);
+@container pad (max-height: 600px) {
+  .stop .small,
+  .small {
+    width: 44px;
+    height: 44px;
+  }
+  .gtext b {
+    font-size: 26px;
+  }
+  .remote > footer {
+    display: none;
+  }
 }
 
-.play.bat .tvline.pop {
-  animation: pop 0.35s cubic-bezier(0.2, 2, 0.4, 1);
+@media (prefers-reduced-motion: reduce) {
+  .logo span,
+  .toss,
+  .grip,
+  .guard,
+  .toss-ball,
+  .tvglyph,
+  .swipe-zone svg {
+    animation: none;
+  }
 }
