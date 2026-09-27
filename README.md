@@ -1,6 +1,6 @@
 # KALEIDO — World Sports
 
-Motion-controlled **tennis** and **bowling** in the spirit of Wii Sports,
+Motion-controlled **tennis**, **bowling** and **sword duels** in the spirit of Wii Sports,
 played across nine worlds that each look like a different medium: a Switch
 Sports-style park, a cel-shaded plaza, a sumi-e ink painting, a synthwave
 night drive, an 8-bit castle, a paper pop-up book, a stop-motion clay set, a
@@ -9,7 +9,8 @@ watercolour garden and a court adrift in space.
 **Your iPhone is the remote. Your Mac is the TV.** In tennis, swing your phone
 like a racket: timing aims the shot, swing speed sets the power, and brushing
 up or chopping down adds topspin or slice. In bowling, hold the ball on the
-screen, swing your arm and let go — twist your wrist to hook it. Up to four
+screen, swing your arm and let go — twist your wrist to hook it. In a sword
+duel the phone is your sword: swing to strike, hold GUARD to block. Up to four
 phones can join.
 
 Everything — characters, courts, shaders, music, sound effects — is generated
@@ -78,12 +79,27 @@ hook into the pocket move right (left-handers: left) and aim out a little.
 The ball takes only a little of your swing's sideways drift — keep it
 straight and it goes where the line points.
 
+### Sword duel controls
+
+| | Phone | Mac |
+|---|---|---|
+| Strike | swing the phone in any direction (across, down, diagonally) | the arrow keys, or drag the mouse |
+| Thrust | push the phone towards the screen | <kbd>X</kbd> |
+| Guard | hold **GUARD** and hold the sword *across* their swing — upright stops side swings, flat stops chops | hold <kbd>Space</kbd> (angled for you) or the right mouse button (the blade points at the cursor) |
+| Re-center | point the phone at the screen and tap ⌖ | |
+
+A blocked attacker is stunned for a moment — strike back. Flailing tires your
+arm and weakens your hits. Knock them off the end of the platform to take the
+round; best of three. Two phones get a split screen.
+
 ## Modes
 
 - **Quick Match** — singles or doubles, vs CPU or friends (up to 4 phones),
   1 / 3 / 5 games, four CPU levels, any world.
 - **Bowling** — ten frames for up to four players, with an optional CPU
   (Rookie, Pro or Ace), in any world. Pins are real rigid-body physics.
+- **Sword Duel** — you against a CPU (Rookie, Pro or Ace) or a friend on a
+  second phone, on a platform over the water in any world.
 - **World Tour** — the Great Prism shattered into eight worlds. Beat each
   world's champion to restore its shard, then face the Prism King.
 - **Kaleido Rally** — every couple of points, or any PERFECT shot deep in a
@@ -129,17 +145,21 @@ npx tsx scripts/sim-human.ts  # simulated human vs each CPU level
 npx tsx scripts/bowl-sim.ts   # bowling physics: strike % by line, splits, spares
 npx tsx scripts/bowl-cpu-sim.ts  # headless bowling games per CPU level
 npx tsx scripts/bowl-score-test.ts && npx tsx scripts/bowl-pad-test.ts
+npx tsx scripts/duel-game-test.ts && npx tsx scripts/sword-pad-test.ts
+npx tsx scripts/duel-sim.ts   # CPU duels and simulated players vs each CPU level
 ```
 
 - `server/` — Node server: HTTP on localhost for the TV, HTTPS on the LAN for
   phones (with a locally generated certificate authority), and a hub that
   relays remote input over WebSockets or HTTPS+Server-Sent Events.
-- `src/pad/` — the phone remote: swing and bowling-release detection,
-  transport, sounds, UI.
+- `src/pad/` — the phone remote: swing, bowling-release and sword-slash
+  detection, transport, sounds, UI.
 - `src/tv/tennis/` — closed-form ball physics, shot solver, rules, AI, camera.
 - `src/tv/bowling/` — lane model + Rapier pins, scoring, the referee and CPU
   bowlers, camera, the alley (built in each world's style) and the bowler's
   animation.
+- `src/tv/duel/` — the duel's rules and CPU fighters, the arena and swords
+  (in each world's style), fighter animation and camera.
 - `src/tv/chars/` — procedural characters and animation.
 - `src/tv/worlds/` — one file per world: scenery, materials and its own
   post-processing pipeline.
