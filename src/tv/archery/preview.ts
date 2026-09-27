@@ -26,6 +26,7 @@ import { ArcherAnimator } from './anim';
 import { ArcheryGear, ARROW } from './bow';
 import { RANGE, ringOf } from './range';
 import { BALLOON_R, balloonColor } from './balloons';
+import { aimCamera, newAimCam } from './aimcam';
 import type { ArcherState, ArrowView, RangeFx, RangeView, TargetDef } from './types';
 
 const q = new URLSearchParams(location.search);
@@ -324,30 +325,13 @@ function fake(tc: number, dt: number) {
 
 type CamFn = (c: THREE.PerspectiveCamera) => void;
 const lookAtV = new THREE.Vector3();
-/**
- * The gameplay camera: behind the archer and out past the draw shoulder, at
- * about head height, looking down the aim 22 m out — it swings round the
- * archer with the aim's yaw, so the archer stays at the lower corner and the
- * target in the middle wherever they aim. `zoom` 0..1 narrows the view onto
- * the aim (as the string comes back) without moving the camera.
- */
+/** The gameplay camera (aimcam.ts): unzoomed ('play') or pushed in on the aim ('aim'). */
+const ac = newAimCam();
 function playCam(c: THREE.PerspectiveCamera, zoom: number) {
-  const hs = handed;
-  const a = archer;
-  const aiming = a.phase !== 'idle' && a.phase !== 'cheer' && a.phase !== 'sad';
-  const yaw = aiming ? a.yaw : 0;
-  const pitch = aiming ? a.pitch : 0;
-  const fx = -Math.sin(yaw),
-    fz = -Math.cos(yaw);
-  const rx = Math.cos(yaw),
-    rz = -Math.sin(yaw);
-  const side = hs * 1.5,
-    back = 3.4;
-  c.position.set(a.x + rx * side - fx * back, 1.62, a.z + rz * side - fz * back);
-  const D = 22;
-  lookAtV.set(a.x + fx * D * Math.cos(pitch), RANGE.eyeY - 0.1 + Math.sin(pitch) * D, a.z + fz * D * Math.cos(pitch));
-  c.lookAt(lookAtV);
-  c.fov = 40 - 18 * zoom;
+  aimCamera(archer, zoom, ac);
+  c.position.set(ac.x, ac.y, ac.z);
+  c.lookAt(lookAtV.set(ac.lx, ac.ly, ac.lz));
+  c.fov = ac.fov;
 }
 const CAMS: Record<string, CamFn> = {
   play: (c) => playCam(c, 0),

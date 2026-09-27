@@ -659,8 +659,9 @@ interface Kit {
   hull: THREE.Mesh | null;
   hs: 1 | -1;
   phase: string;
-  /** the nock when the arrow went, for the string's snap */
+  /** the nock when the arrow went, and the seconds since (−1 = not shooting): the string's snap */
   snapZ: number;
+  relT: number;
   /** how much of the lifted draw elbow is applied (0..1) */
   elbow: number;
   shadowOpacity: number;
@@ -768,7 +769,7 @@ export class ArcheryGear {
       quiver.add(hull);
     }
     const sm = rig.shadow.material as THREE.MeshBasicMaterial;
-    const k: Kit = { rig, bow, quiver, hull, hs, phase: '', snapZ: GRIP.brace, elbow: 0, shadowOpacity: sm.opacity };
+    const k: Kit = { rig, bow, quiver, hull, hs, phase: '', snapZ: GRIP.brace, relT: -1, elbow: 0, shadowOpacity: sm.opacity };
     this.placeQuiver(k);
     return k;
   }
@@ -809,7 +810,11 @@ export class ArcheryGear {
         this.placeQuiver(k);
       }
       const entered = s.phase !== k.phase;
-      if (entered && s.phase === 'release') k.snapZ = k.bow.nock.z;
+      if (entered && s.phase === 'release') {
+        k.snapZ = k.bow.nock.z;
+        k.relT = 0;
+      } else if (k.relT >= 0) k.relT += dt;
+      if (s.phase !== 'release' && s.phase !== 'watch') k.relT = -1;
       k.phase = s.phase;
       k.rig.root.updateMatrixWorld(true);
       this.string(k, s);
@@ -852,9 +857,16 @@ export class ArcheryGear {
         } else bow.setArrow('off');
         break;
       }
-      case 'release': {
-        // the string flies home and rings for a moment; the limbs kick forward with it
-        const t = s.t;
+      case 'release':
+      case 'watch': {
+        // the string flies home and rings for a moment (into 'watch', however short the game's
+        // 'release' is); the limbs kick forward with it
+        const t = k.relT;
+        if (t < 0 || t > 0.6) {
+          bow.setDraw(0);
+          bow.setArrow('off');
+          break;
+        }
         const home = Math.max(0, 1 - t / 0.012);
         const amp = 0.045 * THREE.MathUtils.clamp((k.snapZ - GRIP.brace) / BOW.draw, 0.2, 1);
         const z = GRIP.brace + (k.snapZ - GRIP.brace) * home - amp * Math.exp(-t / 0.09) * Math.sin(t * Math.PI * 2 * 21);
