@@ -5,7 +5,10 @@ import type { ServerToTV, TVMsg } from '../../shared/protocol';
 export class TVLink {
   ws: WebSocket | null = null;
   online = false;
+  /** what the QR code opens (http://<ip>:<port>/join) */
   joinUrl: string | null = null;
+  /** the remote itself (https), where the join page sends a phone */
+  padUrl: string | null = null;
   caUrl: string | null = null;
   onMessage: (m: ServerToTV) => void = () => {};
   onStatus: (online: boolean) => void = () => {};
@@ -30,6 +33,7 @@ export class TVLink {
       }
       if (m.type === 'hello' || m.type === 'net') {
         this.joinUrl = m.joinUrl;
+        this.padUrl = m.padUrl ?? null;
         this.caUrl = m.caUrl;
       }
       if (m.type === 'replaced') {

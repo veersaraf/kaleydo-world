@@ -123,7 +123,7 @@ export class BaseballCamera {
           w1 = 2 * u * (1 - u),
           w2 = u * u;
         tp.set(p0.x * w0 + p1.x * w1 + end.x * w2, p0.y * w0 + p1.y * w1 + end.y * w2, p0.z * w0 + p1.z * w1 + end.z * w2);
-        tl.set(endL.x * u, 0.4 * (1 - u) + endL.y * u, FIELD.homeZ - 3 * (1 - u) + endL.z * u);
+        tl.set(endL.x * u, 0.4 * (1 - u) + endL.y * u, (FIELD.homeZ - 3) * (1 - u) + endL.z * u);
         this.fov = 44 - 11 * u;
         lambda = 1000;
         break;

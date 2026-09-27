@@ -38,7 +38,13 @@ export class JoinPanel {
         'div',
         { class: 'top' },
         h('div', { class: 'qr' }, this.qr),
-        h('div', null, h('h3', null, 'Grab your phone'), h('p', null, 'Scan with your iPhone camera to turn it into a remote. Same Wi-Fi as this Mac.'), this.url),
+        h(
+          'div',
+          null,
+          h('h3', null, 'Grab your phone'),
+          h('p', null, 'Scan with your iPhone camera, on this Mac’s Wi-Fi. The first time, a one-minute setup.'),
+          this.url,
+        ),
       ),
       this.seats,
     );
@@ -52,7 +58,8 @@ export class JoinPanel {
     if (u && u !== this.shownUrl) {
       this.shownUrl = u;
       this.qr.src = `/api/qr.svg?dark=1d1c33&t=${Date.now()}`;
-      this.url.textContent = u.replace(/^https:\/\//, '');
+      // (the QR code opens the http join page, which sends the phone on to the https remote)
+      this.url.textContent = u.replace(/^https?:\/\//, '');
     } else if (!u) {
       this.url.textContent = this.link.online ? 'No Wi-Fi address found' : 'Connecting to the KALEIDO server…';
     }

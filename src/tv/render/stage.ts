@@ -243,6 +243,11 @@ export class Stage {
     return !!this.next;
   }
 
+  /** the world on screen, and the one it's shattering into during a transition */
+  get shown(): World[] {
+    return this.next ? (this.current ? [this.current, this.next] : [this.next]) : this.current ? [this.current] : [];
+  }
+
   setWorld(id: string, opts: { transition?: boolean; origin?: { x: number; y: number }; dur?: number } = {}) {
     const w = this.get(id);
     if (w === this.current && !this.next) return;

@@ -11,6 +11,8 @@ import { qrot, type Vec3 } from './orient';
 import { MotionFront, rawMotion, swordSample, swingSample } from './pipeline';
 import { Recorder, captureName } from './capture';
 import { PadAudio } from './audio';
+import { keepPortrait, toDevice } from './portrait';
+import { haptic } from './haptic';
 import type { Handed, LookPrefs, PadButton, PadFx, PadMode, PadMsg, ServerToPad } from '../shared/protocol';
 import { HAIRS, HAIR_NAMES, EYES, SKIN_TONES, HAIR_TONES } from '../shared/protocol';
 import { hashStr } from '../shared/hash';
@@ -96,9 +98,39 @@ function h<K extends keyof HTMLElementTagNameMap>(
   return el;
 }
 
+keepPortrait();
 const app = document.getElementById('app')!;
 const root = h('div', { class: 'pad', 'data-screen': 'join' });
 app.append(root);
+
+// icons: a small line icon (`stroke` drawn as a line, `fill` as a solid shape)
+const SVG = 'http://www.w3.org/2000/svg';
+function icon(stroke: string, fill: string, width = 2.6) {
+  const svg = document.createElementNS(SVG, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const [d, filled] of [
+    [stroke, false],
+    [fill, true],
+  ] as const) {
+    if (!d) continue;
+    const p = document.createElementNS(SVG, 'path');
+    p.setAttribute('d', d);
+    p.setAttribute('fill', filled ? 'currentColor' : 'none');
+    p.setAttribute('stroke', 'currentColor');
+    p.setAttribute('stroke-width', filled ? '1.6' : String(width));
+    p.setAttribute('stroke-linecap', 'round');
+    p.setAttribute('stroke-linejoin', 'round');
+    svg.append(p);
+  }
+  return svg;
+}
+const ICON = {
+  // (settings: three sliders)
+  gear: () => icon('M4 7h9M18.5 7h1.5M4 12h3M11.5 12h8.5M4 17h11M19.5 17h.5', 'M16 4.8a2.2 2.2 0 1 0 0 4.4a2.2 2.2 0 1 0 0-4.4zM9 9.8a2.2 2.2 0 1 0 0 4.4a2.2 2.2 0 1 0 0-4.4zM17 14.8a2.2 2.2 0 1 0 0 4.4a2.2 2.2 0 1 0 0-4.4z', 2.3),
+  tv: () => icon('M3.5 6.5h17v11h-17zM9 21h6M12 17.5V21', '', 2.2),
+  swipe: () => icon('M4 12h16M15 7l5 5-5 5M9 7 4 12l5 5', '', 2.4),
+};
 
 // join screen
 const nameInput = h('input', {
@@ -108,47 +140,66 @@ const nameInput = h('input', {
   autocomplete: 'off',
   autocapitalize: 'words',
   spellcheck: 'false',
+  'aria-label': 'Your name',
 });
 nameInput.value = prefs.name;
 const handL = h('button', { class: 'seg-btn', 'data-h': 'L' }, 'Left hand');
 const handR = h('button', { class: 'seg-btn', 'data-h': 'R' }, 'Right hand');
 const joinBtn = h('button', { class: 'join-btn' }, h('span', {}, 'Join game'));
-const joinNote = h('p', { class: 'join-note' }, 'Hold your phone like a racket handle. Swing to hit.');
+const joinNote = h('p', { class: 'join-note' }, 'Your phone will ask to use motion: tap ', h('b', {}, 'Allow'), '.');
 // your character: tap to change it
 const joinFace = h('button', { class: 'face-btn', 'aria-label': 'Change your character' }, h('i', { class: 'face' }), h('span', {}, 'Edit'));
+// opened over https the phone doesn't trust yet (tapped through Safari's warning): how to stop the warnings
+const certHelp = h(
+  'details',
+  { class: 'cert' },
+  h('summary', {}, 'Seeing a security warning? Remove it for good'),
+  h(
+    'ol',
+    {},
+    h('li', {}, h('a', { href: '/kaleido.mobileconfig' }, 'Download the profile'), ', then tap ', h('b', {}, 'Allow'), '.'),
+    h('li', {}, 'Settings → General → VPN & Device Management → KALEIDO Local CA → ', h('b', {}, 'Install'), '.'),
+    h('li', {}, 'Settings → General → About → Certificate Trust Settings → turn on ', h('b', {}, 'KALEIDO Local CA'), '.'),
+  ),
+  h('p', {}, 'It only trusts the game on your own Mac, and makes the remote connect faster.'),
+);
+certHelp.hidden = location.protocol !== 'https:' || /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
 const joinScreen = h(
   'section',
   { class: 'join' },
   h('div', { class: 'logo', 'aria-label': 'KALEIDO' }, ...'KALEIDO'.split('').map((ch, i) => h('span', { style: `--i:${i}` }, ch))),
   h('div', { class: 'tagline' }, 'Your phone is the remote'),
   h('div', { class: 'card' }, joinFace, nameInput, h('div', { class: 'seg' }, handL, handR), joinBtn, joinNote),
-  h(
-    'details',
-    { class: 'cert' },
-    h('summary', {}, 'Optional: remove the security warning'),
-    h(
-      'ol',
-      {},
-      h('li', {}, 'Tap ', h('a', { href: '/kaleido-ca.crt' }, 'Download certificate'), ' and choose Allow.'),
-      h('li', {}, 'Settings → General → VPN & Device Management → KALEIDO → Install.'),
-      h('li', {}, 'Settings → General → About → Certificate Trust Settings → turn on KALEIDO.'),
-    ),
-    h('p', {}, 'This only trusts games served from your own Mac, and makes the remote connect faster.'),
-  ),
+  certHelp,
 );
 
-// remote screen
+// remote screen: who you are, the link to the TV, settings
 const badge = h('span', { class: 'badge' }, 'P?');
 const nameLabel = h('span', { class: 'who' }, '');
 const scoreLine = h('span', { class: 'score' }, '');
-const netDot = h('i', { class: 'dot' });
-const netMs = h('b', {}, '');
-const gearBtn = h('button', { class: 'gear', 'aria-label': 'Settings' }, '⚙');
-const header = h('header', {}, badge, nameLabel, scoreLine, h('span', { class: 'net' }, netDot, netMs), gearBtn);
+const netDot = h('i', { class: 'dot connecting' });
+const netMs = h('b', {}, 'Connecting');
+const netPill = h('span', { class: 'net connecting', role: 'status' }, netDot, netMs);
+const gearBtn = h('button', { class: 'gear', 'aria-label': 'Settings' }, ICON.gear());
+const header = h('header', {}, h('div', { class: 'me' }, h('i', { class: 'face mini' }), badge), h('div', { class: 'id' }, nameLabel, scoreLine), netPill, gearBtn);
+// lost the TV mid-game: say so over the panel (inputs don't reach it meanwhile)
+const netBar = h('div', { class: 'netbar', role: 'alert' }, h('i', { class: 'mini-spin' }), h('span', {}, 'Reconnecting to the TV…'));
 
 function padBtn(b: PadButton, cls: string, label: string | Node) {
   const el = h('button', { class: `pb ${cls}`, 'data-b': b }, label);
   return el;
+}
+
+/** a game panel's pause button, up in the corner, away from the thumb (the TV's home = pause) */
+function pauseBtn(cls = '') {
+  // (the house turns into a pause sign up here: see .stop .house)
+  const el = padBtn('home', `small home ${cls}`, h('i', { class: 'house' }));
+  el.setAttribute('aria-label', 'Pause');
+  return el;
+}
+/** a game panel's top row: pause · the title and what to do now · (a corner button) */
+function panelTop(pause: HTMLElement, title: HTMLElement, hint: HTMLElement, right?: HTMLElement) {
+  return h('div', { class: 'stop' }, h('div', { class: 'sbtn' }, pause, h('span', {}, 'PAUSE')), h('div', { class: 'shead' }, title, hint), right ?? h('div', { class: 'sbtn' }));
 }
 
 const dpad = h(
@@ -169,7 +220,11 @@ const row = h(
   padBtn('home', 'small home', h('i', { class: 'house' })),
   padBtn('plus', 'small', '+'),
 );
-const menuPanel = h('div', { class: 'panel menu' }, dpad, aBtn, row, bBtn);
+for (const [i, label] of ['Minus', 'Home', 'Plus'].entries()) row.children[i].setAttribute('aria-label', label);
+// the TV's screen (main menu, paused, results…) and what the pad does there
+const menuTitle = h('div', { class: 'ptitle' }, '');
+const menuHint = h('div', { class: 'phint' }, '');
+const menuPanel = h('div', { class: 'panel menu' }, h('div', { class: 'mhead' }, menuTitle, menuHint), dpad, aBtn, row, bBtn);
 
 const gaugeRing = h('div', { class: 'ring' });
 const gaugeLive = h('div', { class: 'live' });
@@ -178,54 +233,30 @@ const shotLine = h('div', { class: 'shotline' }, '');
 const tvLine = h('div', { class: 'tvline' }, '');
 const playTitle = h('div', { class: 'ptitle' }, '');
 const playHint = h('div', { class: 'phint' }, 'Swing like a racket');
-const swipeZone = h('div', { class: 'swipe-zone' }, 'No motion sensor — swipe here to swing');
+const swipeZone = h('div', { class: 'swipe-zone' }, ICON.swipe(), h('b', {}, 'SWIPE TO SWING'), h('span', {}, 'no motion sensor: swipe across here'));
 const playPanel = h(
   'div',
   { class: 'panel play' },
-  playTitle,
-  h('div', { class: 'gauge' }, gaugeLive, gaugeRing, gaugeText),
-  shotLine,
-  tvLine,
-  playHint,
+  panelTop(pauseBtn(), playTitle, playHint),
+  h('div', { class: 'sstage' }, tvLine, h('div', { class: 'gauge' }, gaugeLive, gaugeRing, gaugeText), shotLine),
   swipeZone,
-  h('div', { class: 'row3' }, h('span', {}), padBtn('home', 'small home', h('i', { class: 'house' })), h('span', {})),
 );
 
-const tossBtn = h('button', { class: 'toss' }, h('b', {}, 'LIFT TO TOSS'), h('span', {}, 'raise the phone (or tap here), then swing'));
-const servePanel = h('div', { class: 'panel serve' }, tossBtn);
+const tossBtn = h('button', { class: 'toss' }, h('i', { class: 'toss-ball' }), h('b', {}, 'LIFT TO TOSS'), h('span', {}, 'raise the phone (or tap here), then swing'));
+const serveTitle = h('div', { class: 'ptitle' }, 'Your serve!');
+const serveHint = h('div', { class: 'phint' }, '');
+const servePanel = h('div', { class: 'panel serve' }, panelTop(pauseBtn(), serveTitle, serveHint), tossBtn);
 
 const skipBtn = h('button', { class: 'toss skip' }, h('b', {}, 'SKIP'), h('span', {}, 'replay'));
-const skipPanel = h('div', { class: 'panel skip' }, skipBtn, h('div', { class: 'row3' }, h('span', {}), padBtn('home', 'small home', h('i', { class: 'house' })), h('span', {})));
+const skipPanel = h('div', { class: 'panel skip' }, panelTop(pauseBtn(), h('div', { class: 'ptitle' }, 'Replay'), h('div', { class: 'phint' }, 'Tap to skip it')), skipBtn);
 
 const waitTitle = h('div', { class: 'wtitle' }, 'Connecting…');
 const waitHint = h('div', { class: 'whint' }, '');
-const waitPanel = h('div', { class: 'panel wait' }, h('div', { class: 'spinner' }), waitTitle, waitHint);
+const waitPanel = h('div', { class: 'panel wait' }, h('div', { class: 'wicon' }, h('div', { class: 'spinner' }), h('i', { class: 'tvglyph' }, ICON.tv())), waitTitle, waitHint);
 
 // bowling: the phone is the ball. Hold the big grip pad (the ball is in your
 // hand), swing back and forward, let go at the bottom. Move (◀ ▶) and aim
 // (↺ ↻) sit low in the corners, well away from where the thumb rests.
-const SVG = 'http://www.w3.org/2000/svg';
-/** a small line icon: `stroke` is drawn as a line, `fill` as a solid shape */
-function icon(stroke: string, fill: string) {
-  const svg = document.createElementNS(SVG, 'svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('aria-hidden', 'true');
-  for (const [d, filled] of [
-    [stroke, false],
-    [fill, true],
-  ] as const) {
-    if (!d) continue;
-    const p = document.createElementNS(SVG, 'path');
-    p.setAttribute('d', d);
-    p.setAttribute('fill', filled ? 'currentColor' : 'none');
-    p.setAttribute('stroke', 'currentColor');
-    p.setAttribute('stroke-width', filled ? '1.6' : '2.6');
-    p.setAttribute('stroke-linecap', 'round');
-    p.setAttribute('stroke-linejoin', 'round');
-    svg.append(p);
-  }
-  return svg;
-}
 /** move/aim buttons repeat while held */
 function bowlBtn(b: PadButton, label: string, glyph: SVGSVGElement) {
   return h('button', { class: 'pb small', 'data-b': b, 'data-rep': '', 'aria-label': label }, glyph);
@@ -245,17 +276,13 @@ const gripBall = h(
 const gripWrap = h('div', { class: 'grip-wrap' }, h('div', { class: 'grip-meter' }), gripBall);
 const bowlShot = h('div', { class: 'shotline' }, '');
 // pause: up in a corner, where a thumb sliding off the grip mid-throw can't reach
-const bowlHome = padBtn('home', 'small home bhome', h('i', { class: 'house' }));
+const bowlHome = pauseBtn('bhome');
 bowlHome.dataset.lock = '';
-bowlHome.setAttribute('aria-label', 'Pause');
 const bowlPanel = h(
   'div',
   { class: 'panel bowl' },
-  bowlHome,
-  h('div', { class: 'bhead' }, bowlTitle, bowlHint),
-  bowlTv,
-  gripWrap,
-  bowlShot,
+  panelTop(bowlHome, bowlTitle, bowlHint),
+  h('div', { class: 'sstage' }, bowlTv, gripWrap, bowlShot),
   h(
     'div',
     { class: 'bowl-row' },
@@ -379,13 +406,12 @@ const drawSub = h('span', {}, 'hold · aim · let go');
 const drawPad = h('div', { class: 'guard draw', role: 'button', 'aria-label': 'Hold to draw the bow, point at the target, let go to shoot' }, h('i', { class: 'blade bowglyph' }, bowGlyph()), drawBig, drawSub);
 const drawWrap = h('div', { class: 'guard-wrap' }, h('div', { class: 'guard-meter' }), drawPad);
 const bowShot = h('div', { class: 'shotline' }, '');
-const bowHome = padBtn('home', 'small home', h('i', { class: 'house' }));
+const bowHome = pauseBtn();
 bowHome.dataset.lock = '';
-bowHome.setAttribute('aria-label', 'Pause');
 const bowPanel = h(
   'div',
   { class: 'panel bow' },
-  h('div', { class: 'stop' }, h('div', { class: 'sbtn' }, bowHome, h('span', {}, 'PAUSE')), h('div', { class: 'shead' }, bowTitle, bowHint), h('div', { class: 'sbtn' })),
+  panelTop(bowHome, bowTitle, bowHint),
   h('div', { class: 'sstage' }, bowTv, drawWrap, bowShot),
 );
 
@@ -406,11 +432,12 @@ const leds = h('div', { class: 'leds' }, h('i'), h('i'), h('i'), h('i'));
 const footer = h('footer', {}, leds, h('div', { class: 'brand' }, 'KALEIDO'));
 const flash = h('div', { class: 'flash' });
 const toast = h('div', { class: 'toast' });
+const shell = h('div', { class: 'shell' }, menuPanel, playPanel, servePanel, waitPanel, skipPanel, bowlPanel, swordPanel, bowPanel, netBar);
 const remoteScreen = h(
   'section',
   { class: 'remote' },
   header,
-  h('div', { class: 'shell' }, menuPanel, playPanel, servePanel, waitPanel, skipPanel, bowlPanel, swordPanel, bowPanel),
+  shell,
   footer,
   flash,
   toast,
@@ -422,11 +449,12 @@ const sensBtns = ([
   ['Normal', '1'],
   ['Light swings', '1.35'],
 ] as const).map(([label, v]) => h('button', { class: 'seg-btn', 'data-s': v }, label));
-const setName = h('input', { class: 'name-input', maxlength: '12', autocomplete: 'off' });
+const setName = h('input', { class: 'name-input', maxlength: '12', autocomplete: 'off', 'aria-label': 'Your name', placeholder: 'Your name' });
 const setL = h('button', { class: 'seg-btn', 'data-h': 'L' }, 'Left hand');
 const setR = h('button', { class: 'seg-btn', 'data-h': 'R' }, 'Right hand');
 const sheetClose = h('button', { class: 'join-btn small' }, h('span', {}, 'Done'));
-const motionState = h('p', { class: 'join-note' }, '');
+const motionState = h('span', { class: 'chip' }, '');
+const linkState = h('span', { class: 'chip' }, '');
 // the character editor: a face that shows every change, and the pieces
 const faceBig = h('i', { class: 'face big' });
 const cycleRow = (label: string) => {
@@ -455,7 +483,10 @@ const sheet = h(
   h(
     'div',
     { class: 'sheet-card' },
+    h('i', { class: 'grabber' }),
     h('h2', {}, 'Remote settings'),
+    h('div', { class: 'chips' }, motionState, linkState),
+    h('div', { class: 'label' }, 'Name'),
     setName,
     h('div', { class: 'seg' }, setL, setR),
     h('div', { class: 'label' }, 'Your character'),
@@ -464,7 +495,6 @@ const sheet = h(
     h('div', { class: 'seg three' }, ...sensBtns),
     recenterBtn,
     recenterNote,
-    motionState,
     sheetClose,
   ),
 );
@@ -610,17 +640,44 @@ function showToast(text: string, ms = 1400) {
 /** a white flash in the player's colour; 'red' when you're hit, 'steel' when your guard holds */
 function doFlash(strong = false, tint: '' | 'red' | 'steel' = '') {
   flash.classList.remove('go', 'strong', 'red', 'steel');
+  shell.classList.remove('rumble', 'big');
   void flash.offsetWidth;
   flash.classList.add('go');
-  if (strong) flash.classList.add('strong');
+  // the remote kicks in the hand (as a rumble would), harder for the big ones
+  shell.classList.add('rumble');
+  if (strong) {
+    flash.classList.add('strong');
+    shell.classList.add('big');
+  }
   if (tint) flash.classList.add(tint);
+  haptic(strong ? 1 : 0.5);
 }
 
 /** the bowling / bow panel is showing but not taking input (your ball is rolling, your arrow flying) */
 let locked = false;
 
+let modeSig = '';
+/** long headings ("At bat · pitch 3 of 10") a size down, so they stay on one line */
+function fitTitles() {
+  for (const el of root.querySelectorAll<HTMLElement>('.panel .ptitle')) {
+    const n = (el.textContent ?? '').length;
+    el.classList.toggle('long', n > 14 && n <= 19);
+    el.classList.toggle('xlong', n > 19);
+  }
+}
 function setMode(m: PadMode, title?: string, hint?: string, lock = false) {
   const prev = mode;
+  // a new mode, or new words on it: the heading pops (the panel slides in when it changes)
+  const sig = `${m === 'watch' ? 'wait' : m === 'bat' ? 'play' : m}|${title ?? ''}|${hint ?? ''}`;
+  if (sig !== modeSig && panels[m].classList.contains('on')) {
+    for (const el of panels[m].querySelectorAll('.ptitle, .wtitle')) {
+      el.classList.remove('pop');
+      void (el as HTMLElement).offsetWidth;
+      el.classList.add('pop');
+    }
+  }
+  modeSig = sig;
+  setTimeout(fitTitles);
   mode = m;
   if (m !== prev) rec?.event('mode', { mode: m });
   locked = lock && (m === 'bowl' || m === 'bow');
@@ -647,11 +704,17 @@ function setMode(m: PadMode, title?: string, hint?: string, lock = false) {
     guardCancel();
     detector.reset();
   }
-  for (const el of new Set(Object.values(panels))) el.classList.remove('on');
+  for (const el of new Set(Object.values(panels))) if (el !== panels[m]) el.classList.remove('on');
   panels[m].classList.add('on');
   if (m === 'wait' || m === 'watch') {
     waitTitle.textContent = title || (m === 'watch' ? 'Watching' : 'You’re in!');
     waitHint.textContent = hint || 'Look at the big screen';
+    // waiting on the link: a spinner; otherwise the TV is where it's at
+    waitPanel.classList.toggle('busy', link.status !== 'online' || slot < 0);
+  }
+  if (m === 'menu') {
+    menuTitle.textContent = title || 'KALEIDO';
+    menuHint.textContent = hint || 'Use the pad · A to choose';
   }
   if (m === 'play') {
     playTitle.textContent = title || '';
@@ -675,6 +738,8 @@ function setMode(m: PadMode, title?: string, hint?: string, lock = false) {
     skipBtn.querySelector('span')!.textContent = hint || 'replay';
   }
   if (m === 'serve') {
+    serveTitle.textContent = /second/i.test(title || '') ? 'Second serve!' : 'Your serve!';
+    serveHint.textContent = motionOK ? 'Lift the phone to toss · then swing' : 'Tap to toss · then swipe';
     tossBtn.classList.remove('tossed');
     tossBtn.querySelector('b')!.textContent = title || (motionOK ? 'LIFT TO TOSS' : 'TAP TO TOSS');
     tossBtn.querySelector('span')!.textContent = hint || (motionOK ? 'raise the phone (or tap here), then swing' : 'then swing to serve');
@@ -710,7 +775,12 @@ function setMode(m: PadMode, title?: string, hint?: string, lock = false) {
 
 function setStatus(s: LinkStatus) {
   netDot.className = 'dot ' + s;
-  if (s !== 'online') netMs.textContent = s === 'connecting' ? '…' : 'offline';
+  netPill.className = 'net ' + s;
+  if (s !== 'online') netMs.textContent = s === 'connecting' ? 'Connecting' : 'Offline';
+  else netMs.textContent = 'Connected';
+  // lost the TV mid-game (a player slot, but no link): say so over the panel
+  remoteScreen.classList.toggle('lost', s !== 'online' && slot >= 0);
+  if (mode === 'wait' || mode === 'watch') waitPanel.classList.toggle('busy', s !== 'online' || slot < 0);
   if (s === 'offline' || s === 'connecting') {
     if (slot < 0) setMode('wait', s === 'connecting' ? 'Connecting…' : 'Disconnected', 'Make sure KALEIDO is running on your Mac');
   } else if (joined) {
@@ -726,6 +796,8 @@ function onMessage(m: ServerToPad) {
       badge.textContent = 'P' + (m.slot + 1);
       nameLabel.textContent = m.name;
       [...leds.children].forEach((el, i) => el.classList.toggle('on', i === m.slot));
+      remoteScreen.classList.remove('lost');
+      waitPanel.classList.remove('busy');
       if (mode === 'wait') setMode('menu');
       break;
     case 'full':
@@ -909,7 +981,7 @@ function duelFx(m: Extract<ServerToPad, { type: 'fx' }>) {
 link.onMessage = onMessage;
 link.onStatus = setStatus;
 setInterval(() => {
-  if (link.status === 'online') netMs.textContent = `${Math.round(link.lat * 2)}ms`;
+  if (link.status === 'online') netMs.textContent = `${Math.round(link.lat * 2)} ms`;
 }, 1000);
 
 // ------------------------------------------------------------------ buttons
@@ -1015,9 +1087,11 @@ skipBtn.addEventListener('pointerdown', (e) => {
 joinFace.addEventListener('click', () => gearBtn.click());
 gearBtn.addEventListener('click', () => {
   setName.value = prefs.name;
-  motionState.textContent = motionOK
-    ? `Motion sensor: on (gyro axes ${front.axes.sure ? front.axes.name : 'not yet checked'})`
-    : 'Motion sensor unavailable — the swipe pad is used instead.';
+  motionState.textContent = motionOK ? 'Motion sensor on' : 'No motion sensor: swipe pads';
+  motionState.className = 'chip ' + (motionOK ? 'good' : 'meh');
+  linkState.textContent = link.status !== 'online' ? 'Not connected' : link.transport === 'ws' ? `Connected · ${Math.round(link.lat * 2)} ms` : `Connected (fallback) · ${Math.round(link.lat * 2)} ms`;
+  linkState.className = 'chip ' + (link.status === 'online' ? 'good' : 'bad');
+  motionState.title = motionOK ? `gyro axes: ${front.axes.sure ? front.axes.name : 'not yet checked'}` : '';
   sheet.classList.add('open');
   audio.tick();
 });
@@ -1224,6 +1298,9 @@ function requestMotion(): Promise<boolean> {
   return start();
 }
 
+/** Where a touch is, in the phone's own portrait axes (the page may be turned: see portrait.ts). */
+const at = (e: PointerEvent) => toDevice(e.clientX, e.clientY);
+
 // Swipe fallback (desktop testing, or phones without a gyroscope).
 function attachSwipe(el: HTMLElement) {
   let sx = 0,
@@ -1232,16 +1309,16 @@ function attachSwipe(el: HTMLElement) {
     active = false;
   el.addEventListener('pointerdown', (e) => {
     active = true;
-    sx = e.clientX;
-    sy = e.clientY;
+    ({ x: sx, y: sy } = at(e));
     st = performance.now();
   });
   el.addEventListener('pointerup', (e) => {
     if (!active) return;
     active = false;
     const dt = Math.max(16, performance.now() - st);
-    const dx = e.clientX - sx,
-      dy = e.clientY - sy;
+    const p = at(e);
+    const dx = p.x - sx,
+      dy = p.y - sy;
     const dist = Math.hypot(dx, dy);
     if (dist < 40) return;
     const speed = dist / dt; // px per ms
@@ -1295,7 +1372,7 @@ gripBall.addEventListener('pointerdown', (e) => {
   const now = performance.now();
   bowl.heading = orient.heading;
   bowl.grip(now);
-  gripPts = [{ t: now, x: e.clientX, y: e.clientY }];
+  gripPts = [{ t: now, ...at(e) }];
   link.send({ type: 'grip', down: true, lat: Math.round(link.lat) });
   audio.tick();
   clearTimeout(gripIdleTimer);
@@ -1308,15 +1385,16 @@ gripBall.addEventListener('pointerdown', (e) => {
 
 gripBall.addEventListener('pointermove', (e) => {
   if (e.pointerId !== gripId) return;
-  gripPts.push({ t: performance.now(), x: e.clientX, y: e.clientY });
+  const p = at(e);
+  gripPts.push({ t: performance.now(), ...p });
   if (gripPts.length > 400) gripPts.splice(1, 200); // (keep the start: the stroke is measured from it)
   // no motion sensor: the meter follows the drag up
-  if (!motionOK) setMeter(Math.max(0, Math.min(1, (gripPts[0].y - e.clientY) / 300)));
+  if (!motionOK) setMeter(Math.max(0, Math.min(1, (gripPts[0].y - p.y) / 300)));
 });
 
 const gripUp = (e: PointerEvent) => {
   if (e.pointerId !== gripId) return;
-  if (e.type === 'pointerup') gripPts.push({ t: performance.now(), x: e.clientX, y: e.clientY });
+  if (e.type === 'pointerup') gripPts.push({ t: performance.now(), ...at(e) });
   throwBall();
 };
 gripBall.addEventListener('pointerup', gripUp);
@@ -1524,6 +1602,7 @@ function showStrike(s: SwordStrike) {
   guardWrap.classList.add('pop');
   if (s.kind === 'thrust') audio.thrust(s.power);
   else audio.slash(s.power);
+  haptic(0.3 + 0.5 * s.power); // (Android: every swing the phone saw, you feel)
 }
 
 swordRecenter.addEventListener('pointerdown', (e) => {
@@ -1551,12 +1630,12 @@ slashZone.addEventListener('pointerdown', (e) => {
   try {
     slashZone.setPointerCapture(e.pointerId);
   } catch {}
-  swipePts = [{ t: stamp(e), x: e.clientX, y: e.clientY }];
+  swipePts = [{ t: stamp(e), ...at(e) }];
   slashZone.classList.add('down');
 });
 slashZone.addEventListener('pointermove', (e) => {
   if (e.pointerId !== swipeId) return;
-  swipePts.push({ t: stamp(e), x: e.clientX, y: e.clientY });
+  swipePts.push({ t: stamp(e), ...at(e) });
   if (swipePts.length > 300) swipePts.splice(1, 150); // (keep the start: the stroke is measured from it)
 });
 const swipeEnd = (e: PointerEvent) => {
@@ -1564,7 +1643,7 @@ const swipeEnd = (e: PointerEvent) => {
   swipeId = null;
   slashZone.classList.remove('down');
   if (e.type !== 'pointerup') return; // cancelled: nothing
-  swipePts.push({ t: stamp(e), x: e.clientX, y: e.clientY });
+  swipePts.push({ t: stamp(e), ...at(e) });
   const s = swipeStrike(swipePts);
   if (s) attack(s, true);
 };
@@ -1622,8 +1701,7 @@ drawPad.addEventListener('pointerdown', (e) => {
   } catch {}
   for (const up of lockedBtnUps) up(); // the palm on pause as the thumb lands isn't a press
   drawT0 = performance.now();
-  dragAim.x0 = e.clientX;
-  dragAim.y0 = e.clientY;
+  ({ x: dragAim.x0, y: dragAim.y0 } = at(e));
   dragAim.dx = dragAim.dy = 0;
   sendOri(); // where the aim starts from
   link.send({ type: 'draw', down: true, lat: Math.round(link.lat) });
@@ -1638,8 +1716,9 @@ drawPad.addEventListener('pointerdown', (e) => {
 
 drawPad.addEventListener('pointermove', (e) => {
   if (e.pointerId !== drawId) return;
-  dragAim.dx = e.clientX - dragAim.x0;
-  dragAim.dy = e.clientY - dragAim.y0;
+  const p = at(e);
+  dragAim.dx = p.x - dragAim.x0;
+  dragAim.dy = p.y - dragAim.y0;
 });
 
 const drawLift = (e: PointerEvent) => {
@@ -1728,8 +1807,10 @@ recenterBtn.addEventListener('click', () => {
 });
 
 // Also unlock audio on any later tap (iOS can suspend the context).
-root.addEventListener('pointerdown', () => {
+root.addEventListener('pointerdown', (e) => {
   if (joined && audio.ctx && audio.ctx.state !== 'running') audio.unlock();
+  // a tap you can feel on everything you press (where the phone can)
+  if (joined && (e.target as Element).closest?.('.pb, .grip, .guard, .toss, .gseg-btn, .sbtn button, .slash-zone')) haptic(0.3);
 });
 
 document.addEventListener('gesturestart', (e) => e.preventDefault());

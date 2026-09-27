@@ -1,8 +1,15 @@
 #!/usr/bin/env node
 // KALEIDO server
 //
-//   http://localhost:3000      the "TV" (your Mac's browser)
-//   https://<lan-ip>:3443/c    the "remotes" (phones on the same Wi-Fi)
+//   http://localhost:3000        the "TV" (your Mac's browser)
+//   http://<lan-ip>:3000/join    what the TV's QR code opens: checks whether the
+//                                phone trusts our certificate, walks it through
+//                                the one-time setup if not, then goes on to…
+//   https://<lan-ip>:3443/c      the "remotes" (phones on the same Wi-Fi)
+//
+// The http port answers the LAN only with the join page, the iOS profile and
+// the CA certificate (public data); everything else on it — the TV page, the
+// API, the TV's socket — stays loopback-only, as it always was.
 //
 // Phones talk to the TV through this hub. Two transports are supported:
 //   - WebSocket (Android, or iPhones that trust the local CA)
@@ -19,7 +26,8 @@ import { fileURLToPath } from 'node:url';
 import { exec } from 'node:child_process';
 import { WebSocketServer } from 'ws';
 import QRCode from 'qrcode';
-import { ensureCerts } from './certs.mjs';
+import { ensureCerts, mobileconfig } from './certs.mjs';
+import { joinPage } from './join-page.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -48,8 +56,14 @@ function lanIPs() {
 let ips = lanIPs();
 const certs = ensureCerts(path.join(__dirname, '.certs'), ips);
 const primaryIP = () => ips[0] || null;
-const joinUrl = () => (primaryIP() ? `https://${primaryIP()}:${HTTPS_PORT}/c` : null);
-const caUrl = () => (primaryIP() ? `https://${primaryIP()}:${HTTPS_PORT}/kaleido-ca.crt` : null);
+/** what the QR code opens: the plain-http join page (it forwards to padUrl) */
+const joinUrl = () => (primaryIP() ? `http://${primaryIP()}:${HTTP_PORT}/join` : null);
+/** the remote itself */
+const padUrl = () => (primaryIP() ? `https://${primaryIP()}:${HTTPS_PORT}/c` : null);
+/** the iOS profile that trusts our CA */
+const caUrl = () => (primaryIP() ? `http://${primaryIP()}:${HTTP_PORT}/kaleido.mobileconfig` : null);
+const profile = Buffer.from(mobileconfig(certs));
+const join = joinPage({ httpsPort: HTTPS_PORT, caName: certs.caName });
 
 // ---------------------------------------------------------------- hub
 
@@ -123,11 +137,17 @@ function isLoopback(addr) {
   return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
 }
 
+/** the Host header names this machine by its loopback name (not a rebound DNS name) */
+function loopbackHost(req) {
+  const host = String(req.headers.host || '').replace(/:\d+$/, '').toLowerCase();
+  return host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
+}
+
 function onUpgrade(req, socket, head) {
   const url = new URL(req.url, 'http://x');
   if (url.pathname !== '/ws') return; // let other listeners (none in prod) handle it
   const role = url.searchParams.get('role');
-  if (role === 'tv' && !isLoopback(req.socket.remoteAddress)) {
+  if (role === 'tv' && (!isLoopback(req.socket.remoteAddress) || !loopbackHost(req))) {
     socket.destroy();
     return;
   }
@@ -156,6 +176,7 @@ function attachTV(ws) {
     JSON.stringify({
       type: 'hello',
       joinUrl: joinUrl(),
+      padUrl: padUrl(),
       caUrl: caUrl(),
       ips,
       dev: DEV,
@@ -392,6 +413,85 @@ function serveStatic(req, res, url) {
   });
 }
 
+/** The join page's trust check: reachable (over https, so only if the phone trusts our CA). */
+function trustCheck(req, res) {
+  const body = '{"ok":1}';
+  res.writeHead(200, {
+    'Content-Type': 'application/json',
+    'Content-Length': body.length,
+    'Cache-Control': 'no-store',
+    // (nothing secret here: any page may ask, no cookies go with it)
+    'Access-Control-Allow-Origin': '*',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  res.end(req.method === 'HEAD' ? undefined : body);
+}
+
+function sendJoin(res) {
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': Buffer.byteLength(join.html),
+    'Cache-Control': 'no-store',
+    'Content-Security-Policy': join.csp,
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer',
+    'X-Frame-Options': 'DENY',
+  });
+  res.end(join.html);
+}
+
+function sendProfile(res) {
+  res.writeHead(200, {
+    // (Safari offers to install a profile only for this type)
+    'Content-Type': 'application/x-apple-aspen-config',
+    'Content-Disposition': 'attachment; filename="KALEIDO.mobileconfig"',
+    'Content-Length': profile.length,
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  res.end(profile);
+}
+
+function sendCA(res) {
+  res.writeHead(200, {
+    'Content-Type': 'application/x-x509-ca-cert',
+    'Content-Disposition': 'attachment; filename="KALEIDO-Local-CA.crt"',
+    'Content-Length': certs.caDer.length,
+    'X-Content-Type-Options': 'nosniff',
+  });
+  res.end(certs.caDer);
+}
+
+/**
+ * Plain http from another machine (a phone that scanned the QR code). Only
+ * public things are served here: the join page, the profile and the CA
+ * certificate. The TV page, the API and the sockets stay loopback-only.
+ */
+function handleLan(req, res) {
+  const url = new URL(req.url, 'http://x');
+  const p = url.pathname;
+  const hdr = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    res.writeHead(405, { ...hdr, Allow: 'GET, HEAD' }).end();
+    return;
+  }
+  if (p === '/join' || p === '/join/') return sendJoin(res);
+  if (p === '/kaleido.mobileconfig') return sendProfile(res);
+  if (p === '/kaleido-ca.crt') return sendCA(res);
+  // the old remote addresses (and the bare address): to the join page
+  if (p === '/' || p === '/c' || p === '/c/' || p === '/pad' || p === '/controller' || p === '/controller.html') {
+    res.writeHead(302, { ...hdr, Location: '/join' });
+    return res.end();
+  }
+  res.writeHead(404, { ...hdr, 'Content-Type': 'text/plain; charset=utf-8' });
+  res.end('Not here. Scan the QR code on the TV, or open /join.');
+}
+
+function handleHttp(req, res) {
+  if (isLoopback(req.socket.remoteAddress)) return handle(req, res);
+  return handleLan(req, res);
+}
+
 let vite = null;
 
 async function handle(req, res) {
@@ -399,8 +499,11 @@ async function handle(req, res) {
   const p = url.pathname;
   try {
     if (p === '/api/info') {
-      return sendJSON(res, 200, { joinUrl: joinUrl(), caUrl: caUrl(), ips, dev: DEV, pads: padList().length });
+      return sendJSON(res, 200, { joinUrl: joinUrl(), padUrl: padUrl(), caUrl: caUrl(), ips, dev: DEV, pads: padList().length });
     }
+    if (p === '/api/trust') return trustCheck(req, res);
+    if (p === '/join' || p === '/join/') return sendJoin(res);
+    if (p === '/kaleido.mobileconfig') return sendProfile(res);
     if (p === '/api/qr.svg') return await qrSvg(res, url);
     if (p === '/api/pad/events') return padEvents(req, res, url);
     if (p === '/api/pad/send' && req.method === 'POST') return await padSend(req, res);
@@ -409,13 +512,11 @@ async function handle(req, res) {
       res.writeHead(302, { Location: '/capture.html' + url.search });
       return res.end();
     }
-    if (p === '/kaleido-ca.crt') {
-      res.writeHead(200, {
-        'Content-Type': 'application/x-x509-ca-cert',
-        'Content-Disposition': 'attachment; filename="KALEIDO-Local-CA.crt"',
-        'Content-Length': certs.caDer.length,
-      });
-      return res.end(certs.caDer);
+    if (p === '/kaleido-ca.crt') return sendCA(res);
+    // a phone that lands on the https root wants the remote, not the TV
+    if (p === '/' && !isLoopback(req.socket.remoteAddress)) {
+      res.writeHead(302, { Location: '/controller.html' + url.search });
+      return res.end();
     }
     if (p === '/c' || p === '/c/' || p === '/pad' || p === '/controller') {
       res.writeHead(302, { Location: '/controller.html' + url.search });
@@ -465,13 +566,18 @@ async function main() {
     process.exit(1);
   }
 
-  const httpServer = http.createServer(handle);
-  httpServer.on('upgrade', onUpgrade);
+  const httpServer = http.createServer(handleHttp);
+  // (sockets on the http port: the TV's, from this Mac only)
+  httpServer.on('upgrade', (req, socket, head) => {
+    if (!isLoopback(req.socket.remoteAddress)) return socket.destroy();
+    onUpgrade(req, socket, head);
+  });
   const httpsServer = https.createServer({ key: certs.key, cert: certs.cert }, handle);
   httpsServer.on('upgrade', onUpgrade);
   httpServer.keepAliveTimeout = httpsServer.keepAliveTimeout = 65000;
 
-  await listen(httpServer, HTTP_PORT, '127.0.0.1', 'screen');
+  // all interfaces: phones reach /join on it (handleLan keeps the rest to this Mac)
+  await listen(httpServer, HTTP_PORT, '0.0.0.0', 'screen');
   await listen(httpsServer, HTTPS_PORT, '0.0.0.0', 'remotes');
 
   const b = '\x1b[1m', r = '\x1b[0m', c = '\x1b[36m', m = '\x1b[35m', y = '\x1b[33m', d = '\x1b[2m';
@@ -479,12 +585,14 @@ async function main() {
   ${m}${b}K A L E I D O${r}   ${d}${DEV ? 'dev server' : 'ready'}${r}
 
   ${b}Screen${r}   ${c}http://localhost:${HTTP_PORT}${r}   ${d}open on this Mac${r}
-  ${b}Remotes${r}  ${c}${joinUrl() || '(no Wi-Fi address found — connect to a network)'}${r}
+  ${b}Phones${r}   ${c}${joinUrl() || '(no Wi-Fi address found — connect to a network)'}${r}
            ${d}scan the QR code on screen with your iPhone (same Wi-Fi)${r}
+  ${b}Remote${r}   ${c}${padUrl() || '—'}${r}   ${d}(where the join page sends it)${r}
 
-  ${y}First time on a phone:${r} Safari says "This Connection Is Not Private" —
-  tap ${b}Show Details → visit this website → Visit Website${r}. That's expected: the
-  certificate is made on this Mac just for your games.
+  ${y}First time on a phone:${r} the join page offers a one-time setup (download a
+  profile, install it, turn on trust) so Safari trusts this Mac's certificate and
+  never warns again. Or skip it and tap ${b}Show Details → visit this website${r} in
+  Safari's warning. Either way the certificate is made on this Mac, for your games.
   If macOS asks whether node may accept incoming connections, choose ${b}Allow${r}.
 `);
 
@@ -496,7 +604,7 @@ async function main() {
     if (now.join() !== ips.join()) {
       ips = now;
       log(`network changed → ${joinUrl() || 'offline'} (restart KALEIDO to refresh the certificate)`);
-      sendTV({ type: 'net', joinUrl: joinUrl(), caUrl: caUrl(), ips });
+      sendTV({ type: 'net', joinUrl: joinUrl(), padUrl: padUrl(), caUrl: caUrl(), ips });
     }
   }, 5000).unref();
 }

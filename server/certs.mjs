@@ -96,7 +96,7 @@ function read(p) {
 }
 
 /**
- * Returns { key, cert, caPem, caDer, caFingerprint } for the given LAN IPs,
+ * Returns { key, cert, caPem, caDer, caFingerprint, caName } for the given LAN IPs,
  * creating or refreshing files in `dir` as needed.
  */
 export function ensureCerts(dir, lanIps) {
@@ -139,11 +139,86 @@ export function ensureCerts(dir, lanIps) {
     'binary',
   );
 
+  let caName = 'KALEIDO Local CA';
+  try {
+    caName = forge.pki.certificateFromPem(ca.certPem).subject.getField('CN')?.value || caName;
+  } catch {}
+
   return {
     key: leaf.keyPem,
     cert: leaf.certPem + ca.certPem, // full chain
     caPem: ca.certPem,
     caDer,
     caFingerprint,
+    /** the CA's common name, as Settings shows it */
+    caName,
   };
+}
+
+/** a stable UUID made from some text (the same CA always gets the same profile ids) */
+function uuidFrom(text) {
+  const h = crypto.createHash('sha256').update(text).digest('hex');
+  const v = ((parseInt(h[16], 16) & 3) | 8).toString(16);
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${v}${h.slice(17, 20)}-${h.slice(20, 32)}`.toUpperCase();
+}
+
+const xml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]);
+
+/**
+ * An iOS configuration profile (.mobileconfig) holding the CA as a root
+ * certificate payload. Installing it (Settings → General → VPN & Device
+ * Management) adds the certificate; turning on full trust (Settings → General
+ * → About → Certificate Trust Settings) makes Safari trust the game's https.
+ * The ids come from the CA's fingerprint, so downloading it again replaces the
+ * same profile instead of adding a second one.
+ */
+export function mobileconfig({ caDer, caName, caFingerprint }) {
+  const id = `local.kaleido.ca.${caFingerprint.slice(0, 16)}`;
+  const b64 = caDer.toString('base64').replace(/(.{64})/g, '$1\n\t\t\t\t').trim();
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>PayloadContent</key>
+	<array>
+		<dict>
+			<key>PayloadCertificateFileName</key>
+			<string>KALEIDO-Local-CA.cer</string>
+			<key>PayloadContent</key>
+			<data>
+				${b64}
+			</data>
+			<key>PayloadDescription</key>
+			<string>Adds the certificate of the KALEIDO game on your Mac.</string>
+			<key>PayloadDisplayName</key>
+			<string>${xml(caName)}</string>
+			<key>PayloadIdentifier</key>
+			<string>${id}.root</string>
+			<key>PayloadType</key>
+			<string>com.apple.security.root</string>
+			<key>PayloadUUID</key>
+			<string>${uuidFrom(caFingerprint + ':root')}</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+		</dict>
+	</array>
+	<key>PayloadDescription</key>
+	<string>Lets this phone trust the KALEIDO game on your Mac, so it can be a motion remote without security warnings. Remove it any time in Settings → General → VPN &amp; Device Management.</string>
+	<key>PayloadDisplayName</key>
+	<string>${xml(caName)}</string>
+	<key>PayloadIdentifier</key>
+	<string>${id}</string>
+	<key>PayloadOrganization</key>
+	<string>KALEIDO</string>
+	<key>PayloadRemovalDisallowed</key>
+	<false/>
+	<key>PayloadType</key>
+	<string>Configuration</string>
+	<key>PayloadUUID</key>
+	<string>${uuidFrom(caFingerprint + ':profile')}</string>
+	<key>PayloadVersion</key>
+	<integer>1</integer>
+</dict>
+</plist>
+`;
 }

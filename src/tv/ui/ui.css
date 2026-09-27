@@ -2609,3 +2609,218 @@ kbd {
   pointer-events: none;
   box-shadow: inset 0 0 calc(var(--u) * 14) rgba(10, 8, 30, 0.45);
 }
+
+/* ------------------------------------------------------------ home screen */
+
+.home {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(0deg, rgba(10, 10, 35, 0.55), transparent 48%), linear-gradient(180deg, rgba(10, 10, 35, 0.3), transparent 22%);
+}
+
+.home .mini-logo {
+  position: absolute;
+  top: calc(var(--u) * 3.4);
+  left: calc(var(--u) * 5);
+  font-size: calc(var(--u) * 6.4);
+}
+
+.home .join {
+  top: calc(var(--u) * 3.4);
+  bottom: auto;
+  right: calc(var(--u) * 4);
+  width: calc(var(--u) * 40);
+}
+
+.hbottom {
+  position: absolute;
+  left: calc(var(--u) * 5);
+  right: calc(var(--u) * 5);
+  bottom: calc(var(--u) * 4.6);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 2.2);
+}
+
+.scards {
+  display: flex;
+  gap: calc(var(--u) * 2);
+  align-items: flex-end;
+}
+
+.scard {
+  position: relative;
+  flex: 1;
+  height: calc(var(--u) * 29);
+  padding: calc(var(--u) * 2.2) calc(var(--u) * 2.4);
+  border-radius: calc(var(--u) * 2.8);
+  background: linear-gradient(155deg, var(--c), var(--c2));
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
+  cursor: pointer;
+  opacity: 0.86;
+  box-shadow: 0 calc(var(--u) * 1) calc(var(--u) * 3) rgba(10, 10, 40, 0.35), inset 0 calc(var(--u) * 0.3) 0 rgba(255, 255, 255, 0.35);
+  transform-origin: center bottom;
+  transition: transform 0.3s cubic-bezier(0.2, 1.4, 0.4, 1), box-shadow 0.3s, opacity 0.3s;
+  font-family: var(--display);
+}
+
+.scard::before {
+  content: '';
+  position: absolute;
+  width: 140%;
+  aspect-ratio: 1;
+  left: 20%;
+  top: -85%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.08) 70%, transparent 71%);
+}
+
+.scard::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.06) 0 calc(var(--u) * 1), transparent calc(var(--u) * 1) calc(var(--u) * 2.4));
+  pointer-events: none;
+}
+
+.scard .art {
+  position: absolute;
+  top: calc(var(--u) * 1.6);
+  right: calc(var(--u) * 1.4);
+  font-size: calc(var(--u) * 10.5);
+  line-height: 1;
+  transform: rotate(-8deg);
+  filter: drop-shadow(0 calc(var(--u) * 0.8) calc(var(--u) * 0.6) rgba(0, 0, 0, 0.3));
+  transition: transform 0.4s cubic-bezier(0.2, 1.6, 0.4, 1);
+  z-index: 1;
+}
+
+.scard .nm {
+  position: relative;
+  z-index: 1;
+  font-size: calc(var(--u) * 3.3);
+  font-weight: 700;
+  line-height: 1.05;
+  text-shadow: 0 calc(var(--u) * 0.3) 0 rgba(0, 0, 0, 0.18);
+}
+
+.scard .tg {
+  position: relative;
+  z-index: 1;
+  margin-top: calc(var(--u) * 0.6);
+  font-family: var(--body, inherit);
+  font-size: calc(var(--u) * 1.6);
+  line-height: 1.25;
+  opacity: 0.9;
+  min-height: 2.5em;
+}
+
+.scard .go {
+  position: relative;
+  z-index: 1;
+  align-self: flex-start;
+  margin-top: calc(var(--u) * 1.2);
+  padding: calc(var(--u) * 0.6) calc(var(--u) * 1.8);
+  border-radius: 99px;
+  background: #fff;
+  color: var(--c2);
+  font-size: calc(var(--u) * 1.8);
+  font-weight: 700;
+  opacity: 0;
+  transform: translateY(calc(var(--u) * 1));
+  transition: opacity 0.25s, transform 0.3s;
+}
+
+.scard.focus {
+  opacity: 1;
+  transform: translateY(calc(var(--u) * -1.6)) scale(1.07);
+  box-shadow: 0 0 0 calc(var(--u) * 0.5) #fff, 0 calc(var(--u) * 2) calc(var(--u) * 5) rgba(10, 10, 40, 0.45), 0 0 calc(var(--u) * 6) color-mix(in srgb, var(--c) 70%, transparent);
+  z-index: 2;
+}
+
+.scard.focus .go {
+  opacity: 1;
+  transform: none;
+}
+
+.scard.focus .art {
+  transform: rotate(4deg) scale(1.12);
+  animation: scard-bob 1.6s ease-in-out 0.4s infinite alternate;
+}
+
+@keyframes scard-bob {
+  to {
+    transform: rotate(-2deg) scale(1.12) translateY(calc(var(--u) * -0.8));
+  }
+}
+
+.hpills {
+  display: flex;
+  gap: calc(var(--u) * 1.4);
+}
+
+.hpill {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 1);
+  padding: calc(var(--u) * 0.9) calc(var(--u) * 2.2) calc(var(--u) * 0.9) calc(var(--u) * 1.4);
+  border-radius: 99px;
+  background: rgba(15, 14, 40, 0.62);
+  color: #fff;
+  font-family: var(--display);
+  font-size: calc(var(--u) * 2);
+  font-weight: 700;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  transition: background 0.2s, color 0.2s, transform 0.25s;
+}
+
+.hpill i {
+  font-style: normal;
+}
+
+.hpill small {
+  font-size: 0.72em;
+  font-weight: 600;
+  opacity: 0.6;
+}
+
+.hpill.focus {
+  background: #fff;
+  color: var(--ink);
+  transform: scale(1.06);
+  box-shadow: 0 0 0 calc(var(--u) * 0.4) var(--accent, #3aa8ff);
+}
+
+/* the Kaleido toggle on the setup screens */
+.row.kal .k {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 0.9);
+}
+
+.row.kal .kgem {
+  width: calc(var(--u) * 1.8);
+  height: calc(var(--u) * 1.8);
+  border-radius: calc(var(--u) * 0.4);
+  transform: rotate(45deg);
+  background: linear-gradient(135deg, #ff5a8a, #ffb13d, #4be3a2, #52a7ff);
+  opacity: 0.45;
+}
+
+.row.kal.on .kgem {
+  opacity: 1;
+  box-shadow: 0 0 calc(var(--u) * 1.2) rgba(180, 120, 255, 0.8);
+}
+
+.row.kal.on .v span:nth-child(2) {
+  background: linear-gradient(90deg, #ff5a8a, #ffb13d, #4be3a2, #52a7ff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-weight: 700;
+}
