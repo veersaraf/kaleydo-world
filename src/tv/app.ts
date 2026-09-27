@@ -501,12 +501,20 @@ export class App {
       aimOn = true;
     }
     if (g.state !== 'aim') this.aimFrom = null;
-    if (dt > 0) g.step(dt);
+    // the arrow cam: the last few metres before the target go by in slow motion
+    let gdt = dt;
+    const arrow = g.shotArrow;
+    const main = g.mainTarget();
+    if (g.state === 'flight' && arrow && arrow.state === 'flying' && main) {
+      const left = arrow.z - main.z;
+      if (left > 0 && left < 4.5) gdt = dt * (0.3 + 0.7 * Math.max(0, (left - 1.5) / 3));
+    }
+    if (gdt > 0) g.step(gdt);
     const view = g.view();
     this.archCam.update(g, view, realDt, this.realT);
     // the archer up on the line; the others wait to the side, watching
     const poses = g.archers.map((a, i) => {
-      if (i === g.current) return this.archAnims[i].update(g.t, Math.max(1e-4, dt), g.archer);
+      if (i === g.current) return this.archAnims[i].update(g.t, Math.max(1e-4, gdt), g.archer);
       const order = (i - g.current + g.archers.length) % g.archers.length;
       const s: ArcherState = { x: -(2.2 + (order - 1) * 0.9), z: RANGE.lineZ + 1.6, handed: a.handed, phase: 'idle', t: g.t, draw: 0, yaw: -0.6, pitch: 0 };
       return this.archAnims[i].update(g.t, Math.max(1e-4, dt), s);
