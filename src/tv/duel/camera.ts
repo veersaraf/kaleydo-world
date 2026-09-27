@@ -103,9 +103,10 @@ export class DuelCamera {
           const f = w ?? g.fighters[i];
           const k = clamp(since / 3);
           const side = f.facing * (i === 0 ? 1 : -1);
-          v.tp.set(f.x + side * (1.4 + (g.state === 'over' ? Math.sin(t * 0.4) * 0.8 : 0)), ARENA.top + 1.55 - k * 0.1, f.z - f.facing * (4.4 - k * 0.5));
-          v.tl.set(f.x, ARENA.top + 1.3, f.z);
-          v.fov = 44;
+          // far enough back that the raised sword stays in the frame
+          v.tp.set(f.x + side * (1.6 + (g.state === 'over' ? Math.sin(t * 0.4) * 0.9 : 0)), ARENA.top + 1.75 - k * 0.1, f.z - f.facing * (5.4 - k * 0.5));
+          v.tl.set(f.x, ARENA.top + 1.55, f.z);
+          v.fov = 46;
           lambda = since < 0.05 ? 1000 : 2.5;
           break;
         }
