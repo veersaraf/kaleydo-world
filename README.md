@@ -1,6 +1,6 @@
 # KALEIDO — World Sports
 
-Motion-controlled **tennis**, **bowling**, **sword duels** and **archery** in the spirit of Wii Sports,
+Motion-controlled **tennis**, **bowling**, **sword duels**, **archery** and **baseball** in the spirit of Wii Sports,
 played across nine worlds that each look like a different medium: a Switch
 Sports-style park, a cel-shaded plaza, a sumi-e ink painting, a synthwave
 night drive, an 8-bit castle, a paper pop-up book, a stop-motion clay set, a
@@ -11,7 +11,8 @@ like a racket: timing aims the shot, swing speed sets the power, and brushing
 up or chopping down adds topspin or slice. In bowling, hold the ball on the
 screen, swing your arm and let go — twist your wrist to hook it. In a sword
 duel the phone is your sword: swing to strike, hold GUARD to block. In archery,
-point the phone at the target, hold DRAW and let go. Up to four phones can join,
+point the phone at the target, hold DRAW and let go. At bat, hold the phone like a
+bat and swing as the ball reaches the plate. Up to four phones can join,
 each with a character you make on the phone (⚙ → Your character).
 
 Everything — characters, courts, shaders, music, sound effects — is generated
@@ -104,6 +105,17 @@ round; best of three. Two phones get a split screen.
 The sight allows for the drop; the wind (flags and gauge) is yours to judge.
 Balloons are worth bonus points. Three ends of three arrows.
 
+### Baseball controls (Home Run Derby)
+
+| | Phone | Mac |
+|---|---|---|
+| Swing | hold the phone in both hands like a bat and swing through as the ball reaches the plate | <kbd>Space</kbd>, or flick the mouse (up = an uppercut) |
+
+Timing is everything: right on time goes to centre field, early pulls it, late
+pushes it the other way — too early or late is foul. Swing speed is distance;
+an uppercut lifts it. The fence is 100 m down the lines and 122 m to centre.
+After each swing a meter shows how early or late you were.
+
 ## Modes
 
 - **Quick Match** — singles or doubles, vs CPU or friends (up to 4 phones),
@@ -114,6 +126,9 @@ Balloons are worth bonus points. Three ends of three arrows.
   second phone, on a platform over the water in any world.
 - **Archery** — everyone on their own phone, plus an optional CPU: three ends
   at 15, 22 and 30 m with wind, raised and swaying targets, and balloons.
+- **Home Run Derby** — everyone bats in turn against a CPU pitcher (friendly,
+  tricky or nasty: fastballs, curves, sliders, changeups), 5, 10 or 15 pitches
+  each, with an optional CPU slugger. Most home runs wins.
 - **World Tour** — the Great Prism shattered into eight worlds. Beat each
   world's champion to restore its shard, then face the Prism King.
 - **Kaleido Rally** — every couple of points, or any PERFECT shot deep in a
@@ -162,6 +177,8 @@ npx tsx scripts/bowl-score-test.ts && npx tsx scripts/bowl-pad-test.ts
 npx tsx scripts/duel-game-test.ts && npx tsx scripts/sword-pad-test.ts
 npx tsx scripts/duel-sim.ts   # CPU duels and simulated players vs each CPU level
 npx tsx scripts/archery-game-test.ts && npx tsx scripts/archery-sim.ts
+npx tsx scripts/baseball-game-test.ts && npx tsx scripts/baseball-sim.ts
+node scripts/baseball-phone-e2e.mjs   # a simulated phone bats on the real TV (needs npm run dev)
 ```
 
 - `server/` — Node server: HTTP on localhost for the TV, HTTPS on the LAN for
@@ -178,6 +195,9 @@ npx tsx scripts/archery-game-test.ts && npx tsx scripts/archery-sim.ts
 - `src/tv/archery/` — arrow physics and wind, target layouts, scoring and CPU
   archers, the range and bow (in each world's style), the archer's animation
   and camera.
+- `src/tv/baseball/` — the derby's rules, pitches and batted-ball flight, CPU
+  hitters and pitcher, the ballpark (in each world's style), the batter,
+  pitcher and catcher, and the cameras.
 - `src/tv/chars/` — procedural characters and animation.
 - `src/tv/worlds/` — one file per world: scenery, materials and its own
   post-processing pipeline.

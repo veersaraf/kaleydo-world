@@ -152,15 +152,19 @@ export class BaseballCamera {
         const ux = dx / r,
           uz = dz / r;
         const side = ux >= 0 ? 1 : -1;
-        tp.set(hit.landX - ux * 10.5 + -uz * 2.6 * side, 2.1, hit.landZ - uz * 10.5 + ux * 2.6 * side);
-        tl.set(hit.landX - ux * 1.5, Math.max(2.2, hit.landY + 1.4), hit.landZ - uz * 1.5);
+        // up at head height over the fence, off to one side, a little way in front
+        tp.set(hit.landX - ux * 8.5 - uz * 2.4 * side, 3.6 + Math.max(0, hit.landY) * 0.35, hit.landZ - uz * 8.5 + ux * 2.4 * side);
+        tl.set(hit.landX - ux * 0.8, Math.max(1.4, hit.landY + 0.9), hit.landZ - uz * 0.8);
         // the ball as it drops in: keep it in frame
         const ball = v.ball;
-        if (ball.phase === 'play') tl.lerp(V(ball.x, ball.y, ball.z), 0.35);
-        this.fov = 40;
-        lambda = this.shotT < 0.05 ? 1000 : 4;
+        if (ball.phase === 'play') tl.lerp(V(ball.x, ball.y, ball.z), 0.3);
+        this.fov = 42;
+        // a slow push in as it comes down
+        const push = Math.min(1, this.shotT / 2.2);
+        tp.lerp(tl, 0.12 * push);
+        lambda = this.shotT < 0.05 ? 1000 : 5;
         this.focus = tp.distanceTo(V(hit.landX, hit.landY, hit.landZ));
-        this.aperture = 0.8;
+        this.aperture = 0.45;
         break;
       }
       case 'hero': {
