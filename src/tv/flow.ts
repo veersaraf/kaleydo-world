@@ -1156,8 +1156,10 @@ export class Flow {
     const top = g.total(ranking[0]);
     const tied = ranking.filter((i) => g.total(i) === top);
     const place = (i: number) => 1 + ranking.filter((q) => g.total(q) > g.total(i)).length;
+    const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
+    const mine = (i: number) => g.shots.filter((s) => s.who === i);
     const rows = ranking.map((i) =>
-      h('div', { class: 'brank', style: `--c:${g.archers[i].color}` }, h('b', null, `${place(i)}`), h('i'), h('span', null, g.archers[i].name), h('em', null, String(g.total(i)))),
+      this.rankRow(place(i), g.archers[i].color, g.archers[i].name, `${plural(mine(i).filter((s) => s.bullseye).length, 'bullseye')} · ${plural(mine(i).reduce((n, s) => n + s.balloons.length, 0), 'balloon')}`, String(g.total(i))),
     );
     const bulls = (i: number) => g.scores[i].filter((p) => p >= 10).length;
     const title = ranking.length === 1 ? `${top} points!` : tied.length === ranking.length ? "It's a tie!" : tied.length > 1 ? `${tied.map((i) => g.archers[i].name).join(' & ')} tie for first!` : `${g.archers[ranking[0]].name} wins!`;
@@ -1175,6 +1177,8 @@ export class Flow {
   // ---------------------------------------------------------------- sword duel
 
   private duelHud: DuelHud | null = null;
+  /** clean hits landed and attacks blocked, per fighter, over the whole match */
+  private duelStats = { hits: [0, 0], blocks: [0, 0] };
   private duelCfg: { world: string; cpu: number } | null = null;
 
   /** Who you fight (a CPU, or a friend on a second phone) and where. */
@@ -1246,6 +1250,7 @@ export class Flow {
         ? person(seats[1])
         : { name: 'CPU', color: '#6c6a84', look: randomLook(this.rng), handed: this.rng.chance(0.15) ? -1 : 1, slot: -1, cpu: Math.max(0, cpu) || 0.65 };
     const duelists: [Duelist, Duelist] = [person(seats[0]), rival];
+    this.duelStats = { hits: [0, 0], blocks: [0, 0] };
     this.app.startDuel(duelists, world);
     const g = this.app.duel!;
     this.duelHud = new DuelHud(duelists, g.toWin);
@@ -1325,12 +1330,14 @@ export class Flow {
         a?.sfx.slash(e.attack.power, pan(g.fighters[e.who].x));
         break;
       case 'hit':
+        this.duelStats.hits[e.by]++;
         a?.sfx.thwack(e.strength, pan(e.x));
         if (e.strength > 0.65) crowd?.sfx.ooh();
         pad(e.by, 'hit', 'HIT!', `${name(e.who)} knocked back`);
         pad(e.who, 'ouch', 'OUCH!', 'guard across their swing');
         break;
       case 'block':
+        this.duelStats.blocks[e.who]++;
         a?.sfx.clank(0.8, pan(e.x));
         hud?.say('BLOCKED!', `${name(e.by)} is stunned`, 'small good');
         pad(e.who, 'block', 'BLOCKED!', 'strike now — they’re stunned');
@@ -1401,8 +1408,10 @@ export class Flow {
       { el: other, onSelect: () => this.duelCfg && this.beginDuel(this.shuffledWorlds().find((w) => w !== this.duelCfg!.world) ?? 'park', this.duelCfg.cpu) },
       { el: menu, onSelect: () => this.quitToMenu() },
     ]);
+    const st = this.duelStats;
+    const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
     const rows = [winner, 1 - winner].map((i, k) =>
-      h('div', { class: 'brank', style: `--c:${g.duelists[i].color}` }, h('b', null, `${k + 1}`), h('i'), h('span', null, g.duelists[i].name), h('em', null, `${g.score[i]} round${g.score[i] === 1 ? '' : 's'}`)),
+      this.rankRow(k + 1, g.duelists[i].color, g.duelists[i].name, `${plural(st.hits[i], 'hit')} · ${plural(st.blocks[i], 'block')}`, `${g.score[i]} round${g.score[i] === 1 ? '' : 's'}`),
     );
     const sheet = h('div', { class: 'sheet panel results' }, h('h2', null, `${g.duelists[winner].name} wins!`), h('div', { class: 'hintline' }, 'Final rounds'), ...rows, h('div', { class: 'menu' }, again, other, menu));
     return this.navScreen('duelresults', h('div', { class: 'screen center results' }, sheet), nav, () => this.quitToMenu(), { title: 'Duel over', hint: 'A to choose' });
@@ -1621,6 +1630,11 @@ export class Flow {
     this.syncPads();
   }
 
+  /** a results row: place, colour, name with a line of stats under it, and the score */
+  private rankRow(place: number, color: string, name: string, stats: string, score: string) {
+    return h('div', { class: 'brank', style: `--c:${color}` }, h('b', null, `${place}`), h('i'), h('span', { class: 'rk' }, name, stats ? h('small', null, stats) : ''), h('em', null, score));
+  }
+
   private bowlResults(ranking: import('./bowling/game').Bowler[]): Screen {
     const again = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Play again')));
     const other = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Another world')));
@@ -1635,9 +1649,9 @@ export class Flow {
     const tied = ranking.filter((b) => b.score.total() === top);
     // equal scores share a place (1, 1, 3)
     const place = (b: import('./bowling/game').Bowler) => 1 + ranking.filter((q) => q.score.total() > b.score.total()).length;
-    const rows = ranking.map((b) =>
-      h('div', { class: 'brank', style: `--c:${b.color}` }, h('b', null, `${place(b)}`), h('i'), h('span', null, b.name), h('em', null, String(b.score.total()))),
-    );
+    const count = (b: import('./bowling/game').Bowler, mark: string) => b.score.frames().reduce((n, f) => n + f.rolls.filter((r) => r === mark).length, 0);
+    const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
+    const rows = ranking.map((b) => this.rankRow(place(b), b.color, b.name, `${plural(count(b, 'X'), 'strike')} · ${plural(count(b, '/'), 'spare')}`, String(b.score.total())));
     const title = ranking.length === 1 ? `${top} points!` : tied.length === ranking.length ? "It's a tie!" : tied.length > 1 ? `${tied.map((b) => b.name).join(' & ')} tie for first!` : `${winner.name} wins!`;
     const strikes = (b: import('./bowling/game').Bowler) => b.score.frames().reduce((n, f) => n + f.rolls.filter((r) => r === 'X').length, 0);
     const sheet = h(

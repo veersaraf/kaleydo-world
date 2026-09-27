@@ -2255,3 +2255,16 @@ kbd {
   width: 100%;
   height: 100%;
 }
+
+/* a results row's name with a line of stats under it */
+.brank .rk {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.brank .rk small {
+  font-size: 0.6em;
+  opacity: 0.6;
+  margin-top: calc(var(--u) * 0.3);
+}
