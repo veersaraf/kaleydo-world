@@ -23,6 +23,8 @@ import { Grass } from './park-env/grass';
 import { Foliage, type Place, type TreeKind } from './park-env/foliage';
 import { Clouds, hills, skyline } from './park-env/sky';
 import { type Patch, patchSdf, patchGeometry, polygonGeometry, curbGeometry, pavingMaterial, lawnMaterial } from './park-env/ground';
+import { Birds, flags, fountain, type Pole } from './park-env/props';
+import { town, type Block, type FacadeStyle } from './park-env/town';
 
 const std = (color: THREE.ColorRepresentation, roughness = 0.8, o: THREE.MeshStandardMaterialParameters = {}) => new THREE.MeshStandardMaterial({ color, roughness, metalness: 0, ...o });
 
@@ -126,6 +128,7 @@ class ParkWorld extends World {
   private plants = { bushes: [] as Place[], beds: [] as Place[], blooms: [] as Place[] };
   private grass: Grass | null = null;
   private clouds: Clouds | null = null;
+  private birds: Birds | null = null;
 
   protected build() {
     const s = this.scene;
@@ -255,15 +258,15 @@ class ParkWorld extends World {
     const ground = new THREE.Mesh(polygonGeometry(plaza, [], -0.02), pavingMaterial({ tile: 6, base: '#ece7df', grout: '#d2cbc0', cols: 4, rows: 8 }));
     ground.receiveShadow = true;
     const rim = Array.from({ length: 96 }, (_, i) => [Math.cos((i / 96) * Math.PI * 2) * 320, Math.sin((i / 96) * Math.PI * 2) * 320] as [number, number]);
+    // (the meadow lies beyond the sun's shadow map: no shadow lookups for it)
     const meadow = new THREE.Mesh(polygonGeometry(rim, [plaza], -0.02), lawnMaterial('#78ad62', { stripe: 0.025, tile: 18 }));
-    meadow.receiveShadow = true;
     s.add(ground, meadow);
 
     const lawn = new THREE.Mesh(patchGeometry(LAWNS, 0.03), lawnMaterial('#58a04d'));
     lawn.receiveShadow = true;
     const soil = new THREE.Mesh(patchGeometry(BEDS, 0.06), std('#7a5a44', 1, { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 }));
     soil.receiveShadow = true;
-    const curb = new THREE.Mesh(curbGeometry([...LAWNS, ...BEDS], 0.22, 0.13), std('#f4f0e9', 0.7));
+    const curb = new THREE.Mesh(curbGeometry([...LAWNS, ...BEDS], 0.22, 0.13), this.stone);
     curb.receiveShadow = true;
     curb.castShadow = true;
     s.add(lawn, soil, curb);
@@ -274,7 +277,7 @@ class ParkWorld extends World {
       bounds: { x0: -36, x1: 36, z0: -46, z1: 58 },
       perM2: 9,
       colors: ['#62b058', '#5aa851', '#6cb65c', '#529c4b'].map((c) => new THREE.Color(c)),
-      chunk: 18,
+      chunk: 24,
       height: [0.22, 0.4],
       fade: [30, 88],
       seed: 5,
@@ -288,12 +291,10 @@ class ParkWorld extends World {
     const r = this.rng;
     const white = std('#ebe7e1', 0.55);
     const steel = std('#c9ced8', 0.35, { metalness: 0.3 });
-    const stone = std('#f6f3ee', 0.6);
-    const soil = std('#6f5140', 1);
+    const { stone, soil } = this;
     const leaf = ['#4fa85a', '#5fb865', '#43994f', '#6cbf6a'].map((c) => new THREE.Color(c));
     const flower = ['#ff6f91', '#ffd166', '#ffffff', '#ff8a5b', '#b98cff'].map((c) => new THREE.Color(c));
     const { bushes, blooms } = this.plants;
-    const trails: Place[] = [];
     const z = -21.5;
     const cols = 9;
     const span = 36;
@@ -306,7 +307,7 @@ class ParkWorld extends World {
       c.receiveShadow = true;
       s.add(c);
       // planters at the foot of the columns: a stone lip, soil, a heaped bush with
-      // flowers in it and a few strands trailing over the rim
+      // flowers in it
       const pz = z + 1.4;
       const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.75, 0.9, 20), white);
       pot.position.set(x, 0.45, pz);
@@ -326,12 +327,7 @@ class ParkWorld extends World {
           d = r.range(0.1, 0.7);
         blooms.push({ x: x + Math.cos(a) * d, z: pz + Math.sin(a) * d, y: 0.84, s: r.range(0.9, 1.2), sy: 1.6 + (0.7 - d) * 1.4 + r.range(0, 0.3), color: r.pick(flower) });
       }
-      for (let k = 0; k < 3; k++) {
-        const a = r.range(0.2, Math.PI - 0.2);
-        trails.push({ x: x + Math.cos(a) * 0.86, z: pz + Math.sin(a) * 0.86, y: 0.95, s: r.range(0.8, 1.1), yaw: r.range(0, 6.3), color: r.pick(leaf) });
-      }
     }
-    this.foliage.vines(trails, 0.8, 29);
     // beam and glass canopy
     const beam = new THREE.Mesh(new THREE.BoxGeometry(span + 3, 0.7, 1.2), white);
     beam.position.set(0, 9.6, z);
@@ -433,8 +429,7 @@ class ParkWorld extends World {
     const r = this.rng;
     const concrete = std('#efe9e1', 0.8);
     const wood = std('#c48a58', 0.7);
-    const stone = std('#f7f4ef', 0.6);
-    const soil = std('#6f5140', 1);
+    const { stone, soil } = this;
     const leaf = ['#4fa85a', '#5fb865', '#43994f', '#6cbf6a'].map((c) => new THREE.Color(c));
     const flower = ['#ff6f91', '#ffd166', '#ffffff', '#ff8a5b', '#b98cff'].map((c) => new THREE.Color(c));
     const stands: Stand[] = [];
@@ -503,6 +498,9 @@ class ParkWorld extends World {
   }
 
   private poleMats: { pole: THREE.Material; dark: THREE.Material; lens: THREE.Material } | null = null;
+  /** pale stone (curbs, caps, pot rims, the fountain) and planting soil, shared so they batch together */
+  private stone = std('#f4f0e9', 0.65);
+  private soil = std('#6f5140', 1);
 
   /** A slim light pole at (x, z) whose arm reaches towards `dir` (±1 along x). */
   private lightPole(x: number, z: number, dir: number, h = 7.2) {
@@ -530,34 +528,62 @@ class ParkWorld extends World {
     s.add(base, pole, arm, head, lens, cap);
   }
 
-  /** The town beyond: soft modern blocks, trees and a few clouds. */
+  /** roofs low and wide enough for a garden (set by the town, planted with the gardens) */
+  private roofGardens: { x: number; z: number; y: number; w: number; d: number; yaw: number }[] = [];
+
+  /** The town beyond: glass towers and pale blocks in a crescent behind the pavilion. */
   private buildTown() {
     const s = this.scene;
-    const facade = ['#e7ded2', '#cfdcea', '#ecd6c4', '#d6e6d8'];
-    const windowTex = canvasTex(256, 256, (x) => {
-      x.fillStyle = '#ffffff';
-      x.fillRect(0, 0, 256, 256);
-      x.fillStyle = 'rgba(80,120,170,0.35)';
-      for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) x.fillRect(12 + i * 62, 14 + j * 62, 40, 40);
-    });
-    windowTex.wrapS = windowTex.wrapT = THREE.RepeatWrapping;
-    const rng = (a: number, b: number) => a + Math.random() * (b - a);
-    for (let i = 0; i < 26; i++) {
-      const w = rng(10, 22),
-        hgt = rng(14, 42),
-        d = rng(10, 20);
-      const tex = windowTex.clone();
-      tex.needsUpdate = true;
-      tex.repeat.set(w / 5, hgt / 5);
-      const b = new THREE.Mesh(new THREE.BoxGeometry(w, hgt, d), std(facade[i % facade.length], 0.85, { map: tex }));
-      const ang = -Math.PI * 0.95 + (i / 25) * Math.PI * 0.9;
-      const r = rng(62, 95);
-      b.position.set(Math.cos(ang) * r, hgt / 2, Math.sin(ang) * r - 10);
-      b.rotation.y = -ang + Math.PI / 2;
-      s.add(b);
+    const r = this.rng;
+    const tints: Record<FacadeStyle, string[]> = {
+      glass: ['#f4f7fb', '#e9f1f8', '#eef4f1', '#f6f3ee'],
+      punched: ['#f3e6d6', '#e7edf6', '#f2ddd1', '#e2eee4', '#f7efdf', '#ffffff'],
+      ribbon: ['#ffffff', '#eef2f7', '#f5efe7', '#e9f3f3'],
+    };
+    const blocks: Block[] = [];
+    const add = (ang: number, rad: number, style: FacadeStyle, w: number, d: number, h: number, tier = 0) =>
+      blocks.push({ x: Math.cos(ang) * rad, z: Math.sin(ang) * rad - 10, w, d, h, yaw: -ang + Math.PI / 2 + r.range(-0.08, 0.08), style, tint: new THREE.Color(r.pick(tints[style])), tier });
+    // the crescent: towers at the back, mid-rise blocks between them
+    for (let i = 0; i < 30; i++) {
+      const ang = -Math.PI * 0.97 + (i / 29) * Math.PI * 0.94 + r.range(-0.025, 0.025);
+      const style: FacadeStyle = r.chance(0.4) ? 'glass' : r.chance(0.5) ? 'punched' : 'ribbon';
+      const h = style === 'glass' ? r.range(30, 50) : r.range(16, 34);
+      add(ang, r.range(70, 96), style, r.range(11, 19), r.range(10, 16), h, r.chance(0.3) ? h * r.range(0.18, 0.35) : 0);
     }
+    // a low row in front, mostly behind the trees: the skyline steps up away from the park
+    for (let i = 0; i < 13; i++) {
+      const ang = -Math.PI * 0.94 + (i / 12) * Math.PI * 0.88 + r.range(-0.03, 0.03);
+      add(ang, r.range(57, 61), r.chance(0.5) ? 'punched' : 'ribbon', r.range(12, 18), r.range(9, 12), r.range(6.5, 10));
+    }
+    // (hazed from 40 m: it's a backdrop, the pavilion and the trees stand out against it)
+    const t = town(blocks, { seed: 5, haze: { color: new THREE.Color('#dcefff'), near: 40, far: 150, amount: 0.42 } });
+    s.add(...t.meshes);
+    this.roofGardens = t.gardens;
     this.buildGardens();
+    this.buildProps();
     this.buildHorizon();
+  }
+
+  /** The fountain at the heart of the entrance garden, flags, and birds over the town. */
+  private buildProps() {
+    const s = this.scene;
+    s.add(fountain(this.wind.u, { x: 0, z: 42.5, r: 3.3, stone: this.stone }));
+    // flags line the path to the fountain
+    const poles: Pole[] = [];
+    let cell = 0;
+    for (const z of [30, 36, 49, 55]) for (const sx of [-1, 1]) poles.push({ x: sx * 4.7, z, h: 6.5, cell: cell++ });
+    const flagColors = ['#ff6b6b', '#3aa8ff', '#ffc53d', '#35d49a', '#b07cff', '#ff8a3d', '#ff5aa0', '#4fd1c5'];
+    s.add(...flags(this.wind, poles, flagColors, { pole: std('#eef1f5', 0.35, { metalness: 0.3 }), finial: std('#ffd36b', 0.3, { metalness: 0.6 }) }));
+    this.birds = new Birds(
+      this.wind.u,
+      [
+        { x: 6, y: 24, z: -78, radius: 18, count: 9, speed: 0.13 },
+        { x: -24, y: 22, z: 64, radius: 14, count: 7, speed: -0.16 },
+        { x: 62, y: 38, z: 8, radius: 24, count: 4, speed: 0.1 },
+      ],
+      '#3d4a5e',
+    );
+    s.add(this.birds.mesh);
   }
 
   /** Trees, bushes and flowers round the plaza (all instanced, all in the wind). */
@@ -596,6 +622,20 @@ class ParkWorld extends World {
         z = Math.sin(a) * d + 8;
       tree(r.pick(['round', 'round', 'wide', 'tall'] as TreeKind[]), x, z, r.range(1.1, 1.5));
     }
+    // gardens on the low, wide roofs: a couple of small trees and a bushy border
+    for (const g of this.roofGardens) {
+      const c = Math.cos(g.yaw),
+        sn = Math.sin(g.yaw);
+      const at = (lx: number, lz: number) => [g.x + c * lx + sn * lz, g.z - sn * lx + c * lz] as const;
+      for (const lx of [-g.w / 4, g.w / 4]) {
+        const [x, z] = at(lx, r.range(-g.d / 5, g.d / 5));
+        trees.round.push({ x, z, y: g.y, s: r.range(0.55, 0.7), yaw: r.range(0, 6.3), color: r.pick(leaf) });
+      }
+      for (let i = 0; i < 8; i++) {
+        const [x, z] = at(r.range(-g.w / 2, g.w / 2), (i % 2 ? 1 : -1) * (g.d / 2 - 0.6));
+        this.plants.beds.push({ x, z, y: g.y, s: r.range(0.8, 1.1), yaw: r.range(0, 6.3), color: r.pick(leaf) });
+      }
+    }
     this.foliage.trees('round', trees.round, 11);
     this.foliage.trees('tall', trees.tall, 23);
     this.foliage.trees('wide', trees.wide, 37);
@@ -624,7 +664,7 @@ class ParkWorld extends World {
     // every small plant in three draws: bushes that shade their planters, low bed
     // bushes (no shadow worth a pass), and all the blossoms
     this.foliage.bushes(this.plants.bushes, 17, { seg: 9 });
-    this.foliage.bushes(this.plants.beds, 5, { shadow: false });
+    this.foliage.bushes(this.plants.beds, 5, { shadow: false, seg: 6 });
     this.foliage.flowers(this.plants.blooms);
     this.scene.add(this.foliage.group);
   }
@@ -632,13 +672,15 @@ class ParkWorld extends World {
   /** Clouds, hills and a hazy skyline closing off the horizon. */
   private buildHorizon() {
     const s = this.scene;
+    // (one material: the batcher makes hills and skyline a single draw)
+    const far = new THREE.MeshBasicMaterial({ vertexColors: true, fog: true });
     s.add(
-      hills([
+      hills(far, [
         { radius: 205, height: [10, 26], foot: new THREE.Color('#7fb886'), crest: new THREE.Color('#579f70'), seed: 4, bumps: 16 },
         { radius: 290, height: [20, 38], foot: new THREE.Color('#a3c6dc'), crest: new THREE.Color('#779fc6'), seed: 9, bumps: 12 },
       ]),
     );
-    s.add(skyline({ from: -Math.PI * 0.98, to: -Math.PI * 0.02, radius: [130, 190], count: 46, width: [10, 22], height: [22, 70], color: new THREE.Color('#9db3cd'), sunDir: new THREE.Vector3(-0.5, 0.6, -1), seed: 3 }));
+    s.add(skyline(far, { from: -Math.PI * 0.98, to: -Math.PI * 0.02, radius: [130, 190], count: 46, width: [10, 22], height: [22, 70], color: new THREE.Color('#9db3cd'), sunDir: new THREE.Vector3(-0.5, 0.6, -1), seed: 3 }));
     this.clouds = new Clouds({ count: 44, radius: [170, 310], height: [12, 118], size: [60, 130], speed: 1.4, haze: new THREE.Color('#e3f4ff'), seed: 8 });
     s.add(this.clouds.mesh);
   }
@@ -653,6 +695,7 @@ class ParkWorld extends World {
     this.grass?.setDetail(d);
     this.clouds?.setDetail(d);
     this.foliage.setDetail(d);
+    this.birds?.setDetail(d);
   }
 
   protected fx(e: MatchEvent) {

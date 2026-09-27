@@ -208,8 +208,8 @@ export interface HillRing {
   bumps?: number;
 }
 
-/** Rolling hill silhouettes all around (one mesh, vertex colours, fogged). */
-export function hills(rings: HillRing[]) {
+/** Rolling hill silhouettes all around (one mesh; `mat` should use vertex colours and fog). */
+export function hills(mat: THREE.Material, rings: HillRing[]) {
   const pos: number[] = [];
   const col: number[] = [];
   const idx: number[] = [];
@@ -252,7 +252,7 @@ export function hills(rings: HillRing[]) {
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   g.setIndex(idx);
-  const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, fog: true }));
+  const m = new THREE.Mesh(g, mat);
   m.frustumCulled = false;
   return m;
 }
@@ -272,8 +272,8 @@ export interface SkylineOpts {
   seed?: number;
 }
 
-/** A distant skyline of plain towers (one mesh, vertex colours, fogged). */
-export function skyline(o: SkylineOpts) {
+/** A distant skyline of plain towers (one mesh; `mat` should use vertex colours and fog). */
+export function skyline(mat: THREE.Material, o: SkylineOpts) {
   const rand = mulberry(o.seed ?? 9);
   const parts: THREE.BufferGeometry[] = [];
   const k = new THREE.Color();
@@ -299,11 +299,14 @@ export function skyline(o: SkylineOpts) {
       col.set([k.r, k.g, k.b], v * 3);
     }
     b.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    // (unlit: the normals were only for baking the shading, and without them the
+    // skyline merges with the hills)
+    b.deleteAttribute('normal');
     parts.push(b);
   }
   const g = mergeGeometries(parts)!;
   parts.forEach((p) => p.dispose());
-  const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, fog: true }));
+  const m = new THREE.Mesh(g, mat);
   m.frustumCulled = false;
   return m;
 }

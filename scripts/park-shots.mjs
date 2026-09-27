@@ -75,7 +75,7 @@ await tv.evaluate(() => {
   k.input.onGrip(0, false);
   k.input.onBowl(0, { speed: 7.8, angle: 0, spin: 0.05 });
 });
-await tv.waitForFunction(() => { const g = window.kaleido.bowl; return g.state === 'lane' && g.phys.view.ball.z < 0; }, null, { timeout: 20000, polling: 'raf' }).catch(() => logs.push('no lane shot'));
+await tv.waitForFunction(() => { const g = window.kaleido.bowl; return g.state === 'lane' && g.phys.view.ball.z < 4; }, null, { timeout: 20000, polling: 'raf' }).catch(() => logs.push('no lane shot'));
 await snap('bowl-lane');
 
 // ---- duel: the fight view

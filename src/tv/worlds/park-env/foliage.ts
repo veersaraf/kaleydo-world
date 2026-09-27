@@ -145,8 +145,8 @@ export function crownBlobs(kind: TreeKind, seed = 7): Blob[] {
   return out;
 }
 
-/** A tapered trunk with two short limbs reaching into the crown (vertex colours: darker at the foot). */
-export function trunkGeometry(height = 3.6) {
+/** A tapered trunk with two short limbs reaching into the crown (vertex colours: bark, darker at the foot). */
+export function trunkGeometry(height = 3.6, bark = new THREE.Color('#a8835f')) {
   const parts = [new THREE.CylinderGeometry(0.12, 0.22, height, 7, 3, true).translate(0, height / 2, 0)];
   for (const s of [-1, 1]) {
     const limb = new THREE.CylinderGeometry(0.05, 0.09, 1.5, 5, 1, true);
@@ -160,7 +160,7 @@ export function trunkGeometry(height = 3.6) {
   const col = new Float32Array(pos.count * 3);
   for (let i = 0; i < pos.count; i++) {
     const v = 0.82 + 0.28 * smooth(0, 2.4, pos.getY(i));
-    col.set([v, v, v], i * 3);
+    col.set([bark.r * v, bark.g * v, bark.b * v], i * 3);
   }
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   return g;
@@ -208,7 +208,7 @@ export interface FoliageOpts {
 export class Foliage {
   group = new THREE.Group();
   readonly leaf: THREE.MeshStandardMaterial;
-  readonly bark: THREE.MeshStandardMaterial;
+
   readonly shrub: THREE.MeshStandardMaterial;
   readonly bloom: THREE.MeshStandardMaterial;
   private depth: { tree: THREE.Material; bush: THREE.Material };
@@ -224,8 +224,16 @@ export class Foliage {
     const bush = o.bush ?? { amp: 0.05, height: 1.1, flutter: 0.015 };
     const flower = o.flower ?? { amp: 0.06, height: 0.5, flutter: 0.01 };
     this.shadows = o.shadows ?? true;
-    this.leaf = sway(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82 }), wind, 'canopy', tree);
-    this.bark = sway(new THREE.MeshStandardMaterial({ color: '#a8835f', vertexColors: true, roughness: 0.9 }), wind, 'canopy', { ...tree, flutter: 0 });
+    // a tree is one draw: trunk and crown share this material, and aLeaf (0 on the
+    // trunk) keeps the instance's leaf colour off the bark
+    this.leaf = sway(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), wind, 'canopy', tree, {
+      key: 'leaf-mask',
+      patch: (sh) => {
+        sh.vertexShader = sh.vertexShader
+          .replace('#include <common>', '#include <common>\nattribute float aLeaf;')
+          .replace('#include <color_vertex>', '#include <color_vertex>\n#ifdef USE_INSTANCING_COLOR\nvColor.rgb /= mix(vec3(1.0), max(instanceColor.rgb, vec3(1e-3)), 1.0 - aLeaf);\n#endif');
+      },
+    });
     this.shrub = sway(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), wind, 'canopy', bush);
     this.bloom = sway(new THREE.MeshStandardMaterial({ roughness: 0.6 }), wind, 'grass', flower);
     this.depth = { tree: swayDepth(wind, 'canopy', tree), bush: swayDepth(wind, 'canopy', bush) };
@@ -260,12 +268,16 @@ export class Foliage {
     return m;
   }
 
-  /** Trees of one shape: trunks and crowns (two draws, both casting swaying shadows). */
+  /** Trees of one shape: trunk and crown in one draw (and one in the shadow pass, swaying alike). */
   trees(kind: TreeKind, at: Place[], seed = 11) {
     if (!at.length) return;
-    // (the colour is the crown's: trunks keep the bark's own)
-    this.add(trunkGeometry(), this.bark, at.map((a) => ({ ...a, color: undefined })), { shadow: this.depth.tree });
-    this.add(clumpGeometry(crownBlobs(kind, seed), { seed, seg: 10, lumpy: 0.07 }), this.leaf, at, { shadow: this.depth.tree });
+    const trunk = trunkGeometry();
+    const crown = clumpGeometry(crownBlobs(kind, seed), { seed, seg: 10, lumpy: 0.07 });
+    const mask = (g: THREE.BufferGeometry, v: number) => g.setAttribute('aLeaf', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count).fill(v), 1));
+    const g = mergeGeometries([mask(trunk, 0), mask(crown, 1)])!;
+    trunk.dispose();
+    crown.dispose();
+    this.add(g, this.leaf, at, { shadow: this.depth.tree });
   }
 
   /** Round bushes (or a hedge-like row when placed close); small ones needn't cast shadows. */

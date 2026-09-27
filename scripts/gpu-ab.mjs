@@ -2,7 +2,8 @@
 // your branch) from fixed cameras. The two pages take turns in short windows on
 // the same machine, so whatever else loads the GPU hits both alike; Math.random
 // is seeded the same in both, so layouts and players match. Each window reports
-// its 10th percentile (the least disturbed frames) and its median.
+// its 10th percentile (the least disturbed frames) and its median, and the
+// median JS time of a frame (scene update and draw submission).
 //   node scripts/gpu-ab.mjs <baseA> <baseB> [world] [rounds] [pr] [msaa] [query]
 import { chromium } from 'playwright-core';
 const [A, B, world = 'park', rounds = '6', pr = '1.5', msaa = '4', query = ''] = process.argv.slice(2);
@@ -48,11 +49,14 @@ const open = async (base) => {
       window.__gpu = [];
       window.__on = false;
       const orig = k.frame.bind(k);
+      window.__js = [];
       k.frame = (now) => {
         if (!window.__on) return;
         const q = gl.createQuery();
         gl.beginQuery(ext.TIME_ELAPSED_EXT, q);
+        const t0 = performance.now();
         orig(now);
+        window.__js.push(performance.now() - t0);
         gl.endQuery(ext.TIME_ELAPSED_EXT);
         pending.push(q);
         while (pending.length && gl.getQueryParameter(pending[0], gl.QUERY_RESULT_AVAILABLE)) {
@@ -85,6 +89,7 @@ console.log(`A = ${A}\nB = ${B}\n${world} at pr${pr}/msaa${msaa}, ${rounds} roun
 for (const [name, cam] of Object.entries(views)) {
   const res = { A: [], B: [] };
   const lo = { A: [], B: [] };
+  const js = { A: [], B: [] };
   const stats = {};
   for (const [k, p] of Object.entries(pages)) {
     await p.evaluate((c) => (window.kaleido.rig.debug = c), cam);
@@ -95,18 +100,19 @@ for (const [name, cam] of Object.entries(views)) {
       const p = pages[k];
       await p.evaluate(() => (window.__on = true));
       await p.waitForTimeout(400);
-      await p.evaluate(() => (window.__gpu.length = 0));
+      await p.evaluate(() => ((window.__gpu.length = 0), (window.__js.length = 0)));
       await p.waitForTimeout(1600);
-      const g = await p.evaluate(() => ((window.__on = false), window.__gpu.slice()));
+      const [g, j] = await p.evaluate(() => ((window.__on = false), [window.__gpu.slice(), window.__js.slice()]));
       res[k].push(med(g));
       lo[k].push(pct(g, 0.1));
+      js[k].push(med(j));
     }
   }
   const f = (v) => v.toFixed(2);
   const d = (v) => (v >= 0 ? '+' : '') + f(v);
-  const row = (k) => `p10 ${f(med(lo[k]))} p50 ${f(med(res[k]))} ms  [p10s ${lo[k].map(f).join(' ')}]  ${stats[k].calls} calls ${(stats[k].tris / 1000).toFixed(0)}k tris`;
+  const row = (k) => `p10 ${f(med(lo[k]))} p50 ${f(med(res[k]))} ms  [p10s ${lo[k].map(f).join(' ')}]  js ${f(med(js[k]))} ms  ${stats[k].calls} calls ${(stats[k].tris / 1000).toFixed(0)}k tris`;
   console.log(`${name.padEnd(7)} A ${row('A')}`);
   console.log(`${''.padEnd(7)} B ${row('B')}`);
-  console.log(`${''.padEnd(7)} Δ p10 ${d(med(lo.B) - med(lo.A))}  p50 ${d(med(res.B) - med(res.A))} ms`);
+  console.log(`${''.padEnd(7)} Δ p10 ${d(med(lo.B) - med(lo.A))}  p50 ${d(med(res.B) - med(res.A))} ms  js ${d(med(js.B) - med(js.A))} ms`);
 }
 await browser.close();

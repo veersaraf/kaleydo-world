@@ -252,7 +252,8 @@ export class Grass {
   update(cam: THREE.Camera) {
     this.cam.copy(cam.position);
     this.group.worldToLocal(this.cam);
-    const [near, far] = [this.fade.value.x, this.fade.value.y];
+    const near = this.fade.value.x,
+      far = this.fade.value.y;
     for (const c of this.chunks) {
       if (this.detail <= 0) {
         c.mesh.count = 0;
