@@ -329,8 +329,47 @@ const swordPanel = h(
   h('div', { class: 'gseg' }, guardVert, guardHorz),
 );
 
-// archery: the DRAW pad (placeholder until the bow controller lands)
-const bowPanel = h('div', { class: 'panel bow' }, h('div', { class: 'wtitle' }, 'Archery'));
+// archery: point the phone at the target, hold DRAW to pull the string, let go
+// to shoot. The TV aims from how the phone turns while you draw, so it never
+// drifts; without motion sensors, drag on the pad to aim.
+function bowGlyph() {
+  const svg = document.createElementNS(SVG, 'svg');
+  svg.setAttribute('viewBox', '0 0 64 64');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const [d, stroke, w] of [
+    ['M20 6C40 14 40 50 20 58', '#fff', 5],
+    ['M20 6L20 58', 'rgba(255,255,255,.75)', 1.6],
+    ['M8 32H56', 'rgba(29,28,43,.8)', 3],
+    ['M56 32l-7-5v10z', 'rgba(29,28,43,.8)', 1],
+    ['M8 32l-4-4M8 32l-4 4', 'rgba(29,28,43,.8)', 2.4],
+  ] as const) {
+    const p = document.createElementNS(SVG, 'path');
+    p.setAttribute('d', d);
+    p.setAttribute('fill', d.endsWith('z') ? stroke : 'none');
+    p.setAttribute('stroke', stroke);
+    p.setAttribute('stroke-width', String(w));
+    p.setAttribute('stroke-linecap', 'round');
+    svg.append(p);
+  }
+  return svg;
+}
+const bowTitle = h('div', { class: 'ptitle' }, '');
+const bowHint = h('div', { class: 'phint' }, '');
+const bowTv = h('div', { class: 'tvline' }, '');
+const drawBig = h('b', {}, 'DRAW');
+const drawSub = h('span', {}, 'hold · aim · let go');
+const drawPad = h('div', { class: 'guard draw', role: 'button', 'aria-label': 'Hold to draw the bow, point at the target, let go to shoot' }, h('i', { class: 'blade bowglyph' }, bowGlyph()), drawBig, drawSub);
+const drawWrap = h('div', { class: 'guard-wrap' }, h('div', { class: 'guard-meter' }), drawPad);
+const bowShot = h('div', { class: 'shotline' }, '');
+const bowHome = padBtn('home', 'small home', h('i', { class: 'house' }));
+bowHome.dataset.lock = '';
+bowHome.setAttribute('aria-label', 'Pause');
+const bowPanel = h(
+  'div',
+  { class: 'panel bow' },
+  h('div', { class: 'stop' }, h('div', { class: 'sbtn' }, bowHome, h('span', {}, 'PAUSE')), h('div', { class: 'shead' }, bowTitle, bowHint), h('div', { class: 'sbtn' })),
+  h('div', { class: 'sstage' }, bowTv, drawWrap, bowShot),
+);
 
 const panels: Record<PadMode, HTMLElement> = {
   menu: menuPanel,
@@ -413,7 +452,7 @@ let motionSeen = false;
 let seq = 0;
 let joined = false;
 /** which game the TV's fx lines are about (they can arrive while on 'watch') */
-let sport: 'tennis' | 'bowl' | 'duel' = 'tennis';
+let sport: 'tennis' | 'bowl' | 'duel' | 'archery' = 'tennis';
 /** bowling: the pointer holding the grip (the ball is in the hand), or null */
 let gripId: number | null = null;
 /** sword: the guard pad is held (by these pointers) */
@@ -488,11 +527,17 @@ function setMode(m: PadMode, title?: string, hint?: string) {
   mode = m;
   if (m === 'bowl') sport = 'bowl';
   else if (m === 'sword') sport = 'duel';
+  else if (m === 'bow') sport = 'archery';
   else if (m === 'play' || m === 'serve') sport = 'tennis';
   if (prev === 'bowl' && m !== 'bowl') {
     // the game moved on with the ball still in the hand: drop it, don't throw
     gripCancel();
     // and whatever the tennis detector made of the bowling swings is forgotten
+    detector.reset();
+  }
+  if (prev === 'bow' && m !== 'bow') {
+    // the game moved on mid-draw (a pause): let go of the string (the TV doesn't shoot then)
+    drawCancel();
     detector.reset();
   }
   if (prev === 'sword' && m !== 'sword') {
@@ -523,6 +568,11 @@ function setMode(m: PadMode, title?: string, hint?: string) {
     bowlTitle.textContent = title || 'Your turn!';
     bowlHint.textContent = hint || (motionOK ? 'Hold the ball, swing back, then forward' : 'Hold the ball, drag up and let go');
     if (gripId === null) gripIdle();
+  }
+  if (m === 'bow') {
+    bowTitle.textContent = title || 'Your turn!';
+    bowHint.textContent = hint || (motionOK ? 'Point at the target · hold DRAW · let go' : 'Hold DRAW · drag to aim · let go');
+    if (drawId === null) drawIdle();
   }
   if (m === 'sword') {
     // a fresh duel: the motion so far was something else
@@ -572,16 +622,17 @@ function onMessage(m: ServerToPad) {
         duelFx(m);
         break;
       }
-      const bowling = sport === 'bowl';
-      // bowling: the TV's verdict on the throw, e.g. "STRIKE! · 7.6 m/s · hook"
+      const bowling = sport === 'bowl' || sport === 'archery';
+      // bowling / archery: the TV's verdict on the throw or the shot, e.g. "STRIKE! · 7.6 m/s · hook"
       const line = [m.label, m.detail].filter(Boolean).join(' · ');
       if (bowling && line) {
-        bowlTv.textContent = line;
-        bowlTv.classList.remove('pop');
-        void bowlTv.offsetWidth;
-        bowlTv.classList.add('pop');
-        // on 'watch' while the ball rolls the bowling panel isn't showing: say it anyway
-        if (mode !== 'bowl' || m.fx === 'perfect') showToast(m.label || line, 1800);
+        const tv = sport === 'bowl' ? bowlTv : bowTv;
+        tv.textContent = line;
+        tv.classList.remove('pop');
+        void tv.offsetWidth;
+        tv.classList.add('pop');
+        // on 'watch' while the ball rolls (the arrow flies) the panel isn't showing: say it anyway
+        if ((mode !== 'bowl' && mode !== 'bow') || m.fx === 'perfect') showToast(m.label || line, 1800);
       }
       switch (m.fx) {
         case 'hit':
@@ -705,7 +756,7 @@ function lookingAtPhone() {
 /** the locked buttons (bowling's move/aim/home, the duel's pause) that are down: let go of them all */
 const lockedBtnUps: (() => void)[] = [];
 /** the thumb is on the grip or the guard, or just came off it */
-const handBusy = () => gripId !== null || guarding || performance.now() < lockUntil;
+const handBusy = () => gripId !== null || guarding || drawId !== null || performance.now() < lockUntil;
 
 for (const el of root.querySelectorAll<HTMLButtonElement>('.pb')) {
   const b = el.dataset.b as PadButton;
@@ -833,7 +884,7 @@ function swingPath(sw: SwingEvent): number | null {
 
 function emitSwing(sw: SwingEvent, touch = false) {
   // bowling: the arm swing is a throw, not a racket swing; the duel has its own
-  if (mode === 'bowl' || mode === 'sword') return;
+  if (mode === 'bowl' || mode === 'sword' || mode === 'bow') return;
   if (!touch && sw.t < noSwingUntil) return;
   const age = Math.max(0, performance.now() - sw.t);
   const path = touch ? null : swingPath(sw);
@@ -871,7 +922,7 @@ function showSwing(sw: SwingEvent, path: number | null) {
 
 detector.onSwing = (s) => emitSwing(s);
 detector.onPrep = (side) => {
-  if (mode !== 'bowl' && mode !== 'sword') link.send({ type: 'prep', side, lat: Math.round(link.lat) });
+  if (mode !== 'bowl' && mode !== 'sword' && mode !== 'bow') link.send({ type: 'prep', side, lat: Math.round(link.lat) });
 };
 
 // Live motion meter — reassures players that the sensor works.
@@ -913,6 +964,16 @@ function sendOri() {
     link.send({ type: 'ori', s: p.s, n: p.n });
     return;
   }
+  if (mode === 'bow' && !motionOK) {
+    // no motion sensor: the drag on the DRAW pad turns an imaginary phone pointed at the screen
+    const a = -dragAim.dx * 0.0011,
+      b = -dragAim.dy * 0.0011;
+    const r2 = (x: number) => Math.round(x * 1000) / 1000;
+    const s: [number, number, number] = [r2(-Math.sin(a) * Math.cos(b)), r2(Math.cos(a) * Math.cos(b)), r2(Math.sin(b))];
+    const n: [number, number, number] = [r2(Math.sin(a) * Math.sin(b)), r2(-Math.cos(a) * Math.sin(b)), r2(Math.cos(b))];
+    link.send({ type: 'ori', s, n });
+    return;
+  }
   if (!orient.have || orient.heading === null) return;
   const r2 = (v: [number, number, number]) => v.map((x) => Math.round(x * 100) / 100) as [number, number, number];
   const msg: Extract<PadMsg, { type: 'ori' }> = { type: 'ori', s: r2(orient.devToPlayer([0, 1, 0])), n: r2(orient.devToPlayer([0, 0, 1])) };
@@ -933,7 +994,7 @@ function startOriStream() {
   // the sword follows the phone 1:1 and the guard's angle decides blocks: a little quicker
   swordOriTimer = window.setInterval(
     () => {
-      if (mode === 'sword') sendOri();
+      if (mode === 'sword' || mode === 'bow') sendOri();
     },
     link.transport === 'http' ? 100 : 33,
   );
@@ -1365,6 +1426,95 @@ for (const b of [guardVert, guardHorz]) {
     audio.tick();
     if (mode === 'sword') sendOri();
   });
+}
+
+// ------------------------------------------------------------------ archery
+
+/** the pointer holding DRAW (the string is pulled back), or null */
+let drawId: number | null = null;
+let drawT0 = 0;
+let drawRaf = 0;
+/** no motion sensor: how far the finger has dragged since the draw began (px) */
+const dragAim = { x0: 0, y0: 0, dx: 0, dy: 0 };
+/** as the TV's RANGE.drawT: the ring fills as the string comes back */
+const DRAW_T = 900;
+
+function drawIdle() {
+  drawPad.classList.remove('held');
+  drawBig.textContent = 'DRAW';
+  drawSub.textContent = motionOK ? 'hold · aim · let go' : 'hold · drag · let go';
+  drawWrap.style.setProperty('--p', '0');
+}
+
+function drawMeter() {
+  if (drawId === null) return;
+  drawWrap.style.setProperty('--p', Math.min(1, (performance.now() - drawT0) / DRAW_T).toFixed(3));
+  drawRaf = requestAnimationFrame(drawMeter);
+}
+
+drawPad.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  if (mode !== 'bow' || !joined || drawId !== null) return;
+  drawId = e.pointerId;
+  try {
+    drawPad.setPointerCapture(e.pointerId);
+  } catch {}
+  for (const up of lockedBtnUps) up(); // the palm on pause as the thumb lands isn't a press
+  drawT0 = performance.now();
+  dragAim.x0 = e.clientX;
+  dragAim.y0 = e.clientY;
+  dragAim.dx = dragAim.dy = 0;
+  sendOri(); // where the aim starts from
+  link.send({ type: 'draw', down: true, lat: Math.round(link.lat) });
+  drawPad.classList.add('held');
+  drawBig.textContent = 'AIM';
+  drawSub.textContent = motionOK ? 'point at the target · let go' : 'drag to aim · let go';
+  bowTv.textContent = '';
+  audio.creak();
+  cancelAnimationFrame(drawRaf);
+  drawRaf = requestAnimationFrame(drawMeter);
+});
+
+drawPad.addEventListener('pointermove', (e) => {
+  if (e.pointerId !== drawId) return;
+  dragAim.dx = e.clientX - dragAim.x0;
+  dragAim.dy = e.clientY - dragAim.y0;
+});
+
+const drawLift = (e: PointerEvent) => {
+  if (e.pointerId !== drawId) return;
+  drawId = null;
+  cancelAnimationFrame(drawRaf);
+  sendOri(); // the aim it left the bow on
+  link.send({ type: 'draw', down: false, lat: Math.round(link.lat) });
+  const held = performance.now() - drawT0;
+  // a hand coming off the pad after a shot isn't pressing pause
+  lockUntil = Math.max(lockUntil, performance.now() + 400);
+  if (held > DRAW_T * 0.25) {
+    audio.twang(Math.min(1, held / DRAW_T));
+    bowShot.textContent = held >= DRAW_T ? 'LOOSED · full draw' : `LOOSED · ${Math.round((held / DRAW_T) * 100)}% draw`;
+    drawWrap.classList.remove('pop');
+    void drawWrap.offsetWidth;
+    drawWrap.classList.add('pop');
+  } else bowShot.textContent = 'hold DRAW longer to shoot';
+  drawIdle();
+};
+drawPad.addEventListener('pointerup', drawLift);
+drawPad.addEventListener('pointercancel', drawLift);
+drawPad.addEventListener('lostpointercapture', drawLift);
+drawPad.addEventListener('contextmenu', (e) => e.preventDefault());
+
+/** The game moved on mid-draw: let go of the string. */
+function drawCancel() {
+  if (drawId === null) return;
+  const id = drawId;
+  drawId = null;
+  cancelAnimationFrame(drawRaf);
+  try {
+    drawPad.releasePointerCapture(id);
+  } catch {}
+  link.send({ type: 'draw', down: false, lat: Math.round(link.lat) });
+  drawIdle();
 }
 
 // ------------------------------------------------------------------ join

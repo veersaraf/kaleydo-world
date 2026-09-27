@@ -261,6 +261,40 @@ export class Sfx {
     }
   }
 
+  // ---------------------------------------------------------------- archery
+
+  /** the bowstring loosed: a twang, fuller at full draw */
+  twang(power: number, pan = 0) {
+    const e = this.e;
+    const t = e.now + 0.002;
+    const p = Math.max(0.2, Math.min(1, power));
+    e.tone(t, 150, 0.4, { type: 'triangle', gain: 0.25 + p * 0.2, to: 128, bus: e.sfx, pan });
+    e.tone(t, 300, 0.22, { type: 'sine', gain: 0.1 + p * 0.06, to: 270, bus: e.sfx, pan });
+    e.noise(t, 0.07, { type: 'highpass', f0: 2600, gain: 0.25, bus: e.sfx, pan });
+  }
+
+  /** an arrow thudding into a target (or the ground: duller) */
+  thunk(face: boolean, pan = 0) {
+    const e = this.e;
+    const t = e.now + 0.002;
+    if (this.timbre === 'chip') {
+      e.tone(t, face ? 220 : 110, 0.08, { type: 'square', gain: 0.18, to: 90, bus: e.sfx, pan });
+      return;
+    }
+    e.tone(t, face ? 190 : 120, 0.12, { gain: 0.55, to: 80, bus: e.sfx, pan });
+    e.noise(t, 0.05, { type: 'bandpass', f0: face ? 1400 : 700, q: 1.4, gain: 0.4, bus: e.sfx, pan });
+    // the shaft quivering
+    if (face) for (let i = 0; i < 4; i++) e.tone(t + 0.03 + i * 0.045, 420, 0.04, { type: 'triangle', gain: 0.05 * (1 - i / 4), bus: e.sfx, pan });
+  }
+
+  /** a balloon popping */
+  pop(pan = 0) {
+    const e = this.e;
+    const t = e.now + 0.002;
+    e.noise(t, 0.08, { type: 'highpass', f0: 1200, gain: 0.7, bus: e.sfx, pan });
+    e.tone(t, 900, 0.05, { gain: 0.2, to: 300, bus: e.sfx, pan });
+  }
+
   /** the pinsetter sweeping and re-racking */
   pinsetter() {
     const e = this.e;

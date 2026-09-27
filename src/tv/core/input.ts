@@ -59,6 +59,14 @@ export class Input {
   /** the local player's guard angle from the mouse (radians across their view, 0 = level,
    *  π/2 = upright), or null to let the game pick one */
   localGuardAngle: number | null = null;
+  /** archery: DRAW went down (pull the string) / up (shoot) */
+  onDraw: (slot: number, down: boolean) => void = () => {};
+  /** set by the app while shooting: the mouse aims, holding the button draws, Space draws too */
+  archeryMode = false;
+  /** the cursor in normalised device coordinates (−1..1, y up) — the archery aim */
+  mouseNdc = { x: 0, y: 0 };
+  /** archery: the arrow keys' fine adjustment to the aim, radians */
+  aimNudge = { yaw: 0, pitch: 0 };
   private duelCool = 0;
   private bowlSpin = 0;
   private bowlDrag: { y: number; t: number; hist: { x: number; y: number; t: number }[] } | null = null;
@@ -84,6 +92,12 @@ export class Input {
         return;
       }
       if (e.button !== 0 || (e.target as HTMLElement)?.closest?.('.screen')) return;
+      if (this.archeryMode) {
+        // shooting with the mouse: hold to draw, the cursor aims, let go to shoot
+        this.lastLocalInput = performance.now();
+        this.onDraw(0, true);
+        return;
+      }
       if (this.bowlMode) {
         // bowling with the mouse: press to grip, flick up and let go to bowl
         this.lastLocalInput = performance.now();
@@ -101,6 +115,10 @@ export class Input {
     window.addEventListener('pointerup', (e) => {
       if (this.duelMode && e.button === 2) {
         this.onGuard(0, false);
+        return;
+      }
+      if (this.archeryMode && e.button === 0) {
+        this.onDraw(0, false);
         return;
       }
       const d = this.bowlDrag;
@@ -248,6 +266,9 @@ export class Input {
       case 'slash':
         this.onSlash(seat.slot, { kind: m.kind, dir: m.dir, power: m.power });
         break;
+      case 'draw':
+        this.onDraw(seat.slot, m.down);
+        break;
     }
   }
 
@@ -292,6 +313,14 @@ export class Input {
       }
       if (down && (k === 'j' || k === 'k' || k === 'l')) this.bowlSpin = k === 'k' ? 0.7 : k === 'l' ? -0.7 : 0;
       if (down && (k === 'j' || k === 'k' || k === 'l')) return;
+    }
+    if (this.archeryMode) {
+      // Space: hold to draw, let go to shoot (the mouse aims; the arrows fine-tune it)
+      if (e.key === ' ') {
+        e.preventDefault();
+        if (!e.repeat) this.onDraw(0, down);
+        return;
+      }
     }
     if (this.duelMode) {
       // Space: hold to guard (the game angles it for you); X: thrust. The arrows
@@ -340,6 +369,8 @@ export class Input {
       this.bowlDrag.hist.push({ x: e.clientX, y: e.clientY, t: now });
       if (this.bowlDrag.hist.length > 40) this.bowlDrag.hist.shift();
     }
+    this.mouseNdc.x = (e.clientX / Math.max(1, window.innerWidth)) * 2 - 1;
+    this.mouseNdc.y = 1 - (e.clientY / Math.max(1, window.innerHeight)) * 2;
     const m = this.mouse;
     m.hist.push({ x: e.clientX, y: e.clientY, t: now });
     while (m.hist.length && now - m.hist[0].t > 90) m.hist.shift();

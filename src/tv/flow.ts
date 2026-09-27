@@ -19,6 +19,11 @@ import { COURT } from './tennis/court';
 import { TOUR, loadTour, saveTour, type Champion } from './tour';
 import { BowlHud } from './ui/bowlhud';
 import { DuelHud } from './ui/duelhud';
+import { ArcheryHud } from './ui/archeryhud';
+import type { Archer, ArcheryEvent } from './archery/types';
+import { RANGE } from './archery/range';
+
+const RANGE_FULL = RANGE.fullSpeed;
 import type { DuelEvent, Duelist } from './duel/types';
 import type { BowlEvent } from './bowling/game';
 import type { PadMode } from '../shared/protocol';
@@ -138,6 +143,7 @@ export class Flow {
     app.input.onButton = (slot, b, down) => {
       if (this.app.sport === 'bowling' && !this.screen && this.bowlButton(slot, b, down)) return;
       if (this.app.sport === 'duel' && !this.screen && this.duelButton(slot, b, down)) return;
+      if (this.app.sport === 'archery' && !this.screen && this.archeryButton(slot, b, down)) return;
       if (down) this.button(slot, b);
     };
     app.input.onGuard = (slot, down) => {
@@ -147,6 +153,10 @@ export class Flow {
       if (!this.screen) this.app.duel?.slash(slot, a);
     };
     app.onDuelEvent = (e) => this.duelEvent(e);
+    app.input.onDraw = (slot, down) => {
+      if (!this.screen) this.app.archery?.draw(slot, down);
+    };
+    app.onArcheryEvent = (e) => this.archeryEvent(e);
     app.input.onGrip = (slot, down) => {
       if (!this.screen) this.app.bowl?.grip(slot, down);
     };
@@ -399,15 +409,17 @@ export class Flow {
     const kal = item('◆', 'linear-gradient(135deg,#ff5a8a,#ffb13d,#4be3a2,#52a7ff)', 'Kaleido Rally', 'The world shatters as you play');
     const tb = loadTour().beaten;
     const tour = item('🏆', '#ffb13d', 'World Tour', tb >= TOUR.length ? 'The Prism is whole — play again' : `${Math.min(tb, 8)} of 8 shards restored`);
-    const help = item('?', '#35d49a', 'How to Play', 'Tennis, bowling & sword duels');
+    const help = item('?', '#35d49a', 'How to Play', 'Tennis, bowling, duels & archery');
     const set = item('⚙', '#8a7dff', 'Settings', 'Sound, voice, controls');
     const labItem = item('🎯', '#ff5a8a', 'Swing Lab', 'Ball machine + a read-out of every swing');
     const bowlItem = item('🎳', '#ff8a3d', 'Bowling', 'Grip, swing, let go — ten frames');
     const duelItem = item('⚔', '#ff5a6e', 'Sword Duel', 'Swing to strike, hold to guard — knock them off');
+    const archItem = item('🏹', '#35c46a', 'Archery', 'Point, draw, let go — mind the wind');
     const nav = new Nav([
       { el: quick, onSelect: () => this.go(this.setupScreen('quick')) },
       { el: bowlItem, onSelect: () => this.go(this.bowlSetup()) },
       { el: duelItem, onSelect: () => this.go(this.duelSetup()) },
+      { el: archItem, onSelect: () => this.go(this.archerySetup()) },
       { el: tour, onSelect: () => this.go(this.tourScreen()) },
       { el: kal, onSelect: () => this.go(this.setupScreen('kaleido')) },
       { el: labItem, onSelect: () => this.beginSwingLab() },
@@ -417,7 +429,7 @@ export class Flow {
     const el = h(
       'div',
       { class: 'screen mainmenu' },
-      h('div', { class: 'col' }, h('div', { class: 'mini-logo' }, h('span', null, 'KALEIDO')), h('div', { class: 'menu' }, quick, bowlItem, duelItem, tour, kal, labItem, help, set)),
+      h('div', { class: 'col' }, h('div', { class: 'mini-logo' }, h('span', null, 'KALEIDO')), h('div', { class: 'menu' }, quick, bowlItem, duelItem, archItem, tour, kal, labItem, help, set)),
       this.join.el,
     );
     this.join.refresh();
@@ -640,6 +652,18 @@ export class Flow {
         ],
         keys: kbd('No phone? Arrows or a mouse drag slash · hold ', ['Space'], ' or the right button to guard · ', ['X'], ' thrust'),
       },
+      {
+        name: 'Archery',
+        tips: [
+          tip('🏹', 'Hold DRAW', 'Press and hold DRAW on your phone: the archer pulls the string back. Full draw takes about a second.'),
+          tip('🎯', 'Point to aim', 'While you hold it, the aim follows your phone — turn it to move the sight onto the target.'),
+          tip('🪂', 'Arrows drop', 'The further the target, the more the arrow falls. Aim a little above the middle.'),
+          tip('🌬️', 'Mind the wind', 'The flags and the gauge show the wind. Aim into it — more for the far targets.'),
+          tip('🎈', 'Balloons', 'Pop a balloon for bonus points. The rings score 10 in the gold down to 1 at the edge.'),
+          tip('👥', 'Take turns', 'Three ends of three arrows each. Everyone shoots on their own phone; add a CPU if you like.'),
+        ],
+        keys: kbd('No phone? Hold the mouse (or ', ['Space'], ') to draw, the cursor aims, let go to shoot · arrows fine-tune'),
+      },
     ];
     const page = pages[sport];
     const tabs = h('div', { class: 'row help-tabs' }, h('span', { class: 'k' }, 'Sport'), h('span', { class: 'v' }, h('span', { class: 'arrow' }, '◀'), h('span', null, page.name), h('span', { class: 'arrow' }, '▶')));
@@ -710,7 +734,9 @@ export class Flow {
             ? this.bowlCfg && void this.beginBowling(this.bowlCfg.world, this.bowlCfg.cpu)
             : this.app.sport === 'duel'
               ? this.duelCfg && this.beginDuel(this.duelCfg.world, this.duelCfg.cpu)
-              : this.lastCfg && this.beginMatch(this.lastCfg.world, true),
+              : this.app.sport === 'archery'
+                ? this.archCfg && this.beginArchery(this.archCfg.world, this.archCfg.cpu)
+                : this.lastCfg && this.beginMatch(this.lastCfg.world, true),
       },
       { el: quit, onSelect: () => this.quitToMenu() },
     ]);
@@ -860,8 +886,11 @@ export class Flow {
   }
 
   private pause() {
-    if ((!this.app.match && !this.app.bowl && !this.app.duel) || this.app.attract || this.screen) return;
+    if ((!this.app.match && !this.app.bowl && !this.app.duel && !this.app.archery) || this.app.attract || this.screen) return;
     this.app.paused = true;
+    // a string pulled back when the game stops is let down, not loosed
+    const ag = this.app.archery;
+    if (ag) for (const a of ag.archers) if (a.slot >= 0) ag.cancelDraw(a.slot);
     this.go(this.pauseScreen());
     this.sound('select');
   }
@@ -882,14 +911,233 @@ export class Flow {
     this.bowlHud = null;
     this.duelHud?.el.remove();
     this.duelHud = null;
+    this.archHud?.el.remove();
+    this.archHud = null;
     this.audio?.sfx.roll(0);
     this.app.stopBowling();
     this.app.stopDuel();
+    this.app.stopArchery();
     this.app.startAttract(this.app.stage.current?.def.id ?? 'plaza');
     this.app.stage.setTeamColors('#3aa8ff', '#ff5a8c');
     this.app.input.prune();
     this.go(this.mainMenu());
     this.audio?.music.setIntensity(3);
+  }
+
+  // ---------------------------------------------------------------- archery
+
+  private archHud: ArcheryHud | null = null;
+  private archCfg: { world: string; cpu: number } | null = null;
+
+  /** Who's shooting (every phone, plus an optional CPU) and where. */
+  private archerySetup(): Screen {
+    const S = this.settings;
+    const cpuLevels = [
+      { label: 'No CPU', skill: -1 },
+      { label: 'CPU · Rookie', skill: 0.3 },
+      { label: 'CPU · Pro', skill: 0.65 },
+      { label: 'CPU · Ace', skill: 0.9 },
+    ];
+    let cpu = this.archCfg ? Math.max(0, cpuLevels.findIndex((c) => c.skill === this.archCfg!.cpu)) : this.app.input.activeSeats.length > 1 ? 0 : 2;
+    let wi = Math.max(0, WORLDS.findIndex((w) => w.id === (this.archCfg?.world ?? S.world)));
+    const row = (k: string) => {
+      const v = h('span');
+      const r = h('div', { class: 'row' }, h('span', { class: 'k' }, k), h('span', { class: 'v' }, h('span', { class: 'arrow' }, '◀'), v, h('span', { class: 'arrow' }, '▶')));
+      return { r, v };
+    };
+    const who = h('div', { class: 'hintline' });
+    const cpuRow = row('Opponent');
+    const worldRow = row('World');
+    const go = h('div', { class: 'row go' }, 'Shoot!');
+    const refresh = () => {
+      const names = this.app.input.activeSeats.map((st) => st.name);
+      who.textContent = names.length ? `Archers: ${names.join(', ')}` : 'Archer: Player 1';
+      cpuRow.v.textContent = cpuLevels[cpu].label;
+      worldRow.v.textContent = WORLDS[wi].name;
+    };
+    const cycle = (d: number) => {
+      wi = (wi + d + WORLDS.length) % WORLDS.length;
+      this.app.stage.setWorld(WORLDS[wi].id, { transition: true });
+      refresh();
+    };
+    const nav = new Nav([
+      { el: cpuRow.r, onLeft: () => ((cpu = (cpu + 3) % 4), refresh()), onRight: () => ((cpu = (cpu + 1) % 4), refresh()), onSelect: () => ((cpu = (cpu + 1) % 4), refresh()) },
+      { el: worldRow.r, onLeft: () => cycle(-1), onRight: () => cycle(1), onSelect: () => cycle(1) },
+      { el: go, onSelect: () => this.beginArchery(WORLDS[wi].id, cpuLevels[cpu].skill) },
+    ]);
+    refresh();
+    const sheet = h(
+      'div',
+      { class: 'sheet panel' },
+      h('h2', null, 'Archery'),
+      h('div', { class: 'hintline' }, 'Point your phone at the target, hold DRAW to pull the string, and let go. The arrow drops with distance and drifts with the wind — aim a little high, and into the wind.'),
+      who,
+      cpuRow.r,
+      worldRow.r,
+      go,
+    );
+    return this.navScreen('archsetup', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Archery', hint: '◀ ▶ to change · A to shoot' });
+  }
+
+  beginArchery(world: string, cpu: number) {
+    this.archCfg = { world, cpu };
+    this.go(null);
+    this.hud?.el.remove();
+    this.hud = null;
+    this.bowlHud?.el.remove();
+    this.bowlHud = null;
+    this.duelHud?.el.remove();
+    this.duelHud = null;
+    this.archHud?.el.remove();
+    this.archHud = null;
+    const seats = this.app.input.activeSeats.length ? this.app.input.activeSeats : [this.app.input.seats[0]!];
+    const archers: Archer[] = seats.map((st) => {
+      const sp = this.app.humanSpec(st.slot, 0);
+      return { name: sp.name, color: st.color, look: sp.look, handed: sp.handed, slot: st.slot, cpu: null };
+    });
+    if (cpu >= 0) archers.push({ name: 'CPU', color: '#6c6a84', look: randomLook(this.rng), handed: this.rng.chance(0.15) ? -1 : 1, slot: -1, cpu });
+    this.app.startArchery(archers, world);
+    const g = this.app.archery!;
+    this.archHud = new ArcheryHud(archers, g.ends);
+    this.hudLayer.append(this.archHud.el);
+    this.archHud.update(g.scores, g.arrows, g.current);
+    this.archHud.setHint(this.archeryHint());
+    const def = worldDef(world);
+    if (this.audio) {
+      this.audio.playSong(def.song);
+      this.audio.music.setIntensity(1);
+      this.audio.sfx.cheer(0.3);
+    }
+    this.syncPads(true);
+  }
+
+  private archeryHint() {
+    const a = this.app.archery?.archers[this.app.archery.current];
+    if (!a || a.cpu !== null) return '';
+    const seat = this.app.input.seats[a.slot];
+    return seat && !seat.local
+      ? 'Hold <b>DRAW</b> · <b>point</b> the phone to aim · <b>let go</b> to shoot — aim a little high, and into the wind'
+      : '<b>Hold</b> the mouse (or <b>Space</b>) to draw · the cursor aims · <b>let go</b> to shoot · arrows fine-tune';
+  }
+
+  /** The arrows fine-tune a keyboard player's aim; A skips the intro. */
+  private archeryButton(_slot: number, b: Btn, down: boolean) {
+    const g = this.app.archery;
+    if (!g) return false;
+    const n = this.app.input.aimNudge;
+    const step = 0.004;
+    if (b === 'left' || b === 'right' || b === 'up' || b === 'down') {
+      if (down) {
+        if (b === 'left') n.yaw += step;
+        else if (b === 'right') n.yaw -= step;
+        else if (b === 'up') n.pitch += step;
+        else n.pitch -= step;
+      }
+      return true;
+    }
+    if (b === 'a' && down) {
+      g.skip();
+      return true;
+    }
+    return false;
+  }
+
+  private archeryEvent(e: ArcheryEvent) {
+    const a = this.audio;
+    const hud = this.archHud;
+    const g = this.app.archery;
+    if (!g) return;
+    const padOf = (i: number) => {
+      const who = g.archers[i];
+      return who && who.slot >= 0 && who.cpu === null ? this.app.input.seats[who.slot]?.pid : undefined;
+    };
+    switch (e.type) {
+      case 'end':
+        hud?.setWind(e.wind);
+        hud?.say(e.end + 1 === e.ends ? 'FINAL END' : `END ${e.end + 1}`, Math.abs(e.wind) < 0.3 ? 'no wind' : `wind ${Math.abs(e.wind).toFixed(1)} m/s ${e.wind > 0 ? '→' : '←'}`);
+        this.app.input.aimNudge.yaw = this.app.input.aimNudge.pitch = 0;
+        break;
+      case 'turn':
+        hud?.update(g.scores, g.arrows, e.who);
+        hud?.showTurn(g.archers[e.who], g.end, e.arrow, e.arrows);
+        hud?.setHint(g.end === 0 && e.arrow === 0 ? this.archeryHint() : '');
+        this.syncPads(true);
+        break;
+      case 'shot':
+        a?.sfx.twang(Math.min(1, e.speed / RANGE_FULL), 0);
+        a?.sfx.swish(0.5, 0);
+        this.syncPads(true);
+        break;
+      case 'score': {
+        hud?.update(g.scores, g.arrows, g.current);
+        const face = e.target >= 0;
+        if (e.points > 0 || face) a?.sfx.thunk(face, Math.max(-1, Math.min(1, e.x / 6)));
+        let text = e.points > 0 ? String(e.points) : 'MISS';
+        let cls = '';
+        if (e.bullseye) {
+          text = 'BULLSEYE!';
+          cls = 'good';
+          a?.sfx.cheer(0.9);
+          a?.music.jingle('point');
+        } else if (e.points >= 8) a?.sfx.applause(0.5);
+        else if (e.points === 0) {
+          cls = 'bad';
+          a?.sfx.aww();
+        }
+        hud?.say(text, e.points > 0 && !e.bullseye && e.ring === 0 ? 'bonus!' : '', cls);
+        const pid = padOf(e.who);
+        if (pid) this.app.link.toPad(pid, { type: 'fx', fx: e.bullseye ? 'perfect' : e.points > 0 ? 'hit' : 'whiff', label: text, detail: `${g.total(e.who)} total` });
+        break;
+      }
+      case 'over': {
+        a?.sfx.cheer(1);
+        window.setTimeout(() => {
+          if (this.app.sport === 'archery' && this.app.archery === g) this.go(this.archeryResults(e.ranking));
+        }, 1800);
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  /** Per frame while shooting: the reticle and the wind. */
+  private archeryFrame(_dt: number) {
+    const g = this.app.archery;
+    const hud = this.archHud;
+    if (!g || !hud) return;
+    const r = this.app.reticle;
+    hud.setReticle(r?.x ?? 0, r?.y ?? 0, r?.draw ?? 0, !!r && !this.screen);
+    this.audio?.sfx.setCrowd(g.state === 'flight' ? 0.4 : 0.25);
+  }
+
+  private archeryResults(ranking: number[]): Screen {
+    const g = this.app.archery!;
+    const again = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Play again')));
+    const other = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Another world')));
+    const menu = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Main menu')));
+    const nav = new Nav([
+      { el: again, onSelect: () => this.archCfg && this.beginArchery(this.archCfg.world, this.archCfg.cpu) },
+      { el: other, onSelect: () => this.archCfg && this.beginArchery(this.shuffledWorlds().find((w) => w !== this.archCfg!.world) ?? 'park', this.archCfg.cpu) },
+      { el: menu, onSelect: () => this.quitToMenu() },
+    ]);
+    const top = g.total(ranking[0]);
+    const tied = ranking.filter((i) => g.total(i) === top);
+    const place = (i: number) => 1 + ranking.filter((q) => g.total(q) > g.total(i)).length;
+    const rows = ranking.map((i) =>
+      h('div', { class: 'brank', style: `--c:${g.archers[i].color}` }, h('b', null, `${place(i)}`), h('i'), h('span', null, g.archers[i].name), h('em', null, String(g.total(i)))),
+    );
+    const bulls = (i: number) => g.scores[i].filter((p) => p >= 10).length;
+    const title = ranking.length === 1 ? `${top} points!` : tied.length === ranking.length ? "It's a tie!" : tied.length > 1 ? `${tied.map((i) => g.archers[i].name).join(' & ')} tie for first!` : `${g.archers[ranking[0]].name} wins!`;
+    const sheet = h(
+      'div',
+      { class: 'sheet panel results' },
+      h('h2', null, title),
+      h('div', { class: 'hintline' }, ranking.length > 1 ? 'Final scores' : `${bulls(ranking[0])} bullseye${bulls(ranking[0]) === 1 ? '' : 's'}`),
+      ...rows,
+      h('div', { class: 'menu' }, again, other, menu),
+    );
+    return this.navScreen('archresults', h('div', { class: 'screen center results' }, sheet), nav, () => this.quitToMenu(), { title: 'Round over', hint: 'A to choose' });
   }
 
   // ---------------------------------------------------------------- sword duel
@@ -954,6 +1202,8 @@ export class Flow {
     this.bowlHud = null;
     this.duelHud?.el.remove();
     this.duelHud = null;
+    this.archHud?.el.remove();
+    this.archHud = null;
     const seats = this.app.input.activeSeats.length ? this.app.input.activeSeats : [this.app.input.seats[0]!];
     const person = (st: (typeof seats)[number]): Duelist => {
       const sp = this.app.humanSpec(st.slot, 0);
@@ -1187,6 +1437,8 @@ export class Flow {
     this.bowlHud = null;
     this.duelHud?.el.remove();
     this.duelHud = null;
+    this.archHud?.el.remove();
+    this.archHud = null;
     const seats = this.app.input.activeSeats.length ? this.app.input.activeSeats : [this.app.input.seats[0]!];
     const specs = seats.map((st) => {
       const sp = this.app.humanSpec(st.slot, 0);
@@ -1827,7 +2079,20 @@ export class Flow {
       let hint = this.screen?.pad?.hint;
       const g = this.app.bowl;
       const dg = this.app.duel;
-      if (!this.screen && this.app.sport === 'duel' && dg) {
+      const ag = this.app.archery;
+      if (!this.screen && this.app.sport === 'archery' && ag) {
+        const up = ag.archers[ag.current];
+        const mine = up?.slot === seat.slot && up.cpu === null;
+        if (mine && (ag.state === 'aim' || ag.state === 'intro' || ag.state === 'next')) {
+          mode = 'bow';
+          title = 'Your shot!';
+          hint = `End ${ag.end + 1} · arrow ${ag.arrowNo + 1} of ${ag.arrows}`;
+        } else {
+          mode = 'wait';
+          title = mine ? 'Flying…' : up ? `${up.name} is shooting` : 'Archery';
+          hint = mine ? 'watch the target' : 'you’re next soon';
+        }
+      } else if (!this.screen && this.app.sport === 'duel' && dg) {
         const mine = dg.duelists.find((d) => d.slot === seat.slot && d.cpu === null);
         if (mine && dg.state !== 'over') {
           mode = 'sword';
@@ -1885,6 +2150,7 @@ export class Flow {
     this.hud?.update(dt);
     if (this.app.sport === 'bowling') this.bowlFrame(dt);
     else if (this.app.sport === 'duel') this.duelFrame(dt);
+    else if (this.app.sport === 'archery') this.archeryFrame(dt);
     const m = this.app.match;
     if (m && !this.app.attract && this.hud) {
       // serve hint

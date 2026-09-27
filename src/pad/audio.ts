@@ -114,6 +114,24 @@ export class PadAudio {
     this.tone(t, 280, 0.07, 0.1, 'sine', 620);
   }
 
+  /** Archery: the string coming back — a low wooden creak. */
+  creak() {
+    if (!this.ok) return;
+    const t = this.ctx!.currentTime + 0.001;
+    this.noiseBurst(t, 0.5, 'bandpass', 380, 520, 6, 0.06);
+    this.tone(t, 110, 0.45, 0.04, 'sawtooth', 150);
+  }
+
+  /** Archery: the string loosed — a twang (fuller at full draw). */
+  twang(power = 1) {
+    if (!this.ok) return;
+    const t = this.ctx!.currentTime + 0.001;
+    const p = Math.max(0.2, Math.min(1, power));
+    this.tone(t, 196, 0.35, 0.12 + p * 0.1, 'triangle', 170);
+    this.tone(t, 392, 0.2, 0.05 + p * 0.04, 'sine', 360);
+    this.noiseBurst(t, 0.06, 'highpass', 3000, 2000, 0.8, 0.1);
+  }
+
   /** Duel: the guard goes up — a short metallic "shing". */
   guard() {
     if (!this.ok) return;

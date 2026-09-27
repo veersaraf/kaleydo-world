@@ -1366,3 +1366,31 @@ section {
     font-size: 14px;
   }
 }
+
+/* ------------------------------------------------------------ archery */
+
+.panel.bow {
+  justify-content: flex-start;
+  padding: 16px 16px 14px;
+  gap: 8px;
+}
+
+.bow .small {
+  width: 44px;
+  height: 44px;
+}
+
+.bow .tvline.pop {
+  animation: pop 0.35s cubic-bezier(0.2, 2, 0.4, 1);
+}
+
+/* the bow lies across the pad, arrow nocked, pointing at the screen */
+.draw .bowglyph {
+  top: 8%;
+  left: 27%;
+  width: 46%;
+}
+
+.draw.held .bowglyph {
+  transform: scale(0.94) translateX(4%);
+}
