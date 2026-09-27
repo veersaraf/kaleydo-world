@@ -511,6 +511,9 @@ detector.handed = prefs.handed === 'L' ? -1 : 1;
 detector.upSign = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ? -1 : 1;
 // the sensors: gyro axes found from the OS's own orientation, fused orientation (pipeline.ts)
 const front = new MotionFront();
+// (remembered from last time, so the first swings are read right; it's checked again as you play)
+front.axes.load(store.get('gyroAxes'));
+front.axes.onSure = (saved) => store.set('gyroAxes', saved);
 const orient = front.orient;
 const bowl = new BowlDetector();
 bowl.sensitivity = prefs.sens;

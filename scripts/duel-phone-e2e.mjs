@@ -70,6 +70,11 @@ await tv.evaluate(() => {
 });
 const blade = () => tv.evaluate(() => window.kaleido.duel.fighters[0].aim.blade);
 
+// 0. a few seconds of handling the phone (as anyone does between joining and fighting): enough for the
+// remote to work out which way round the gyro reports its axes (it can't know before it moves)
+for (const top of [[0.5, 0.6, 0.6], [-0.4, 0.3, 0.85], [0, 0.9, -0.3], [0, 0.6, 0.8]])
+  await pad.evaluate((t) => window.__phone.hold({ top: t, screen: [0.3, -0.8, 0.5], ms: 400 }), top);
+
 // 1. the sword follows the phone (earth frame: x right, y towards the screen, z up)
 await pad.evaluate(() => window.__phone.hold({ top: [0, 0.25, 0.97], screen: [0, -0.97, 0.25], ms: 500 }));
 await wait(300);

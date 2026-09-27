@@ -188,6 +188,29 @@ export class GyroAxes {
   private t0 = 0;
   private acc: Vec3 = [0, 0, 0];
 
+  /** called when the evidence settles a mapping (to remember it for next time) */
+  onSure: (saved: string) => void = () => {};
+
+  /** a mapping remembered from last time (as onSure gave it): used from the start, still checked */
+  load(saved: string) {
+    const m = /^([012])([012])([012]):([+-])([+-])([+-])$/.exec(saved);
+    if (!m) return;
+    const src = [+m[1], +m[2], +m[3]];
+    if (new Set(src).size !== 3) return;
+    this.src = src as [number, number, number];
+    this.sign = [m[4] === '-' ? -1 : 1, m[5] === '-' ? -1 : 1, m[6] === '-' ? -1 : 1];
+    this.name = this.describe();
+  }
+
+  private describe() {
+    const [a, b, c] = this.src;
+    const pos = this.sign.every((v) => v > 0);
+    if (pos && a === 0 && b === 1 && c === 2) return 'xyz';
+    if (pos && a === 1 && b === 2 && c === 0) return 'zxy'; // alpha about z, beta x, gamma y
+    const n = ['alpha', 'beta', 'gamma'];
+    return [0, 1, 2].map((i) => `${this.sign[i] < 0 ? '-' : ''}${n[this.src[i]]}→${'xyz'[i]}`).join(' ');
+  }
+
   /** raw rates (deg/s, as the event has them) → device-axis rad/s */
   map(alpha: number, beta: number, gamma: number): Vec3 {
     const r = [alpha, beta, gamma];
@@ -209,7 +232,7 @@ export class GyroAxes {
       this.restart(q, t);
       return;
     }
-    if (t - this.t0 < 90) return;
+    if (t - this.t0 < 60) return;
     // how the OS says the phone turned since the window began, in its own axes
     let d = qmul(qconj(this.q0), q);
     if (d[3] < 0) d = [-d[0], -d[1], -d[2], -d[3]];
@@ -219,7 +242,7 @@ export class GyroAxes {
     const gl = Math.hypot(g[0], g[1], g[2]);
     this.restart(q, t);
     // too little to tell apart from noise, or so much the OS's lag muddles it
-    if (ang < 0.04 || ang > 1.5 || gl < 0.02) return;
+    if (ang < 0.03 || ang > 1.5 || gl < 0.015) return;
     const o: Vec3 = [(d[0] / s) * ang, (d[1] / s) * ang, (d[2] / s) * ang];
     for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) this.M[i * 3 + j] += o[i] * g[j];
     this.eo += ang * ang;
@@ -236,7 +259,7 @@ export class GyroAxes {
   /** the signed permutation that best turns the gyro's rotations into the OS's */
   private decide() {
     const norm = Math.sqrt(this.eo * this.eg);
-    if (this.eo < 0.25 || norm < 1e-9) return;
+    if (this.eo < 0.08 || norm < 1e-9) return;
     let best = -Infinity,
       second = -Infinity;
     let bs: [number, number, number] = this.src,
@@ -257,15 +280,14 @@ export class GyroAxes {
         } else if (sc > second) second = sc;
       }
     }
-    if (best > 0.6 && best - second > 0.25) {
+    if (best > 0.7 && best - second > 0.3) {
+      const was = this.sure ? `${this.src.join('')}:${this.sign.map((v) => (v < 0 ? '-' : '+')).join('')}` : '';
       this.src = [bs[0], bs[1], bs[2]];
       this.sign = bg;
       this.sure = true;
-      const ax = 'xyz';
-      const n = ['alpha', 'beta', 'gamma'];
-      this.name = [0, 1, 2].map((i) => `${bg[i] < 0 ? '-' : ''}${n[bs[i]]}→${ax[i]}`).join(' ');
-      if (bs[0] === 0 && bs[1] === 1 && bs[2] === 2 && bg.every((v) => v > 0)) this.name = 'xyz';
-      else if (bs[0] === 1 && bs[1] === 2 && bs[2] === 0 && bg.every((v) => v > 0)) this.name = 'zxy'; // alpha about z, beta x, gamma y
+      this.name = this.describe();
+      const now = `${this.src.join('')}:${this.sign.map((v) => (v < 0 ? '-' : '+')).join('')}`;
+      if (now !== was) this.onSure(now);
     }
     // old evidence fades slowly: a mistake early on can't stick forever
     if (this.eo > 40) {
