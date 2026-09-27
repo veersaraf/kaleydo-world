@@ -397,8 +397,8 @@ const FX: Record<string, FxStyle> = {
     party: PARTY,
     puff: ['#f4efe6'],
     smoke: ['#e9e4dc', '#d8d2c8'],
-    fw: { additive: false, shape: 0, colors: ['#ff4f4f', '#ffd23c', '#3aa8ff', '#ffffff', '#b07cff', '#35d49a'], rocket: '#fff2c0', hdr: 2.4, steps: 0, flash: 0.5 },
-    tracer: rs('#ffffff', 1.3, 0, false, 0.95, 3.4, 0.3, 0.38, 0.6),
+    fw: { additive: false, shape: 0, colors: ['#ff2e3c', '#ffc21a', '#1f8cff', '#b44dff', '#16c96a', '#ffffff'], rocket: '#fff2c0', hdr: 1.25, steps: 0, flash: 0.45, minPx: 3.4, size: 0.26 },
+    tracer: rs('#ffffff', 1.3, 0, false, 0.95, 4.2, 0.3, 0.36, 0.6),
     tracerTint: 0.9,
     tracerHdr: 1.05,
     streak: rs('#ffffff', 1, 0, false, 0.7, 1.2, 0, 0.5, 1),
@@ -418,8 +418,8 @@ const FX: Record<string, FxStyle> = {
     party: ['#ff5a6e', '#ffc53d', '#3aa8ff', '#35d49a', '#ffffff'],
     puff: ['#ffffff'],
     smoke: ['#f2f2f6', '#e2e2ea'],
-    fw: { additive: false, shape: 0, colors: ['#ff5a6e', '#ffc53d', '#3aa8ff', '#35d49a', '#ffffff'], rocket: '#fff2c0', hdr: 2.2, steps: 0, flash: 0.5 },
-    tracer: rs('#ffffff', 1.15, 3, false, 1, 3.6, 0.3, 0.34, 0.75),
+    fw: { additive: false, shape: 0, colors: ['#ff2e55', '#ffc21a', '#1f8cff', '#16c96a', '#ffffff'], rocket: '#fff2c0', hdr: 1.2, steps: 0, flash: 0.45, minPx: 3.6, size: 0.27 },
+    tracer: rs('#ffffff', 1.15, 3, false, 1, 4.4, 0.3, 0.32, 0.75),
     tracerTint: 1,
     tracerHdr: 1,
     streak: rs('#ffffff', 1, 3, false, 0.85, 1.3, 0, 0.5, 1),
@@ -439,10 +439,10 @@ const FX: Record<string, FxStyle> = {
     party: ['#d8321f', '#15120f', '#d8321f', '#f1e8d4'],
     puff: ['#3b342d'],
     smoke: null,
-    fw: { additive: false, shape: 2, colors: ['#d8321f', '#15120f', '#d8321f', '#3b342d'], rocket: '#15120f', hdr: 1, steps: 0, flash: 0 },
-    tracer: rs('#15120f', 1, 1, false, 0.92, 3.8, 0.25, 0.3, 1),
-    tracerTint: 0.15,
-    tracerBase: '#15120f',
+    fw: { additive: false, shape: 2, colors: ['#d8321f', '#15120f', '#d8321f', '#3b342d'], rocket: '#15120f', hdr: 1, steps: 0, flash: 0, minPx: 4.5, size: 0.3 },
+    tracer: rs('#d8321f', 1, 1, false, 0.95, 4.6, 0.25, 0.3, 1),
+    tracerTint: 0,
+    tracerBase: '#d8321f',
     tracerHdr: 1,
     streak: rs('#15120f', 1, 1, false, 0.75, 1.4, 0, 0.3, 1),
     streakColor: '#2a2520',
@@ -461,8 +461,8 @@ const FX: Record<string, FxStyle> = {
     party: ['#ff2fb4', '#22e6ff', '#ffd23f', '#8b3bff'],
     puff: ['#22e6ff'],
     smoke: null,
-    fw: { additive: true, shape: 0, colors: ['#ff2fb4', '#22e6ff', '#ffd23f', '#8b3bff', '#ffffff'], rocket: '#ffd6f5', hdr: 2.6, steps: 0, flash: 0.7 },
-    tracer: rs('#ffffff', 1.5, 0, true, 1, 3.2, 0.35, 0.3, 0.3),
+    fw: { additive: true, shape: 0, colors: ['#ff2fb4', '#22e6ff', '#ffd23f', '#8b3bff', '#ffffff'], rocket: '#ffd6f5', hdr: 2.2, steps: 0, flash: 0.4, minPx: 3, size: 0.17 },
+    tracer: rs('#ffffff', 1.5, 0, true, 1, 3.8, 0.35, 0.3, 0.3),
     tracerTint: 1,
     tracerHdr: 1.7,
     streak: rs('#ffffff', 2.4, 0, true, 0.9, 1.4, 0, 0.5, 1),
@@ -482,7 +482,7 @@ const FX: Record<string, FxStyle> = {
     party: ['#ff004d', '#ffec27', '#29adff', '#00e436', '#ff77a8', '#fff1e8'],
     puff: ['#fff1e8'],
     smoke: null,
-    fw: { additive: false, shape: 1, colors: ['#ff004d', '#ffec27', '#29adff', '#00e436', '#ff77a8', '#fff1e8'], rocket: '#ffec27', hdr: 1, steps: 12, flash: 0 },
+    fw: { additive: false, shape: 1, colors: ['#ff004d', '#ffec27', '#29adff', '#00e436', '#ff77a8', '#fff1e8'], rocket: '#ffec27', hdr: 1, steps: 12, flash: 0, minPx: 5, size: 0.26 },
     tracer: rs('#fff1e8', 1, 2, false, 1, 6.5, 0.4, 0.22, 0.5),
     tracerTint: 1,
     tracerHdr: 1,
@@ -503,8 +503,8 @@ const FX: Record<string, FxStyle> = {
     party: ['#e76f51', '#ffd66b', '#5aa9e6', '#7cc576', '#fffdf5'],
     puff: ['#fffdf5'],
     smoke: null,
-    fw: { additive: false, shape: 3, colors: ['#e76f51', '#ffd66b', '#5aa9e6', '#7cc576', '#fffdf5', '#c490e4'], rocket: '#fffdf5', hdr: 1, steps: 0, flash: 0 },
-    tracer: rs('#fffdf5', 1, 3, false, 1, 3.6, 0.3, 0.3, 1),
+    fw: { additive: false, shape: 3, colors: ['#e76f51', '#ffd66b', '#5aa9e6', '#7cc576', '#fffdf5', '#c490e4'], rocket: '#fffdf5', hdr: 1, steps: 0, flash: 0, minPx: 4.5, size: 0.28 },
+    tracer: rs('#fffdf5', 1, 3, false, 1, 4.4, 0.3, 0.3, 1),
     tracerTint: 1,
     tracerHdr: 1,
     streak: rs('#fffdf5', 1, 3, false, 0.9, 1.3, 0, 0.5, 1),
@@ -524,8 +524,8 @@ const FX: Record<string, FxStyle> = {
     party: ['#ffd35c', '#e84a3c', '#3f8fd8', '#80c76b', '#fbf3e6'],
     puff: ['#fbf3e6'],
     smoke: ['#efe6d8'],
-    fw: { additive: false, shape: 0, colors: ['#ffd35c', '#e84a3c', '#3f8fd8', '#80c76b', '#fbf3e6'], rocket: '#fff2c0', hdr: 1.8, steps: 0, flash: 0.35 },
-    tracer: rs('#ffffff', 1.1, 0, false, 0.95, 3.4, 0.28, 0.4, 0.55),
+    fw: { additive: false, shape: 0, colors: ['#ff3b2e', '#ffc21a', '#2f7fe0', '#3fbf4f', '#ffffff'], rocket: '#fff2c0', hdr: 1.2, steps: 0, flash: 0.35, minPx: 3.6, size: 0.27 },
+    tracer: rs('#ffffff', 1.1, 0, false, 0.95, 4.2, 0.28, 0.38, 0.55),
     tracerTint: 0.9,
     tracerHdr: 1,
     streak: rs('#ffffff', 1, 0, false, 0.7, 1.3, 0, 0.5, 1),
@@ -545,8 +545,8 @@ const FX: Record<string, FxStyle> = {
     party: ['#ff9fb2', '#9fc4ff', '#ffe066', '#a8e6b0', '#ffffff'],
     puff: ['#ffffff'],
     smoke: ['#f4f0ff'],
-    fw: { additive: false, shape: 0, colors: ['#ff8fab', '#7fb2ff', '#ffe066', '#a8e6b0', '#ffffff'], rocket: '#fff6d8', hdr: 1.5, steps: 0, flash: 0.3 },
-    tracer: rs('#ffffff', 1, 0, false, 0.9, 3.8, 0.3, 0.42, 0.5),
+    fw: { additive: false, shape: 0, colors: ['#ff5c8a', '#4f8dff', '#ffc933', '#3fcf7a', '#ffffff'], rocket: '#fff6d8', hdr: 1.1, steps: 0, flash: 0.25, minPx: 4.5, size: 0.3 },
+    tracer: rs('#ffffff', 1, 0, false, 0.92, 5, 0.3, 0.4, 0.5),
     tracerTint: 0.85,
     tracerHdr: 1,
     streak: rs('#ffffff', 1, 0, false, 0.65, 1.5, 0, 0.5, 1),
@@ -566,8 +566,8 @@ const FX: Record<string, FxStyle> = {
     party: ['#5ef2ff', '#ff6bd6', '#a86bff', '#ffe38a', '#ffffff'],
     puff: ['#a86bff'],
     smoke: null,
-    fw: { additive: true, shape: 0, colors: ['#5ef2ff', '#ff6bd6', '#a86bff', '#ffe38a', '#ffffff'], rocket: '#e9f7ff', hdr: 2.4, steps: 0, flash: 0.7 },
-    tracer: rs('#ffffff', 1.5, 0, true, 1, 3.2, 0.35, 0.3, 0.3),
+    fw: { additive: true, shape: 0, colors: ['#5ef2ff', '#ff6bd6', '#a86bff', '#ffe38a', '#ffffff'], rocket: '#e9f7ff', hdr: 2.1, steps: 0, flash: 0.4, minPx: 3, size: 0.17 },
+    tracer: rs('#ffffff', 1.5, 0, true, 1, 3.8, 0.35, 0.3, 0.3),
     tracerTint: 1,
     tracerHdr: 1.7,
     streak: rs('#e9f7ff', 2.2, 0, true, 0.85, 1.4, 0, 0.5, 1),
@@ -880,7 +880,7 @@ const SIZES: Record<WallStyle, { number: number; words: number; back: number }> 
   paper: { number: 0.94, words: 0.62, back: 0.4 },
   ink: { number: 0.96, words: 0.62, back: 0.4 },
   clay: { number: 0.96, words: 0.62, back: 0.4 },
-  wash: { number: 1.12, words: 0.76, back: 0.46 },
+  wash: { number: 1.12, words: 0.84, back: 0.5 },
 };
 
 interface Atlas {
@@ -1025,8 +1025,11 @@ function paintAtlas(at: Atlas, pal: Pal, items: WallItem[]) {
   };
 
   /** text in the style: filled with a dark edge, a paper cut-out with a shadow, or a neon tube */
+  // the watercolour's fattened glyphs need air between them
+  const spacing = (px: number) => (style === 'wash' ? `${Math.round(px * 0.09)}px` : '0px');
   const text = (s: string, cx: number, base: number, px: number, font: string, col: string, align: CanvasTextAlign = 'center') => {
     x.font = `${pixel ? '' : '700 '}${Math.round(px)}px ${font}`;
+    x.letterSpacing = spacing(px);
     x.textAlign = align;
     x.textBaseline = 'alphabetic';
     if (glow) {
@@ -1058,7 +1061,7 @@ function paintAtlas(at: Atlas, pal: Pal, items: WallItem[]) {
       // the watercolour pass eats anything thin (an outline, a narrow stroke): fat glyphs, two tones
       x.lineJoin = 'round';
       x.strokeStyle = col;
-      x.lineWidth = px * 0.1;
+      x.lineWidth = px * 0.17;
       x.strokeText(s, cx, base);
       x.fillStyle = col;
       x.fillText(s, cx, base);
@@ -1141,6 +1144,7 @@ function paintAtlas(at: Atlas, pal: Pal, items: WallItem[]) {
   const weight = pixel ? '' : '700 ';
   const measure = (s: string, px: number, font: string) => {
     x.font = `${weight}${Math.round(px)}px ${font}`;
+    x.letterSpacing = spacing(px);
     return x.measureText(s).width;
   };
   /** words centred on (cx, cy), on one line or — when they're wider than maxW — two, with a star either side */
@@ -1561,7 +1565,7 @@ export class FieldVenue implements FieldVenueLike {
     this.group.add(this.flags.mesh);
 
     // ---- fireworks
-    this.fireworks = new Fireworks(1400, this.fx.fw);
+    this.fireworks = new Fireworks(2000, this.fx.fw);
     this.group.add(this.fireworks.mesh);
 
     // ---- effect colours
@@ -1972,26 +1976,32 @@ export class FieldVenue implements FieldVenueLike {
     const pick = <T>(l: T[]) => l[Math.floor(rng() * l.length)];
     const base = this.fx.fw.colors.map((c) => new THREE.Color(c));
     const shells: Shell[] = [];
-    const kinds: ShellKind[] = ['peony', 'ring', 'willow', 'star', 'peony'];
-    const n = 5;
-    for (let i = 0; i < n; i++) {
-      const a = a0 + (rng() - 0.5) * 0.28 + (i - (n - 1) / 2) * 0.06;
-      const r = fenceAt(a) + 3.5 + rng() * 3;
-      const from = fieldPoint(a, r);
-      const reach = fenceAt(a) + 4.5 + rng() * 4;
-      const at = fieldPoint(a + (rng() - 0.5) * 0.12, reach);
-      // the hitter's colour, the world's, and white
-      const colors = [this.color.clone(), pick(base), pick(base), WHITE.clone()];
+    // a two-second show over the stands where it went out, spreading from the spot: a big
+    // salute in the hitter's colour first, then a ring, a willow, a star and a closing pair
+    const show: { kind: ShellKind; da: number; t: number; y: number; r: number }[] = [
+      { kind: 'peony', da: 0, t: 0, y: 6.6, r: 6 },
+      { kind: 'ring', da: -0.13, t: 0.34, y: 8.2, r: 5 },
+      { kind: 'willow', da: 0.12, t: 0.62, y: 9, r: 5.4 },
+      { kind: 'star', da: -0.05, t: 0.95, y: 5.8, r: 4.6 },
+      { kind: 'peony', da: 0.2, t: 1.25, y: 7.2, r: 5.2 },
+      { kind: 'peony', da: -0.2, t: 1.3, y: 7.6, r: 5.2 },
+    ];
+    show.forEach((sh, i) => {
+      const a = THREE.MathUtils.clamp(a0 + sh.da + (rng() - 0.5) * 0.06, -A - 0.12, A + 0.12);
+      const from = fieldPoint(a, fenceAt(a) + 3 + rng() * 2);
+      const at = fieldPoint(a + (rng() - 0.5) * 0.05, fenceAt(a) + 4 + rng() * 2.5);
+      // the hitter's colour, the world's, and white (the first all the hitter's)
+      const colors = i === 0 ? [this.color.clone(), this.color.clone().lerp(WHITE, 0.5), WHITE.clone()] : [this.color.clone(), pick(base), pick(base), WHITE.clone()];
       shells.push({
         from: new THREE.Vector3(from.x, 2.4, from.z),
-        at: new THREE.Vector3(at.x, 6.5 + rng() * 3.5 + (i === n - 1 ? 1.5 : 0), at.z),
-        delay: i * 0.38 + rng() * 0.12,
-        rise: 0.55 + rng() * 0.2,
-        kind: kinds[i % kinds.length],
+        at: new THREE.Vector3(at.x, sh.y + rng() * 0.8, at.z),
+        delay: sh.t + rng() * 0.06,
+        rise: 0.5 + rng() * 0.15,
+        kind: sh.kind,
         colors,
-        radius: i === n - 1 ? 4.2 : 2.6 + rng() * 1.2,
+        radius: sh.r * (0.92 + rng() * 0.16),
       });
-    }
+    });
     this.fireworks.fire(shells, rng);
     // smoke drifting from each burst in the daytime worlds
     const P = this.particles;

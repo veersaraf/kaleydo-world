@@ -384,6 +384,15 @@ const CAMS: Record<string, CamFn> = {
     c.lookAt(-3, 3.2, -18);
     c.fov = 52;
   },
+  land: (c) => {
+    // where the last home run went out, from the infield (a replay's or a celebration's view)
+    let p: Pitch | null = null;
+    for (const x of pitches) if (x.hit?.hr && clock >= x.tc) p = x;
+    const o = p ? p.out : tmpP.set(-6, 3, -12);
+    c.position.set(o.x * 0.35, 2.6, 6);
+    c.lookAt(o.x, 4.5, o.z);
+    c.fov = 56;
+  },
   side: (c) => {
     c.position.set(12.5, 3.2, 4);
     c.lookAt(0, 0.6, 4);

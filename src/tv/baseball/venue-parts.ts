@@ -273,23 +273,27 @@ export class Ribbon {
 
 export interface FireworkStyle {
   additive: boolean;
-  /** 0 glowing streaks, 1 square pixels, 2 ink blots, 3 paper confetti */
+  /** 0 comets of light (a round head, a tapering tail), 1 square pixels, 2 ink blots, 3 paper scraps */
   shape: number;
   /** the colours sparks burst in (the hitter's colour joins them), and the rockets' */
   colors: string[];
   rocket: string;
-  /** HDR boost for the sparks (bloom picks it up) */
+  /** colour multiplier for the sparks (HDR where bloom should catch them) */
   hdr: number;
   /** step time in 1/n s (pixel art); 0 = smooth */
   steps: number;
   /** flash at each burst (0 = none) */
   flash: number;
+  /** sparks are never smaller than this many pixels of a 1080-row picture */
+  minPx: number;
+  /** spark size (m) */
+  size: number;
 }
 
 const FW_VERT = /* glsl */ `
 attribute vec3 aO; attribute vec3 aV; attribute vec4 aT; attribute vec4 aC; attribute vec4 aX;
-uniform float uTime; uniform float uStep; uniform float uStreak;
-varying vec2 vQ; varying vec3 vCol; varying float vA; varying float vSeed; varying float vKind;
+uniform float uTime; uniform float uStep; uniform float uStreak; uniform float uMinPx;
+varying vec2 vQ; varying vec3 vCol; varying float vA; varying float vSeed; varying float vKind; varying float vAspect; varying float vHot;
 #include <common>
 #include <fog_pars_vertex>
 void main() {
@@ -301,8 +305,10 @@ void main() {
   float k = aX.x;
   vec3 g = vec3(0.0, -9.81 * aX.y, 0.0);
   vec3 p; vec3 v;
-  if (vKind > 0.5 && vKind < 1.5) {
-    // a rocket: climbing and slowing to where it bursts
+  bool rocket = vKind > 0.5 && vKind < 1.5;
+  bool flash = vKind > 1.5 && vKind < 2.5;
+  if (rocket) {
+    // climbing and slowing to where it bursts
     float s = age - 0.25 * age * age / life;
     p = aO + aV * s;
     v = aV * (1.0 - 0.5 * age / life);
@@ -316,72 +322,80 @@ void main() {
   }
   float u = age / life;
   float size = aC.w;
-  if (vKind > 1.5) size *= 0.55 + 0.9 * u; // a flash swells as it fades
-  else if (vKind < 0.5) size *= 1.0 - 0.45 * u;
+  if (flash) size *= 0.55 + 0.9 * u;
+  else if (!rocket) size *= 1.0 - 0.4 * u * u;
   vec4 mv = viewMatrix * vec4(p, 1.0);
-  // never smaller than ~2.5 pixels of a 1080-row picture
+  // never smaller than uMinPx pixels of a 1080-row picture
   float perPx = 2.0 * max(-mv.z, 0.1) / (projectionMatrix[1][1] * 1080.0);
-  size = max(size, 2.5 * perPx);
+  size = max(size, uMinPx * perPx);
   vec3 vv = (viewMatrix * vec4(v, 0.0)).xyz;
   float L = length(vv.xy);
   vec2 dir = L > 1e-4 ? vv.xy / L : vec2(0.0, 1.0);
   // (dir.y, −dir.x): the quad keeps its winding (the other perpendicular mirrors it, and it's culled)
   vec2 nrm = vec2(dir.y, -dir.x);
-  // sparks streak along their motion (the head at the spark, the tail behind); flashes are round
-  float len = vKind > 1.5 ? size : max(size, L * uStreak);
+  // a comet: its head at the spark, its tail streaming back along its motion; flashes are round
+  float len = flash || uStreak <= 0.0 ? size : size + L * uStreak * (rocket ? 2.5 : 1.0);
   vec2 q = position.xy;
-  if (vKind > 1.5 || uStreak <= 0.0) mv.xy += q * size;
-  else mv.xy += nrm * q.x * size + dir * (q.y - 0.5) * len;
+  if (flash || uStreak <= 0.0) mv.xy += q * size;
+  else mv.xy += nrm * q.x * size + dir * (size * 0.5 - (0.5 - q.y) * len);
   vQ = vec2(q.x * 2.0, q.y + 0.5);
+  vAspect = len / size;
   gl_Position = projectionMatrix * mv;
-  // fade in fast, out towards the end; twinklers flicker late in life
-  float a = smoothstep(0.0, 0.04, age) * (1.0 - smoothstep(0.55, 1.0, u));
-  if (vKind > 1.5) a = (1.0 - u) * (1.0 - u);
-  if (aX.z > 0.5 && u > 0.45) {
-    float h = fract(sin(dot(vec2(aT.z * 91.7, floor(uTime * 22.0)), vec2(12.9898, 78.233))) * 43758.5453);
-    a *= step(0.42, h) * 1.3;
+  // fade in fast, out towards the end; glitter flickers late in life
+  float a = smoothstep(0.0, 0.03, age) * (1.0 - smoothstep(0.6, 1.0, u));
+  if (flash) a = (1.0 - u) * (1.0 - u);
+  if (aX.z > 0.5 && u > 0.4) {
+    float h = fract(sin(dot(vec2(aT.z * 91.7, floor(uTime * 24.0)), vec2(12.9898, 78.233))) * 43758.5453);
+    a *= step(0.45, h) * 1.25;
   }
   vA = a;
-  // hot early, the colour cooling in
-  vCol = mix(aC.rgb, aC.rgb * 1.6 + 0.4, (1.0 - smoothstep(0.0, 0.18, u)) * step(vKind, 0.5));
-  if (vKind > 0.5) vCol = aC.rgb;
+  vCol = aC.rgb;
+  // white-hot as it bursts, the colour coming through as it cools
+  vHot = rocket ? 1.0 : 1.0 - smoothstep(0.0, 0.25, u);
   vec4 mvPosition = mv;
   #include <fog_vertex>
 }`;
 
 const FW_FRAG = /* glsl */ `
-uniform int uShape; uniform float uTime;
-varying vec2 vQ; varying vec3 vCol; varying float vA; varying float vSeed; varying float vKind;
+uniform int uShape; uniform float uTime; uniform vec3 uHot;
+varying vec2 vQ; varying vec3 vCol; varying float vA; varying float vSeed; varying float vKind; varying float vAspect; varying float vHot;
 #include <common>
 #include <fog_pars_fragment>
 ${NOISE}
 void main() {
   float a;
-  vec2 q = vec2(vQ.x, vQ.y * 2.0 - 1.0);
-  if (vKind > 1.5) {
+  vec3 col = vCol;
+  // along the quad in units of its width: 0 at the head's front, vAspect at the tail's end
+  float s = (1.0 - vQ.y) * vAspect;
+  float d = length(vec2(vQ.x * 0.5, s - 0.5));
+  if (vKind > 1.5 && vKind < 2.5) {
     // a flash: a soft round glow
-    float r = length(q);
-    a = pow(max(0.0, 1.0 - r), 2.2);
+    a = pow(max(0.0, 1.0 - 2.0 * d), 2.0);
   } else if (uShape == 1) {
-    a = 1.0;
+    a = s < 1.0 ? 1.0 : 0.0;
   } else if (uShape == 2) {
-    // an ink blot: a ragged round drop
-    float r = length(q);
-    float n = vnoise(q * 2.5 + vSeed * 37.0);
-    a = smoothstep(0.85, 0.65, r + (n - 0.5) * 0.5);
+    // an ink drop, and a dry streak behind it
+    float n = vnoise(vec2(vQ.x * 2.0, s * 1.5) + vSeed * 37.0);
+    a = smoothstep(0.5, 0.36, d + (n - 0.5) * 0.28);
+    float t = clamp((s - 0.5) / max(vAspect - 0.5, 1e-3), 0.0, 1.0);
+    a = max(a, step(0.5, s) * smoothstep(0.34 * (1.0 - t), 0.2 * (1.0 - t), abs(vQ.x) * 0.5) * step(0.45, n + 0.25 * (1.0 - t)) * (1.0 - t));
   } else if (uShape == 3) {
     // a paper scrap tumbling (it narrows as it turns edge-on)
     float flip = abs(cos(uTime * 7.0 + vSeed * 40.0));
-    a = step(abs(vQ.x), 0.25 + 0.75 * flip) * step(abs(q.y), 0.9);
+    a = step(abs(vQ.x), 0.3 + 0.7 * flip) * step(s, 1.0) * step(0.0, s);
   } else {
-    // a streak: a bright head fading along its tail
-    float across = 1.0 - smoothstep(0.35, 1.0, abs(vQ.x));
-    a = across * pow(vQ.y, 1.6) * smoothstep(1.0, 0.86, vQ.y + (1.0 - abs(vQ.x)) * 0.0);
-    a = max(a, (1.0 - smoothstep(0.0, 1.0, length(vec2(vQ.x, (vQ.y - 0.9) * 3.0)))) * 0.9);
+    // a comet: a round head, a tail tapering away behind it
+    float head = 1.0 - smoothstep(0.3, 0.5, d);
+    float t = clamp((s - 0.5) / max(vAspect - 0.5, 1e-3), 0.0, 1.0);
+    float w = 0.36 * (1.0 - t);
+    float tail = step(0.5, s) * (1.0 - smoothstep(w * 0.45, w, abs(vQ.x) * 0.5)) * pow(1.0 - t, 1.4) * 0.8;
+    a = max(head, tail);
+    // the head's heart runs white-hot early on
+    col = mix(col, uHot, (1.0 - smoothstep(0.0, 0.3, d)) * vHot);
   }
   a *= vA;
   if (a < 0.01) discard;
-  gl_FragColor = vec4(vCol, a);
+  gl_FragColor = vec4(col, a);
   #include <fog_fragment>
 }`;
 
@@ -417,15 +431,13 @@ export class Fireworks {
   private until = -1;
   private rocketCol: THREE.Color;
   private hdr: number;
-  private flash: number;
 
   constructor(
     readonly max: number,
     readonly style: FireworkStyle,
   ) {
-    this.rocketCol = new THREE.Color(style.rocket).multiplyScalar(style.hdr);
+    this.rocketCol = new THREE.Color(style.rocket).multiplyScalar(Math.max(1, style.hdr));
     this.hdr = style.hdr;
-    this.flash = style.flash;
     const base = new THREE.PlaneGeometry(1, 1);
     const g = new THREE.InstancedBufferGeometry();
     g.index = base.index;
@@ -451,8 +463,10 @@ export class Fireworks {
         {
           uTime: { value: 0 },
           uStep: { value: style.steps > 0 ? 1 / style.steps : 0 },
-          uStreak: { value: style.shape === 0 ? 0.075 : 0 },
+          uStreak: { value: style.shape === 0 ? 0.09 : style.shape === 2 ? 0.05 : 0 },
+          uMinPx: { value: style.minPx },
           uShape: { value: style.shape },
+          uHot: { value: new THREE.Color(1, 0.97, 0.88).multiplyScalar(Math.max(1.3, style.hdr * 1.2)) },
         },
       ]),
       vertexShader: FW_VERT,
@@ -471,7 +485,7 @@ export class Fireworks {
     this.mesh.userData.noNormals = true;
   }
 
-  /** Light a show: each shell's rocket, its trail, the flash and the burst. */
+  /** Light a show: each shell's rocket and its trail, the flash, the burst (and a heart of glitter). */
   fire(shells: Shell[], rng: () => number) {
     const lo = this.next;
     let wrapped = false;
@@ -488,33 +502,38 @@ export class Fireworks {
     };
     const tmp = new THREE.Vector3();
     const col = new THREE.Color();
+    const S = this.style.size;
+    const gold = new THREE.Color('#ffd98a');
     for (const s of shells) {
       const t0 = this.time + s.delay;
       const tb = t0 + s.rise;
       // the rocket: from the launch to the burst (it covers 3/4 of vt over its climb, see the shader)
       const k = 1 / (0.75 * s.rise);
-      put(s.from, (s.at.x - s.from.x) * k, (s.at.y - s.from.y) * k, (s.at.z - s.from.z) * k, t0, s.rise, 1, this.rocketCol, 0.09, 0, 0, 0);
+      put(s.from, (s.at.x - s.from.x) * k, (s.at.y - s.from.y) * k, (s.at.z - s.from.z) * k, t0, s.rise, 1, this.rocketCol, S * 0.7, 0, 0, 0);
       // its sparkling trail
-      for (let j = 0; j < 7; j++) {
-        const tt = (j + 0.5) / 7;
+      for (let j = 0; j < 8; j++) {
+        const tt = (j + 0.5) / 8;
         const f = tt - 0.25 * tt * tt;
         tmp.lerpVectors(s.from, s.at, f / 0.75);
-        put(tmp, (rng() - 0.5) * 0.6, -0.4 - rng() * 0.6, (rng() - 0.5) * 0.6, t0 + tt * s.rise, 0.45 + rng() * 0.2, 0, this.rocketCol, 0.05, 1.5, 0.15, 1);
+        put(tmp, (rng() - 0.5) * 0.6, -0.4 - rng() * 0.6, (rng() - 0.5) * 0.6, t0 + tt * s.rise, 0.4 + rng() * 0.25, 0, this.rocketCol, S * 0.4, 1.5, 0.15, 1);
       }
       // the flash
-      if (this.flash > 0) put(s.at, 0, 0, 0, tb, 0.28, 2, col.set(s.colors[0]).lerp(WHITE, 0.6).multiplyScalar(this.hdr * this.flash), s.radius * 0.9, 0, 0, 0);
+      if (this.style.flash > 0) put(s.at, 0, 0, 0, tb, 0.3, 2, col.copy(s.colors[0]).lerp(WHITE, 0.55).multiplyScalar(this.hdr * this.style.flash), s.radius * 1.1, 0, 0, 0);
       // the burst
       const R = s.radius;
-      const n = s.kind === 'ring' ? 56 : s.kind === 'willow' ? 64 : s.kind === 'star' ? 60 : 84;
-      // a ring or a star is flat: tip its plane towards the camera side a little, randomly
-      const tilt = (rng() - 0.5) * 0.9;
+      const willow = s.kind === 'willow';
+      const flat = s.kind === 'ring' || s.kind === 'star';
+      const n = s.kind === 'ring' ? 84 : willow ? 110 : s.kind === 'star' ? 100 : 130;
+      // a ring or a star is flat: its plane faces the field, tipped a little, randomly
+      const tilt = (rng() - 0.5) * 0.7;
       const spin = rng() * Math.PI * 2;
+      const drag = willow ? 2.1 : 1.6;
       for (let j = 0; j < n; j++) {
         let dx: number, dy: number, dz: number;
-        if (s.kind === 'ring' || s.kind === 'star') {
+        if (flat) {
           const a = (j / n) * Math.PI * 2 + spin;
-          // a star: five arms (the radius swells at each point)
-          const r = s.kind === 'star' ? 0.55 + 0.45 * Math.pow(Math.abs(Math.cos((a - spin) * 2.5)), 3) : 1;
+          // a star: five points (the radius swells towards each)
+          const r = s.kind === 'star' ? 0.5 + 0.5 * Math.pow(Math.abs(Math.cos((a - spin) * 2.5)), 2.5) : 1;
           const cx = Math.cos(a) * r,
             cy = Math.sin(a) * r;
           dx = cx;
@@ -529,12 +548,24 @@ export class Fireworks {
           dy = y;
           dz = Math.sin(a) * r;
         }
-        const willow = s.kind === 'willow';
-        const drag = willow ? 2.2 : 1.7;
         // the speed that carries a spark R metres before drag stops it
-        const v = R * drag * (0.85 + rng() * 0.3);
-        const c = col.copy(s.colors[j % s.colors.length]).multiplyScalar(this.hdr);
-        put(s.at, dx * v, dy * v + (willow ? 1.2 : 0.4), dz * v, tb, willow ? 2.4 + rng() * 0.5 : 1.3 + rng() * 0.45, 0, c, willow ? 0.075 : 0.1, drag, willow ? 0.42 : 0.3, willow || rng() < 0.4 ? 1 : 0);
+        const v = R * drag * (flat ? 0.96 + rng() * 0.08 : 0.85 + rng() * 0.3);
+        const c = willow ? col.copy(gold).lerp(s.colors[j % 2 ? 0 : 3] ?? WHITE, 0.25) : col.copy(s.colors[j % s.colors.length]);
+        c.multiplyScalar(this.hdr);
+        const sz = S * (willow ? 0.75 : 1) * (0.85 + rng() * 0.3);
+        put(s.at, dx * v, dy * v + (willow ? 1.4 : 0.5), dz * v, tb, willow ? 2.5 + rng() * 0.5 : 1.45 + rng() * 0.5, 0, c, sz, drag, willow ? 0.45 : 0.3, willow || rng() < 0.3 ? 1 : 0);
+      }
+      // a heart of glitter in the second colour (not in a willow)
+      if (!willow) {
+        const m = flat ? 18 : 34;
+        const hc = s.colors[1] ?? WHITE;
+        for (let j = 0; j < m; j++) {
+          const y = 1 - (2 * (j + 0.5)) / m;
+          const r = Math.sqrt(1 - y * y);
+          const a = j * 2.39996 + spin;
+          const v = R * 0.45 * drag * (0.8 + rng() * 0.4);
+          put(s.at, Math.cos(a) * r * v, y * v + 0.3, Math.sin(a) * r * v, tb + 0.05, 1.1 + rng() * 0.4, 0, col.copy(hc).multiplyScalar(this.hdr), S * 0.7, drag, 0.25, 1);
+        }
       }
     }
     // upload what was written (all of it if the pool wrapped round)

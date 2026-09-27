@@ -47,6 +47,10 @@ const SHOTS = {
   'flight-fly': ['flight', 'fly', 'land', 0.06],
   'flight-wall': ['flight', 'wall', 'land', 0.08],
   'flight-bomb': ['flight', 'bomb', 'out', 0.4],
+  // the celebration: from the batting camera, and looking at where it went out
+  'fw-bat': ['bat', 'homer', 'out', 1.5],
+  'fw-land': ['land', 'homer', 'out', 1.1],
+  'fw-land2': ['land', 'homer', 'out', 2.0],
   // the park
   wide: ['wide', 'bomb', 'land', 1.2],
   'wide-fw': ['wide', 'homer', 'out', 1.3],
