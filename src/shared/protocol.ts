@@ -78,12 +78,16 @@ export type PadMsg =
    *  swipe (a tap is a thrust). Sent ~35 ms after the swing's peak (a thrust: as the
    *  arm is half-way out), just after an 'ori' with the pose it struck in; never
    *  while the guard is held — let go of it to attack */
-  | { type: 'slash'; kind: 'slash' | 'thrust'; dir: number; power: number; lat: number; touch?: boolean };
+  | { type: 'slash'; kind: 'slash' | 'thrust'; dir: number; power: number; lat: number; touch?: boolean }
+  /** archery: the DRAW pad went down (start pulling the string) / was let go (shoot).
+   *  The aim is the 'ori' stream: the TV turns the phone's movement since the draw
+   *  began into the aim, so drift doesn't matter. An 'ori' is sent just before each */
+  | { type: 'draw'; down: boolean; lat: number };
 
 /** bowl = your turn to bowl: the grip pad plus move (◀ ▶ = btn left/right) and
  *  aim (↺ ↻ = btn minus/plus) buttons. sword = a duel: swing to attack, hold the
  *  guard pad to block (the sword follows the phone, streamed as 'ori') */
-export type PadMode = 'menu' | 'play' | 'serve' | 'wait' | 'watch' | 'skip' | 'bowl' | 'sword';
+export type PadMode = 'menu' | 'play' | 'serve' | 'wait' | 'watch' | 'skip' | 'bowl' | 'sword' | 'bow';
 
 export type PadFx =
   | 'hit'

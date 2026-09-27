@@ -329,6 +329,9 @@ const swordPanel = h(
   h('div', { class: 'gseg' }, guardVert, guardHorz),
 );
 
+// archery: the DRAW pad (placeholder until the bow controller lands)
+const bowPanel = h('div', { class: 'panel bow' }, h('div', { class: 'wtitle' }, 'Archery'));
+
 const panels: Record<PadMode, HTMLElement> = {
   menu: menuPanel,
   play: playPanel,
@@ -338,6 +341,7 @@ const panels: Record<PadMode, HTMLElement> = {
   skip: skipPanel,
   bowl: bowlPanel,
   sword: swordPanel,
+  bow: bowPanel,
 };
 
 const leds = h('div', { class: 'leds' }, h('i'), h('i'), h('i'), h('i'));
@@ -348,7 +352,7 @@ const remoteScreen = h(
   'section',
   { class: 'remote' },
   header,
-  h('div', { class: 'shell' }, menuPanel, playPanel, servePanel, waitPanel, skipPanel, bowlPanel, swordPanel),
+  h('div', { class: 'shell' }, menuPanel, playPanel, servePanel, waitPanel, skipPanel, bowlPanel, swordPanel, bowPanel),
   footer,
   flash,
   toast,
