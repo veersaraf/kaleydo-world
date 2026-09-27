@@ -1,5 +1,9 @@
-// STARFALL — a court on a drifting asteroid. Nebulae, a ringed planet,
-// glowing crystals, a comet for a ball — and lower gravity, so rallies float.
+// STARFALL — a court on an asteroid adrift above a ringed giant. Its glowing
+// limb lies along the horizon, its ring arcs up across a nebula baked once into
+// the sky, moons hang in the dark, a belt of rocks tumbles past lit by the
+// system's star, meteors fall, dust rises in the low gravity and the rim of the
+// platform runs with light. The ball is a comet — and gravity is lower, so
+// rallies float.
 
 import * as THREE from 'three';
 import { World, type WorldDef, type FrameView } from './base';
@@ -7,13 +11,19 @@ import type { MaterialKit, CharRole } from './types';
 import { flat, stringsMat, toon } from './mats';
 import { Crowd, type Stand } from './crowd';
 import { Bloom } from '../render/post';
-import { NOISE } from '../render/glsl';
 import type { MatchEvent } from '../tennis/match';
+import { bakeNebula, spaceDome, NearStars, shootingStars } from './cosmic-env/sky';
+import { planet } from './cosmic-env/planet';
+import { Belt, crystals, dust, rimGlow } from './cosmic-env/rocks';
 
 const CYAN = new THREE.Color('#5ef2ff');
 const VIOLET = new THREE.Color('#a86bff');
 const PINK = new THREE.Color('#ff6bd6');
 const hdr = (c: THREE.Color, k: number) => c.clone().multiplyScalar(k);
+/** the system's star, where the players' key light comes from (up, to the right, behind the main
+ *  camera): the giant, its moons and the rocks are lit from it — day on the giant's right, a
+ *  terminator and a glowing limb on its left */
+const STAR = new THREE.Vector3(20, 14, 10).normalize();
 
 class CosmicWorld extends World {
   kit: MaterialKit = {
@@ -29,54 +39,51 @@ class CosmicWorld extends World {
     shadowOpacity: 0.5,
   };
 
-  private skyMat!: THREE.ShaderMaterial;
-  private rocks: THREE.Object3D[] = [];
-  private planet!: THREE.Group;
-  private crystals: THREE.Mesh[] = [];
-  private platform!: THREE.Group;
+  /** one clock and one beat for every shader */
+  private u = { uTime: { value: 0 }, uBeat: { value: 0 } };
+  /** baked once: kept out of the render-target scan, which would release it */
+  #nebula!: THREE.WebGLCubeRenderTarget;
+  private stars!: NearStars;
+  private belt!: Belt;
 
   protected build() {
     const s = this.scene;
-    this.skyMat = new THREE.ShaderMaterial({
-      uniforms: { uTime: { value: 0 } },
-      vertexShader: 'varying vec3 vDir; void main(){ vDir = normalize(position); vec4 p = projectionMatrix * modelViewMatrix * vec4(position,1.0); gl_Position = p.xyww; }',
-      fragmentShader: /* glsl */ `
-        uniform float uTime; varying vec3 vDir;
-        ${NOISE}
-        void main() {
-          vec3 d = normalize(vDir);
-          vec3 col = vec3(0.01, 0.005, 0.03);
-          float n1 = fbm3(d * 2.2 + vec3(0.0, 0.0, uTime * 0.004));
-          float n2 = fbm3(d * 4.5 + 7.0);
-          float band = exp(-pow(dot(d, normalize(vec3(0.3, 1.0, 0.25))), 2.0) * 7.0);
-          col += vec3(0.35, 0.08, 0.55) * smoothstep(0.45, 0.85, n1) * 0.9;
-          col += vec3(0.05, 0.3, 0.55) * smoothstep(0.5, 0.9, n2) * 0.7;
-          col += vec3(0.6, 0.3, 0.7) * band * smoothstep(0.3, 0.8, n2) * 0.5;
-          vec3 g = floor(d * 420.0);
-          float st = step(0.9965, hash31(g));
-          float tw = 0.6 + 0.4 * sin(uTime * 3.0 + hash31(g + 5.0) * 60.0);
-          col += st * tw * mix(vec3(0.8, 0.9, 1.0), vec3(1.0, 0.8, 0.9), hash31(g + 2.0)) * 1.8;
-          col += step(0.9993, hash31(floor(d * 180.0))) * 3.0;
-          gl_FragColor = vec4(col, 1.0);
-        }`,
-      side: THREE.BackSide,
-      depthWrite: false,
-      fog: false,
-    });
-    const sky = new THREE.Mesh(new THREE.SphereGeometry(600, 48, 24), this.skyMat);
-    sky.frustumCulled = false;
-    sky.renderOrder = -10;
-    s.add(sky);
+    this.#nebula = bakeNebula(this.renderer);
+    const sky = spaceDome(this.u, this.#nebula.texture, STAR);
+    this.stars = new NearStars(this.u, 2600);
+    const meteors = shootingStars(this.u);
+    sky.name = 'cosmic.sky';
+    this.stars.mesh.name = 'cosmic.stars';
+    meteors.name = 'cosmic.meteors';
+    s.add(sky, this.stars.mesh, meteors);
 
     const star = new THREE.DirectionalLight('#dbe8ff', 2.8);
-    star.position.set(20, 14, 10);
+    star.position.copy(STAR).multiplyScalar(25);
     s.add(star);
     s.add(new THREE.HemisphereLight('#6f5cff', '#130a2a', 1.3));
     const rim = new THREE.DirectionalLight('#ff6bd6', 1.4);
     rim.position.set(-20, 6, -30);
     s.add(rim);
 
-    this.buildPlanet();
+    // the giant: rising beyond the far end (filling the top of the players' view,
+    // a dome over the pins and the targets), its ring tipped up so the far side
+    // arcs across the sky
+    s.add(
+      planet(
+        this.u,
+        { center: new THREE.Vector3(-50, -125, -560), radius: 190, axis: new THREE.Vector3(0.3, 0.92, 0.26), ring: [1.35, 2.3], light: STAR },
+        [
+          [new THREE.Vector3(-250, 150, -430), 28],
+          [new THREE.Vector3(175, 88, -520), 11],
+          // a big moon over the near end, for the far and reverse views
+          [new THREE.Vector3(-150, 62, 420), 34],
+        ],
+      ),
+    );
+    this.belt = new Belt(this.u, { count: 170, radius: [42, 170], height: [-45, 50], size: [0.6, 7], light: STAR, rimDir: new THREE.Vector3(-0.6, 0.1, -0.8), seed: 5 });
+    this.belt.mesh.name = 'cosmic.belt';
+    s.add(this.belt.mesh);
+
     this.buildPlatform();
 
     this.buildCourt({
@@ -109,68 +116,20 @@ class CosmicWorld extends World {
     f.uVignette.value = 0.4;
     f.uGrain.value = 0.02;
     this.flashColor.set('#d8f6ff');
-  }
-
-  private buildPlanet() {
-    this.planet = new THREE.Group();
-    const pm = new THREE.ShaderMaterial({
-      uniforms: { uLight: { value: new THREE.Vector3(0.6, 0.3, 0.7).normalize() } },
-      vertexShader: 'varying vec3 vN; varying vec3 vP; void main(){ vN = normalize(normalMatrix * normal); vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-      fragmentShader: /* glsl */ `
-        uniform vec3 uLight; varying vec3 vN; varying vec3 vP;
-        ${NOISE}
-        void main() {
-          float lat = normalize(vP).y;
-          float b = sin(lat * 18.0 + fbm(vP.xz * 0.08) * 3.0) * 0.5 + 0.5;
-          vec3 c = mix(vec3(0.95, 0.55, 0.35), vec3(0.98, 0.85, 0.62), b);
-          c = mix(c, vec3(0.7, 0.3, 0.45), smoothstep(0.6, 0.9, fbm(vP.xy * 0.05 + 3.0)) * 0.5);
-          float l = max(dot(vN, normalize(uLight)), 0.0);
-          gl_FragColor = vec4(c * (0.08 + l * 1.1), 1.0);
-        }`,
-      fog: false,
-    });
-    const planet = new THREE.Mesh(new THREE.SphereGeometry(60, 48, 32), pm);
-    this.planet.add(planet);
-    const ringMat = new THREE.ShaderMaterial({
-      vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-      fragmentShader: /* glsl */ `
-        varying vec2 vUv;
-        void main() {
-          float r = vUv.x;
-          float bands = 0.5 + 0.5 * sin(r * 90.0) * sin(r * 23.0);
-          float a = smoothstep(0.0, 0.08, r) * smoothstep(1.0, 0.85, r) * (0.35 + 0.5 * bands);
-          gl_FragColor = vec4(vec3(0.95, 0.82, 0.7) * 0.9, a * 0.75);
-        }`,
-      transparent: true,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      fog: false,
-    });
-    const ringGeo = new THREE.RingGeometry(80, 150, 96, 1);
-    // map uv.x to radial position for the shader
-    const uv = ringGeo.attributes.uv as THREE.BufferAttribute;
-    const pos = ringGeo.attributes.position as THREE.BufferAttribute;
-    for (let i = 0; i < uv.count; i++) uv.setX(i, (Math.hypot(pos.getX(i), pos.getY(i)) - 80) / 70);
-    const ring = new THREE.Mesh(ringGeo, ringMat);
-    ring.rotation.x = Math.PI / 2.3;
-    this.planet.add(ring);
-    this.planet.position.set(-150, 70, -380);
-    this.planet.rotation.z = 0.35;
-    this.scene.add(this.planet);
-    const moon = new THREE.Mesh(new THREE.SphereGeometry(14, 32, 20), new THREE.MeshLambertMaterial({ color: '#b9b4d8', fog: false }));
-    moon.position.set(170, 95, -320);
-    this.scene.add(moon);
+    // depth of field for replays and cinematics (the stars go soft behind the players),
+    // and a soft shadow under each planted foot
+    this.effects = { dof: true, contact: { strength: 0.55, color: new THREE.Color('#0b0720') } };
   }
 
   private buildPlatform() {
-    this.platform = new THREE.Group();
+    const s = this.scene;
     const rockM = new THREE.MeshLambertMaterial({ color: '#4a3f6e', flatShading: true });
     const rockD = new THREE.MeshLambertMaterial({ color: '#2d2548', flatShading: true });
     // top slab
     const slab = new THREE.Mesh(new THREE.CylinderGeometry(24, 22, 2.2, 28, 1), rockM);
     slab.position.y = -1.12;
     slab.scale.z = 1.25;
-    this.platform.add(slab);
+    s.add(slab);
     // jagged underside
     const under = new THREE.ConeGeometry(22, 28, 28, 6);
     const p = under.attributes.position as THREE.BufferAttribute;
@@ -186,46 +145,25 @@ class CosmicWorld extends World {
     um.rotation.x = Math.PI;
     um.position.y = -16;
     um.scale.z = 1.25;
-    this.platform.add(um);
-    this.scene.add(this.platform);
-
-    // glowing crystals on the rim
+    s.add(um);
+    // the rim runs with light, and crystals grow along it
+    const rim = rimGlow(this.u, 24, 30);
+    rim.name = 'cosmic.rim';
+    s.add(rim);
+    const at: Parameters<typeof crystals>[1] = [];
     for (let i = 0; i < 26; i++) {
       const a = (i / 26) * Math.PI * 2 + Math.random() * 0.2;
       const r = 17 + Math.random() * 5;
       const x = Math.cos(a) * r;
       const z = Math.sin(a) * r * 1.25;
       if (z > 10 && Math.abs(x) < 10) continue;
-      const c = new THREE.Mesh(new THREE.OctahedronGeometry(1, 0), flat(hdr(i % 3 ? CYAN : PINK, 1.6 + Math.random())));
-      c.scale.set(0.5, 1.6 + Math.random() * 1.8, 0.5);
-      c.position.set(x, 1 + Math.random(), z);
-      c.rotation.set(Math.random() * 0.5, Math.random() * 3, Math.random() * 0.5);
-      c.userData.phase = Math.random() * 6;
-      this.scene.add(c);
-      this.crystals.push(c);
+      at.push({ x, y: 1 + Math.random(), z, sy: 1.6 + Math.random() * 1.8, rot: new THREE.Euler(Math.random() * 0.5, Math.random() * 3, Math.random() * 0.5), color: hdr(i % 3 ? CYAN : PINK, 0.8 + Math.random() * 0.5) });
     }
-    // floating rocks
-    for (let i = 0; i < 26; i++) {
-      const g = new THREE.IcosahedronGeometry(1, 1);
-      const pp = g.attributes.position as THREE.BufferAttribute;
-      for (let k = 0; k < pp.count; k++) {
-        const f = 0.75 + Math.random() * 0.5;
-        pp.setXYZ(k, pp.getX(k) * f, pp.getY(k) * f, pp.getZ(k) * f);
-      }
-      g.computeVertexNormals();
-      const m = new THREE.Mesh(g, i % 2 ? rockM : rockD);
-      const sc = 1 + Math.random() * 5;
-      m.scale.setScalar(sc);
-      const a = Math.random() * Math.PI * 2;
-      const r = 32 + Math.random() * 70;
-      m.position.set(Math.cos(a) * r, -10 + Math.random() * 40, Math.sin(a) * r - 30);
-      if (m.position.z > 0 && Math.abs(m.position.x) < 30) m.position.z -= 70;
-      m.userData.phase = Math.random() * 6;
-      m.userData.baseY = m.position.y;
-      m.userData.spin = (Math.random() - 0.5) * 0.3;
-      this.scene.add(m);
-      this.rocks.push(m);
-    }
+    const cr = crystals(this.u, at);
+    const motes = dust(this.u, 260);
+    cr.name = 'cosmic.crystals';
+    motes.name = 'cosmic.dust';
+    s.add(cr, motes);
   }
 
   private buildStands() {
@@ -248,9 +186,11 @@ class CosmicWorld extends World {
       this.scene.add(g);
       stands.push({ x: cx, z: cz, facing, width: width - 0.6, rows, rowRise: 0.55, rowDepth: 0.9, y0: 0.55 });
     };
-    mk(-11, 0, -Math.PI / 2, 22, 5);
-    mk(11, 0, Math.PI / 2, 22, 5);
-    mk(0, -20, Math.PI, 16, 5);
+    // (four rows: the courtside attract shot looks over the back row, and the far
+    // stand leaves the giant's limb in view over the crowd)
+    mk(-11, 0, -Math.PI / 2, 22, 4);
+    mk(11, 0, Math.PI / 2, 22, 4);
+    mk(0, -20, Math.PI, 16, 4);
     this.addCrowd(
       new Crowd({
         stands,
@@ -264,19 +204,18 @@ class CosmicWorld extends World {
     );
   }
 
+  protected onResize(_W: number, H: number) {
+    this.stars.setHeight(H);
+  }
+
+  protected onDetail(d: number) {
+    this.belt.setDetail(d);
+    this.stars.setDetail(d);
+  }
+
   protected animate(v: FrameView) {
-    const t = v.realT;
-    this.skyMat.uniforms.uTime.value = t;
-    for (const r of this.rocks) {
-      r.position.y = r.userData.baseY + Math.sin(t * 0.4 + r.userData.phase) * 1.2;
-      r.rotation.y += r.userData.spin * v.realDt;
-      r.rotation.x += r.userData.spin * 0.5 * v.realDt;
-    }
-    for (const c of this.crystals) {
-      const k = 1.4 + Math.sin(t * 1.6 + c.userData.phase) * 0.6;
-      ((c.material as THREE.MeshBasicMaterial).color as THREE.Color).copy(c.userData.base ?? (c.userData.base = (c.material as THREE.MeshBasicMaterial).color.clone())).multiplyScalar(k / 2);
-    }
-    this.planet.rotation.y = t * 0.01;
+    this.u.uTime.value = v.realT;
+    this.u.uBeat.value = v.beat;
   }
 
   protected fx(e: MatchEvent) {
@@ -287,6 +226,11 @@ class CosmicWorld extends World {
     }
     if (e.type === 'bounce' && e.impact > 1.5) P.burst({ x: e.pos.x, y: 0.05, z: e.pos.z, count: 1, speed: [0, 0], life: [0.6, 0.6], size: [0.25, 0.25], shrink: 8, colors: [hdr(e.out ? PINK : CYAN, 2)], shape: 'ring' });
     if (e.type === 'point') P.burst({ x: 0, y: 6, z: e.winner === 0 ? 6 : -6, count: 110, speed: [3, 9], dir: [0, 1, 0], spread: 0.95, life: [2, 3.5], size: [0.06, 0.14], colors: [hdr(CYAN, 3), hdr(PINK, 3), hdr(VIOLET, 3), hdr(new THREE.Color('#ffe38d'), 3)], shape: 'star', gravity: 1, drag: 0.6, spin: 4 });
+  }
+
+  dispose() {
+    super.dispose();
+    this.#nebula.dispose();
   }
 }
 
