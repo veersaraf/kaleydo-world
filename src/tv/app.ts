@@ -649,12 +649,17 @@ export class App {
       this.keySlash = null;
       g.slash(ks.slot, ks.attack);
     }
-    if (dt > 0) g.step(dt);
+    // over the edge: the knock-off plays in slow motion, then eases back to speed
+    // for the splash (game time only — the camera and effects keep real time)
+    const since = g.t - g.stateT0;
+    const slow = g.state === 'fall' ? Math.min(1, 0.35 + Math.max(0, since - 0.45) * 1.6) : 1;
+    const gdt = dt * slow;
+    if (gdt > 0) g.step(gdt);
     this.duelCam.update(g, realDt, this.realT);
-    const poses = g.fighters.map((f, i) => this.duelAnims[i].update(g.t, Math.max(1e-4, dt), f));
+    const poses = g.fighters.map((f, i) => this.duelAnims[i].update(g.t, Math.max(1e-4, gdt), f));
     const view: FrameView = {
       t: g.t,
-      dt,
+      dt: gdt,
       realT: this.realT,
       realDt,
       ball: { x: 0, y: -10, z: 0 },
