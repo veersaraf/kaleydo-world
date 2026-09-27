@@ -201,6 +201,7 @@ export class Flow {
         if (seat) {
           this.toast(`P${seat.slot + 1}'s remote disconnected`, seat.color);
           if (!this.screen && this.app.match && !this.app.attract && this.app.match.players.some((p) => p.slot === seat.slot)) this.pause();
+          this.padLost(seat.slot);
         }
       }
     };
@@ -883,6 +884,29 @@ export class Flow {
       this.audio.sfx.cheer(0.5);
     }
     this.syncPads(true);
+  }
+
+  /**
+   * A phone dropped out: whatever it was holding lets go (a grip, a guard, a drawn
+   * string would otherwise stay held with nobody to release it), and the game waits
+   * for them if it's their go. Reconnecting puts their pad back as it was.
+   */
+  private padLost(slot: number) {
+    const bg = this.app.bowl;
+    if (bg && bg.bowlers.some((b) => b.slot === slot)) {
+      bg.grip(slot, false);
+      if (bg.bowler.slot === slot) this.pause();
+    }
+    const dg = this.app.duel;
+    if (dg && dg.duelists.some((d) => d.slot === slot && d.cpu === null)) {
+      dg.guard(slot, false);
+      if (dg.state !== 'over') this.pause();
+    }
+    const ag = this.app.archery;
+    if (ag && ag.archers.some((a) => a.slot === slot && a.cpu === null)) {
+      ag.cancelDraw(slot);
+      if (ag.archers[ag.current]?.slot === slot) this.pause();
+    }
   }
 
   private pause() {
