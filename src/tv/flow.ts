@@ -1361,6 +1361,8 @@ export class Flow {
   // ---------------------------------------------------------------- archery
 
   private archHud: ArcheryHud | null = null;
+  /** strikes in a row, per bowler */
+  private bowlStreak = new Map<unknown, number>();
   private archCfg: { world: string; cpu: number } | null = null;
 
   /** Who's shooting (every phone, plus an optional CPU) and where. */
@@ -1899,6 +1901,7 @@ export class Flow {
   }
 
   async beginBowling(world: string, cpu: number) {
+    this.bowlStreak.clear();
     this.bowlCfg = { world, cpu };
     this.go(null);
     this.hud?.el.remove();
@@ -2003,7 +2006,11 @@ export class Flow {
         a?.sfx.roll(0);
         const calls: Record<string, [string, string]> = { strike: ['STRIKE!', 'good'], spare: ['SPARE!', 'good'], split: ['SPLIT', 'bad'], gutter: ['GUTTER', 'bad'], miss: ['MISS', 'bad'] };
         const [text, cls] = calls[e.mark] ?? [`${e.pins} ${e.pins === 1 ? 'PIN' : 'PINS'}`, ''];
-        hud?.say(text, e.mark === 'split' ? splitName(e.standing) : '', cls);
+        // strikes in a row get their names
+        const run = e.mark === 'strike' ? (this.bowlStreak.get(e.bowler) ?? 0) + 1 : 0;
+        this.bowlStreak.set(e.bowler, run);
+        const streak = run === 2 ? 'DOUBLE!' : run === 3 ? 'TURKEY!' : run === 4 ? 'HAMBONE!' : run >= 5 ? `${run}-BAGGER!` : '';
+        hud?.say(text, e.mark === 'split' ? splitName(e.standing) : streak, cls);
         hud?.update(g.current);
         hud?.setPins(e.mark === 'strike' || e.mark === 'spare' ? null : e.standing);
         if (e.mark === 'strike') {

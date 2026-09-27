@@ -9,7 +9,7 @@ import { BowlPhysics } from './bowling/physics';
 import { BowlVenue } from './bowling/venue';
 import { BowlAnimator } from './bowling/anim';
 import { BowlScore } from './bowling/score';
-import { FOUL_Z } from './bowling/lane';
+import { FOUL_Z, HEAD_Z } from './bowling/lane';
 import type { BowlerState } from './bowling/types';
 import { DuelGame } from './duel/game';
 import { DuelCamera } from './duel/camera';
@@ -85,6 +85,8 @@ export class App {
   private bowlAnims: BowlAnimator[] = [];
   private phys: BowlPhysics | null = null;
   onBowlEvent: (e: BowlEvent) => void = () => {};
+  /** when the ball first met the pins this roll (real time), or −1 */
+  private bowlSlow = -1;
   // ---- sword duel
   duel: DuelGame | null = null;
   duelCam = new DuelCamera();
@@ -1059,7 +1061,24 @@ export class App {
     const bowlers: Bowler[] = specs.map((b) => ({ ...b, score: new BowlScore(), x: START_X * b.handed, aim: 0 }));
     this.bowl = new BowlingGame(bowlers, this.phys);
     this.bowl.onEvent = (e) => {
-      if (e.type === 'physics' && e.e.type === 'hit' && e.e.ballOnPin) this.bowlCam.kick(Math.min(0.6, e.e.impact * 0.06));
+      if (e.type === 'physics' && e.e.type === 'hit' && e.e.ballOnPin) {
+        this.bowlCam.kick(Math.min(0.6, e.e.impact * 0.06));
+        // the ball crashing into the pins: a beat of slow motion (once a roll)
+        if (this.bowlSlow < 0) this.bowlSlow = this.realT;
+      }
+      if (e.type === 'result') {
+        this.bowlSlow = -1;
+        const w = this.stage.current;
+        if (w && !this.attract && (e.mark === 'strike' || e.mark === 'spare')) {
+          const strike = e.mark === 'strike';
+          w.crowd?.cheerNow(strike ? 1 : 0.6);
+          // confetti over the deck
+          const cols = ['#ff5a8a', '#ffd23a', '#3aa8ff', '#4be3a2', '#b07cff', '#ffffff'].map((c) => new THREE.Color(c));
+          for (const x of strike ? [-0.9, 0, 0.9] : [0])
+            w.particles.burst({ x, y: 0.6, z: HEAD_Z - 0.4, count: strike ? 70 : 45, speed: [3.5, 8], dir: [0, 1, 0.25], spread: 0.55, life: [1.4, 2.4], size: [0.04, 0.085], shrink: 0.6, colors: cols, gravity: 5.5, drag: 1.4, spin: 8 });
+        }
+      }
+      if (e.type === 'cancel') this.bowlSlow = -1;
       this.onBowlEvent(e);
     };
     this.bowlAnims = bowlers.map((b) => new BowlAnimator(b.handed, b.look));
@@ -1096,7 +1115,13 @@ export class App {
     const w = this.stage.current!;
     this.prepareBowlWorld();
     const dt = this.paused ? 0 : Math.min(0.05, realDt);
-    if (dt > 0) g.step(dt);
+    // the impact in slow motion: 0.3× for a third of a second, easing back over the next 0.75
+    let gdt = dt;
+    if (this.bowlSlow >= 0) {
+      const a = this.realT - this.bowlSlow;
+      if (a < 1.1) gdt = dt * (a < 0.35 ? 0.3 : 0.3 + 0.7 * ((a - 0.35) / 0.75));
+    }
+    if (gdt > 0) g.step(gdt);
     this.bowlCam.update(g, realDt, this.realT);
     this.setDof(this.bowlCam.focus, 1);
     // the bowler up, and the others waiting at the back of the approach, off to
