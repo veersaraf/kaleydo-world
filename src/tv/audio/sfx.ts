@@ -287,6 +287,52 @@ export class Sfx {
     if (face) for (let i = 0; i < 4; i++) e.tone(t + 0.03 + i * 0.045, 420, 0.04, { type: 'triangle', gain: 0.05 * (1 - i / 4), bus: e.sfx, pan });
   }
 
+  /** Baseball: the crack of the bat — a hard woody knock and its ring; a sweet one
+   *  cracks brighter and booms (the stadium answers) */
+  crack(power: number, sweet: boolean, pan = 0) {
+    const e = this.e;
+    const t = e.now + 0.002;
+    const p = Math.max(0.15, Math.min(1, power));
+    const bus = e.sfx;
+    if (this.timbre === 'chip') {
+      e.tone(t, 1040 + p * 520, 0.1, { type: 'square', gain: 0.24, to: 520, bus, pan });
+      e.tone(t, 260, 0.08, { type: 'square', gain: 0.16, to: 130, bus, pan });
+      if (sweet) e.tone(t + 0.05, 2090, 0.18, { type: 'square', gain: 0.08, bus, pan });
+      return;
+    }
+    // the knock: a very short bright burst and a wooden body
+    e.noise(t, 0.035 + p * 0.02, { type: 'bandpass', f0: 3400, f1: 1500, q: 1.3, gain: 0.7 + p * 0.3, bus, pan });
+    e.tone(t, 860 + p * 240, 0.06, { type: 'triangle', gain: 0.4 + p * 0.25, to: 520, bus, pan });
+    e.tone(t, 210 + p * 50, 0.11, { gain: 0.45 + p * 0.25, to: 95, bus, pan });
+    // the ring of the ash, and the echo off the stands
+    e.tone(t + 0.004, 1480 + p * 120, 0.16 + p * 0.1, { type: 'sine', gain: 0.07 + p * 0.05, bus, pan, rev: 0.45 });
+    e.noise(t + 0.01, 0.25, { type: 'bandpass', f0: 1900, f1: 900, q: 0.8, gain: 0.1 + p * 0.12, bus, pan, rev: 0.7 });
+    if (sweet) {
+      e.tone(t, 120, 0.35, { gain: 0.5, to: 48, bus, pan });
+      e.noise(t, 0.45, { type: 'lowpass', f0: 2600, f1: 240, gain: 0.35, bus, pan, rev: 0.55 });
+      e.tone(t + 0.02, 2349, 0.5, { gain: 0.07, bus, pan, rev: 0.6 });
+    }
+  }
+
+  /** Baseball: the ball smacking into the catcher's mitt */
+  mitt(pan = 0) {
+    const e = this.e;
+    const t = e.now + 0.002;
+    e.noise(t, 0.05, { type: 'bandpass', f0: 1300, f1: 500, q: 1.1, gain: 0.75, bus: e.sfx, pan });
+    e.tone(t, 150, 0.09, { gain: 0.55, to: 70, bus: e.sfx, pan });
+    e.noise(t + 0.004, 0.2, { type: 'lowpass', f0: 1400, f1: 300, gain: 0.08, bus: e.sfx, pan, rev: 0.5 });
+  }
+
+  /** a firework bursting over the stands (a home run) */
+  firework(pan = 0, big = false) {
+    const e = this.e;
+    const t = e.now + 0.002;
+    e.tone(t, 90, 0.5, { gain: big ? 0.55 : 0.4, to: 40, bus: e.sfx, pan, rev: 0.6 });
+    e.noise(t, 0.6, { type: 'lowpass', f0: 3000, f1: 200, gain: big ? 0.5 : 0.35, bus: e.sfx, pan, rev: 0.6 });
+    // crackle
+    for (let i = 0; i < 9; i++) e.noise(t + 0.25 + i * 0.07 + Math.random() * 0.05, 0.03, { type: 'highpass', f0: 3500, gain: 0.12 * (1 - i / 10), bus: e.sfx, pan: pan + (Math.random() - 0.5) * 0.6, rev: 0.4 });
+  }
+
   /** a balloon popping */
   pop(pan = 0) {
     const e = this.e;

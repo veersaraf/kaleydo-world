@@ -397,6 +397,7 @@ const panels: Record<PadMode, HTMLElement> = {
   bowl: bowlPanel,
   sword: swordPanel,
   bow: bowPanel,
+  bat: playPanel,
 };
 
 const leds = h('div', { class: 'leds' }, h('i'), h('i'), h('i'), h('i'));
@@ -490,7 +491,7 @@ let motionSeen = false;
 let seq = 0;
 let joined = false;
 /** which game the TV's fx lines are about (they can arrive while on 'watch') */
-let sport: 'tennis' | 'bowl' | 'duel' | 'archery' = 'tennis';
+let sport: 'tennis' | 'bowl' | 'duel' | 'archery' | 'baseball' = 'tennis';
 /** bowling: the pointer holding the grip (the ball is in the hand), or null */
 let gripId: number | null = null;
 /** sword: the guard pad is held (by these pointers) */
@@ -611,6 +612,7 @@ function setMode(m: PadMode, title?: string, hint?: string, lock = false) {
   if (m === 'bowl') sport = 'bowl';
   else if (m === 'sword') sport = 'duel';
   else if (m === 'bow') sport = 'archery';
+  else if (m === 'bat') sport = 'baseball';
   else if (m === 'play' || m === 'serve') sport = 'tennis';
   if (prev === 'bowl' && m !== 'bowl') {
     // the game moved on with the ball still in the hand: drop it, don't throw
@@ -637,6 +639,19 @@ function setMode(m: PadMode, title?: string, hint?: string, lock = false) {
   if (m === 'play') {
     playTitle.textContent = title || '';
     playHint.textContent = hint || 'Swing like a racket';
+  }
+  playPanel.classList.toggle('bat', m === 'bat');
+  if (m === 'bat') {
+    if (prev !== 'bat') {
+      // a fresh turn at bat: the last swing's read-out (and a tennis one) is old news
+      gaugeRing.style.setProperty('--p', '0.04');
+      (gaugeText.children[0] as HTMLElement).textContent = 'SWING';
+      (gaugeText.children[1] as HTMLElement).textContent = '';
+      shotLine.textContent = '';
+      tvLine.textContent = '';
+    }
+    playTitle.textContent = title || 'At bat!';
+    playHint.textContent = hint || (motionOK ? 'Hold the phone like a bat · swing as the ball arrives' : 'Swipe across the pad to swing');
   }
   if (m === 'skip') {
     skipBtn.querySelector('b')!.textContent = title || 'SKIP';
@@ -672,7 +687,7 @@ function setMode(m: PadMode, title?: string, hint?: string, lock = false) {
     swordPanel.classList.toggle('touch', !motionOK);
     showGuardAngle();
   }
-  swipeZone.classList.toggle('on', !motionOK && (m === 'play' || m === 'serve'));
+  swipeZone.classList.toggle('on', !motionOK && (m === 'play' || m === 'serve' || m === 'bat'));
   servePanel.classList.toggle('swipe', !motionOK);
 }
 
@@ -708,6 +723,10 @@ function onMessage(m: ServerToPad) {
     case 'fx': {
       if (sport === 'duel') {
         duelFx(m);
+        break;
+      }
+      if (sport === 'baseball') {
+        batFx(m);
         break;
       }
       const bowling = sport === 'bowl' || sport === 'archery';
@@ -764,6 +783,47 @@ function onMessage(m: ServerToPad) {
     }
     case 'bye':
       if (m.reason === 'replaced') setMode('wait', 'Opened elsewhere', 'This remote is active in another tab');
+      break;
+  }
+}
+
+/** The TV's verdict at bat — "HOME RUN! · 124 m", "FOUL · a touch early" — with the crack of the bat. */
+function batFx(m: Extract<ServerToPad, { type: 'fx' }>) {
+  const line = [m.label, m.detail].filter(Boolean).join(' · ');
+  if (line) {
+    tvLine.textContent = line;
+    tvLine.classList.remove('pop');
+    void tvLine.offsetWidth;
+    tvLine.classList.add('pop');
+    // between turns the bat panel isn't showing: say it anyway
+    if (mode !== 'bat' && m.fx !== 'select' && m.fx !== 'move' && m.fx !== 'back') showToast(m.label || line, 1800);
+  }
+  switch (m.fx) {
+    case 'hit':
+      audio.crack(m.power ?? 0.6);
+      doFlash();
+      break;
+    case 'perfect':
+      audio.crack(m.power ?? 0.9, true);
+      doFlash(true);
+      if (mode === 'bat' && m.label) showToast(m.label, 1600);
+      break;
+    case 'select':
+      audio.select();
+      break;
+    case 'move':
+      audio.tick();
+      break;
+    case 'back':
+      audio.back();
+      break;
+    case 'point-won':
+    case 'win':
+      audio.jingle(true);
+      break;
+    case 'point-lost':
+    case 'lose':
+      audio.jingle(false);
       break;
   }
 }
@@ -1001,6 +1061,15 @@ function showSwing(sw: SwingEvent, path: number | null) {
   gaugeRing.classList.remove('pop');
   void gaugeRing.offsetWidth;
   gaugeRing.classList.add('pop');
+  if (mode === 'bat') {
+    // a bat: how hard, and the swing's plane (the TV judges the timing)
+    const a = Math.round(sw.attack);
+    (gaugeText.children[0] as HTMLElement).textContent = 'SWING';
+    (gaugeText.children[1] as HTMLElement).textContent = a >= 10 ? `Uppercut ${a}°` : a <= -10 ? `Chop ${-a}°` : 'Level';
+    shotLine.textContent = `${pct}% power`;
+    tvLine.textContent = '';
+    return;
+  }
   const spin = sw.spin > 0.25 ? `Topspin ${Math.round(sw.attack)}°` : sw.spin < -0.25 ? `Slice ${Math.round(sw.attack)}°` : 'Flat';
   (gaugeText.children[0] as HTMLElement).textContent = SIDE_NAME[sw.side];
   (gaugeText.children[1] as HTMLElement).textContent = spin;

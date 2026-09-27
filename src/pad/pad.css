@@ -1535,3 +1535,15 @@ section {
   max-height: 100dvh;
   overflow-y: auto;
 }
+
+/* ---- at bat (baseball): the play panel with a ball for a gauge */
+.play.bat .ring {
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='none' stroke='%23e0394b' stroke-linecap='round' opacity='.5'%3E%3Cpath d='M19 9C37 33 37 67 19 91M81 9C63 33 63 67 81 91' stroke-width='1.4'/%3E%3Cpath d='M23.5 11C41.5 35 41.5 65 23.5 89M76.5 11C58.5 35 58.5 65 76.5 89' stroke-width='3.2' stroke-dasharray='.1 5.2'/%3E%3C/g%3E%3C/svg%3E") center / 76% no-repeat,
+    radial-gradient(closest-side, #fdfcf8 78%, transparent 79%),
+    conic-gradient(from 210deg, var(--pc) calc(var(--p) * 300deg), rgba(60, 50, 110, 0.1) 0 300deg, transparent 0);
+}
+
+.play.bat .tvline.pop {
+  animation: pop 0.35s cubic-bezier(0.2, 2, 0.4, 1);
+}

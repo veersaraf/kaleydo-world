@@ -2268,3 +2268,290 @@ kbd {
   opacity: 0.6;
   margin-top: calc(var(--u) * 0.3);
 }
+
+/* ------------------------------------------------------------ baseball HUD */
+
+.hrboard {
+  position: absolute;
+  top: calc(var(--u) * 2.4);
+  left: calc(var(--u) * 2.8);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 0.6);
+  font-family: var(--display);
+}
+
+.hrrow {
+  display: flex;
+  align-items: stretch;
+  background: var(--panel);
+  border-radius: calc(var(--u) * 1.2);
+  overflow: hidden;
+  box-shadow: 0 calc(var(--u) * 0.6) calc(var(--u) * 2) rgba(10, 10, 40, 0.25);
+  opacity: 0.8;
+  color: var(--ink);
+  transform-origin: left center;
+  transition: opacity 0.3s, transform 0.3s;
+}
+
+.hrrow.on {
+  opacity: 1;
+  transform: scale(1.04);
+  box-shadow: 0 0 0 calc(var(--u) * 0.35) var(--c), 0 calc(var(--u) * 0.6) calc(var(--u) * 2) rgba(10, 10, 40, 0.3);
+}
+
+.hrrow .bname {
+  width: calc(var(--u) * 12);
+}
+
+.hrpips {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 0.45);
+  padding: 0 calc(var(--u) * 1.1);
+  border-left: 1px solid rgba(20, 20, 60, 0.1);
+}
+
+.hrpips i {
+  width: calc(var(--u) * 1.5);
+  height: calc(var(--u) * 1.5);
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 calc(var(--u) * 0.18) rgba(20, 20, 60, 0.18);
+}
+
+.hrpips i.next {
+  box-shadow: inset 0 0 0 calc(var(--u) * 0.25) var(--c);
+  animation: hrnext 1s ease-in-out infinite alternate;
+}
+
+@keyframes hrnext {
+  to {
+    transform: scale(1.25);
+  }
+}
+
+.hrpips i.hr {
+  background: radial-gradient(circle at 35% 30%, #fff6c2, #ffc21a 60%, #e59400);
+  box-shadow: 0 0 calc(var(--u) * 0.8) rgba(255, 196, 30, 0.8);
+}
+
+.hrpips i.hit {
+  background: #fff;
+  box-shadow: inset 0 0 0 calc(var(--u) * 0.18) rgba(20, 20, 60, 0.35);
+}
+
+.hrpips i.foul {
+  background: rgba(20, 20, 60, 0.18);
+  box-shadow: none;
+}
+
+.hrpips i.k {
+  background:
+    linear-gradient(45deg, transparent 43%, rgba(255, 61, 100, 0.75) 44% 56%, transparent 57%),
+    linear-gradient(-45deg, transparent 43%, rgba(255, 61, 100, 0.75) 44% 56%, transparent 57%);
+  box-shadow: none;
+  opacity: 0.8;
+}
+
+.hrtot {
+  min-width: calc(var(--u) * 6.4);
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: calc(var(--u) * 0.4);
+  padding: calc(var(--u) * 0.5) calc(var(--u) * 1);
+  background: var(--accent);
+  color: #fff;
+}
+
+.hrtot b {
+  font-size: calc(var(--u) * 2.8);
+  line-height: 1;
+}
+
+.hrtot span {
+  font-size: calc(var(--u) * 1.3);
+  opacity: 0.85;
+}
+
+.hrdist {
+  position: absolute;
+  top: calc(var(--u) * 3);
+  left: 50%;
+  transform: translateX(-50%) scale(0.8);
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--u) * 0.5);
+  font-family: var(--display);
+  font-weight: 700;
+  color: #fff;
+  -webkit-text-stroke: calc(var(--u) * 0.7) var(--ink);
+  paint-order: stroke fill;
+  text-shadow: 0 calc(var(--u) * 0.8) 0 var(--ink);
+  opacity: 0;
+  transition: opacity 0.25s, transform 0.35s cubic-bezier(0.2, 1.6, 0.4, 1), color 0.3s;
+}
+
+.hrdist.on {
+  opacity: 1;
+  transform: translateX(-50%);
+}
+
+.hrdist b {
+  font-size: calc(var(--u) * 9);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.hrdist span {
+  font-size: calc(var(--u) * 4);
+}
+
+.hrdist.hr {
+  color: #ffd23a;
+  transform: translateX(-50%) scale(1.12);
+  filter: drop-shadow(0 0 calc(var(--u) * 1.6) rgba(255, 200, 40, 0.75));
+}
+
+.hrmeter {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--u) * 11);
+  width: calc(var(--u) * 34);
+  transform: translateX(-50%) translateY(calc(var(--u) * 1.5));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--u) * 0.7);
+  font-family: var(--display);
+  color: #fff;
+  opacity: 0;
+  transition: opacity 0.3s, transform 0.3s;
+}
+
+.hrmeter.on {
+  opacity: 1;
+  transform: translateX(-50%);
+}
+
+.hrmeter .track {
+  position: relative;
+  width: 100%;
+  height: calc(var(--u) * 1.5);
+  border-radius: 99px;
+  background: linear-gradient(90deg, rgba(255, 90, 110, 0.55), rgba(255, 255, 255, 0.25) 42% 58%, rgba(255, 90, 110, 0.55));
+  box-shadow: 0 0 0 calc(var(--u) * 0.25) rgba(15, 14, 40, 0.6), 0 calc(var(--u) * 0.5) calc(var(--u) * 1.5) rgba(10, 10, 40, 0.3);
+}
+
+.hrmeter .track em {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  font-style: normal;
+  font-size: calc(var(--u) * 1.3);
+  letter-spacing: 0.08em;
+  -webkit-text-stroke: calc(var(--u) * 0.35) var(--ink);
+  paint-order: stroke fill;
+}
+
+.hrmeter .track em:first-child {
+  right: calc(100% + var(--u) * 1.2);
+}
+
+.hrmeter .track em:last-child {
+  left: calc(100% + var(--u) * 1.2);
+}
+
+.hrmeter .sweet {
+  position: absolute;
+  left: calc(50% - 8.3%);
+  width: 16.6%;
+  top: 0;
+  bottom: 0;
+  border-radius: 99px;
+  background: #3ddc84;
+  box-shadow: 0 0 calc(var(--u) * 1) rgba(61, 220, 132, 0.7);
+}
+
+.hrmeter .dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: calc(var(--u) * 2.6);
+  height: calc(var(--u) * 2.6);
+  margin: calc(var(--u) * -1.3);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 calc(var(--u) * 0.35) var(--ink);
+  transition: left 0.18s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+.hrmeter .dot.pop {
+  animation: bump 0.45s cubic-bezier(0.2, 2, 0.4, 1);
+}
+
+.hrmeter.perfect .dot {
+  background: #ffd23a;
+  box-shadow: 0 0 0 calc(var(--u) * 0.35) var(--ink), 0 0 calc(var(--u) * 1.6) rgba(255, 210, 58, 0.9);
+}
+
+.hrmeter.miss .dot {
+  background: #ff5a6e;
+}
+
+.hrmeter .word {
+  font-size: calc(var(--u) * 2);
+  -webkit-text-stroke: calc(var(--u) * 0.5) var(--ink);
+  paint-order: stroke fill;
+}
+
+.hrmeter.perfect .word {
+  color: #ffd23a;
+}
+
+.hrpitch {
+  position: absolute;
+  right: calc(var(--u) * 3.4);
+  bottom: calc(var(--u) * 4);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding: calc(var(--u) * 1) calc(var(--u) * 1.8);
+  border-radius: calc(var(--u) * 1.4);
+  background: var(--panel);
+  color: var(--ink);
+  font-family: var(--display);
+  box-shadow: 0 calc(var(--u) * 0.6) calc(var(--u) * 2) rgba(10, 10, 40, 0.25);
+  opacity: 0;
+  transform: translateY(calc(var(--u) * 1.5));
+  transition: opacity 0.3s, transform 0.3s;
+}
+
+.hrpitch.on {
+  opacity: 1;
+  transform: none;
+}
+
+.hrpitch.pop {
+  animation: bump 0.45s cubic-bezier(0.2, 2, 0.4, 1);
+}
+
+.hrpitch b {
+  font-size: calc(var(--u) * 2.2);
+  letter-spacing: 0.04em;
+}
+
+.hrpitch span {
+  font-size: calc(var(--u) * 1.8);
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.callout.hrcall {
+  top: 36%;
+}
+
+.callout.hrcall.hr {
+  color: #ffd23a;
+  font-size: calc(var(--u) * 14);
+}

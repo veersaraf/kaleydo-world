@@ -89,6 +89,20 @@ export class PadAudio {
     }
   }
 
+  /** Baseball: the crack of the bat — a sharp woody knock with a ring (a sweet one rings brighter). */
+  crack(power = 0.7, sweet = false) {
+    if (!this.ok) return;
+    const t = this.ctx!.currentTime + 0.001;
+    const p = Math.max(0.15, Math.min(1, power));
+    this.noiseBurst(t, 0.05 + p * 0.03, 'bandpass', 3200, 1400, 1.6, 0.6 + p * 0.4);
+    this.tone(t, 820 + p * 260, 0.07, 0.45 + p * 0.25, 'triangle', 420);
+    this.tone(t, 190 + p * 60, 0.12, 0.35 + p * 0.2, 'sine', 90);
+    if (sweet) {
+      this.tone(t + 0.01, 2350, 0.22, 0.14, 'sine');
+      this.tone(t + 0.05, 3140, 0.26, 0.08, 'sine');
+    }
+  }
+
   /** Air swish when a swing is detected on the phone itself. */
   swish(power = 0.5) {
     if (!this.ok) return;
