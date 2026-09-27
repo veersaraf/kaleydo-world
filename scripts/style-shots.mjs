@@ -122,7 +122,18 @@ for (const w of worlds) {
     await hideUi();
     await tv.waitForTimeout(900);
     await snap(w, 'arch');
-    await tv.evaluate(() => window.kaleido.input.onDraw(0, true));
+    // aim at the main face (allowing for the drop), as scripts/archery-play.mjs does
+    await tv.evaluate(() => {
+      const k = window.kaleido;
+      const drop = (d) => (d < 18 ? 0.44 : d < 26 ? 0.99 : 1.89);
+      k.mouseAim = (g) => {
+        const f = g.mainTarget();
+        const a = g.archer;
+        const d = Math.hypot(f.x - a.x, f.z - a.z);
+        return { yaw: Math.atan2(-(f.x - a.x), -(f.z - a.z)), pitch: Math.atan2(f.y + drop(d) - 1.55, d) };
+      };
+      k.input.onDraw(0, true);
+    });
     await tv.waitForTimeout(1500);
     await snap(w, 'arch-draw');
     await tv.evaluate(() => window.kaleido.input.onDraw(0, false));

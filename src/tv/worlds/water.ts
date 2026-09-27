@@ -26,8 +26,8 @@ import { Pass, makeRT } from '../render/post';
 import { NOISE, COLOR } from '../render/glsl';
 import type { MatchEvent } from '../tennis/match';
 import { Rng } from '../core/math';
-import { Wind, motion, type SwayOpts } from './park-env/wind';
-import { Foliage, clumpGeometry, bushBlobs, tintMask, type Place } from './park-env/foliage';
+import { Wind, motion, sway, type SwayOpts } from './park-env/wind';
+import { Foliage, clumpGeometry, bushBlobs, tintMask, type Place, type Blob } from './park-env/foliage';
 import { Clouds } from './park-env/sky';
 import { Birds } from './park-env/props';
 import { landGeometry, bumpsAt, scatterBumps, smooth, type Bump } from './park-env/land';
@@ -599,14 +599,21 @@ class WaterWorld extends World {
     ];
     for (const [x, z, sc] of willows) wide.push({ x, z, s: sc, sy: 1, yaw: r.range(0, 6.3), color: new THREE.Color('#a9d77e') });
     f.trees('wide', wide, 17);
+    // the strands: slim ribbons of leaves falling from the crown's rim, swinging most at their tips
     const strands: Place[] = [];
     for (const [x, z, sc] of willows)
-      for (let k = 0; k < 26; k++) {
-        const a = (k / 26) * Math.PI * 2 + r.range(-0.1, 0.1);
-        const d = r.range(1.4, 2.6) * sc;
-        strands.push({ x: x + Math.cos(a) * d, z: z + Math.sin(a) * d, y: 4.2 * sc, s: r.range(0.9, 1.2) * sc, yaw: r.range(0, 6.3), color: r.pick(greens) });
+      for (let k = 0; k < 22; k++) {
+        const a = (k / 22) * Math.PI * 2 + r.range(-0.1, 0.1);
+        const d = r.range(2.2, 3.1) * sc;
+        strands.push({ x: x + Math.cos(a) * d, z: z + Math.sin(a) * d, y: 4.6 * sc, s: r.range(0.85, 1.15) * sc, sy: r.range(0.9, 1.2), yaw: r.range(0, 6.3), color: r.pick(greens) });
       }
-    f.vines(strands, 3.6, 19);
+    const len = 3.8;
+    const hang = { amp: 0.16, height: -len, flutter: 0.02 };
+    const ribbon: Blob[] = Array.from({ length: 9 }, (_, k) => {
+      const t = k / 8;
+      return [Math.sin(k * 1.9) * 0.05, -t * len + 0.1, Math.cos(k * 2.3) * 0.04, 0.13 - t * 0.05, 1.8];
+    });
+    f.add(clumpGeometry(ribbon, { seed: 19, seg: 5, lumpy: 0.08, lean: 0.3 }), sway(wash(new THREE.MeshLambertMaterial({ vertexColors: true })), this.wind, 'canopy', hang), strands, { shadow: null });
     // clipped hedges behind the side stands
     const hedge: Place[] = [];
     for (const sx of [-1, 1]) for (let i = 0; i < 15; i++) hedge.push({ x: sx * 20, z: -18 + i * 2.6 + r.range(-0.3, 0.3), s: r.range(1.1, 1.4), sy: r.range(0.9, 1.1), yaw: r.range(0, 6.3), color: r.pick(greens) });
