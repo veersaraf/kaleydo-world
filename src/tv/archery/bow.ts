@@ -265,11 +265,11 @@ function bowGeometry(limb: THREE.Color, riser: THREE.Color, grip: THREE.Color, t
   g.scale(0.95, 1, 1.25);
   g.translate(0, -0.005, 0.012);
   parts.push(paint(g, grip));
-  // the riser above and below: slim blocks, the sight window cut into the upper one
+  // the riser above and below: slim blocks (the arrow rests beside the upper one)
   for (const sy of [1, -1]) {
     const len = BOW.riser - 0.05;
     const b = new THREE.BoxGeometry(0.034, len, 0.05, 1, 1, 1);
-    b.translate(sy > 0 ? 0.004 : 0, sy * (0.05 + len / 2), -0.006);
+    b.translate(0, sy * (0.05 + len / 2), -0.006);
     parts.push(paint(b, riser));
     // the limb bolt
     const bolt = new THREE.CylinderGeometry(0.014, 0.014, 0.046, 10);
@@ -323,6 +323,8 @@ export class Bow extends THREE.Group {
   flex = 0;
   /** metres → bow units, for the arrow (1 / the rig's scale): ArcheryGear sets it */
   arrowScale = 1 / CHAR_SCALE;
+  /** the arrow rests beside the riser: on the archer's left for a right-hander (−x), their right for a left-hander */
+  restX = -0.021;
   /** the arrow (on the string or in the hand), for its world position */
   readonly arrow = new THREE.Group();
   private body: THREE.Mesh;
@@ -445,7 +447,7 @@ export class Bow extends THREE.Group {
     const k = this.arrowScale;
     const L = ARROW.length * k;
     if (mode === 'string' || !at || !dir) {
-      tmpA.set(0, GRIP.restY, 0).sub(this.nock);
+      tmpA.set(this.restX, GRIP.restY, 0).sub(this.nock);
       if (tmpA.lengthSq() < 1e-6) tmpA.set(0, 0, -1);
       tmpA.normalize();
       tmpB.copy(this.nock);
@@ -680,7 +682,6 @@ const vF = new THREE.Vector3();
 const vSeg = new THREE.Vector3();
 const vHand = new THREE.Vector3();
 const vDir = new THREE.Vector3();
-const vQ = new THREE.Vector3();
 
 /** Lay one of the rig's unit arm capsules between two points (as Rig.apply does). */
 function segment(m: THREE.Mesh, a: THREE.Vector3, b: THREE.Vector3) {
@@ -770,14 +771,16 @@ export class ArcheryGear {
     }
     const sm = rig.shadow.material as THREE.MeshBasicMaterial;
     const k: Kit = { rig, bow, quiver, hull, hs, phase: '', snapZ: GRIP.brace, relT: -1, elbow: 0, shadowOpacity: sm.opacity };
-    this.placeQuiver(k);
+    this.fitHand(k);
     return k;
   }
 
-  private placeQuiver(k: Kit) {
+  /** Sides by handedness: the quiver on the draw-side hip, the arrow on the bow's far side from the draw hand. */
+  private fitHand(k: Kit) {
     const q = k.quiver;
     q.position.set(k.hs * 0.27, 0.36, 0.1);
     q.rotation.set(0.38, 0, -k.hs * 0.28);
+    k.bow.restX = -k.hs * 0.021;
   }
 
   private drop(k: Kit) {
@@ -807,7 +810,7 @@ export class ArcheryGear {
       if (!k || !s) continue;
       if (s.handed !== k.hs) {
         k.hs = s.handed;
-        this.placeQuiver(k);
+        this.fitHand(k);
       }
       const entered = s.phase !== k.phase;
       if (entered && s.phase === 'release') {
@@ -846,12 +849,11 @@ export class ArcheryGear {
         else if (s.t >= NOCK.take) {
           // out of the quiver point-down, swinging round towards the bow
           const u = THREE.MathUtils.smoothstep(s.t, NOCK.take, NOCK.seat);
-          vQ.set(0, -1, 0).applyQuaternion(k.rig.root.quaternion);
           // world down → bow space (directions only)
-          vDir.copy(vQ);
+          vDir.set(0, -1, 0);
           bow.getWorldQuaternion(tmpQ).invert();
           vDir.applyQuaternion(tmpQ);
-          vF.set(0, GRIP.restY, 0).sub(hand).normalize();
+          vF.set(bow.restX, GRIP.restY, 0).sub(hand).normalize();
           vDir.lerp(vF, u).normalize();
           bow.setArrow('hand', hand, vDir);
         } else bow.setArrow('off');

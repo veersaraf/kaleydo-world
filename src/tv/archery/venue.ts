@@ -710,6 +710,8 @@ export class RangeVenue implements RangeVenueLike {
   private frame = 0;
   private wind = 0;
   private drawNocked: boolean;
+  /** far arrows are drawn bigger (as the tennis ball is): from this distance, by this much per metre, up to this */
+  private grow = { from: 12, rate: 0.02, max: 1.4 };
   private tracks = new Map<number, TargetTrack>();
   private arrowTracks: ArrowTrack[] = [];
   private camPos = new THREE.Vector3(0, 1.7, RANGE.lineZ + 3);
@@ -748,6 +750,8 @@ export class RangeVenue implements RangeVenueLike {
     this.pal = PAL[this.world] ?? PAL.park;
     this.fx = FX[this.world] ?? FX.park;
     this.drawNocked = !!opts.drawNocked;
+    // at ~270 pixel rows a real-sized arrow at 30 m is a pixel wide
+    if (this.world === 'pixel') this.grow = { from: 8, rate: 0.055, max: 2.2 };
     this.group.name = 'archery';
     const pal = this.pal;
     const shadows = !!kit.castShadow;
@@ -1141,9 +1145,10 @@ export class RangeVenue implements RangeVenueLike {
         const back = ARROW.length * 0.85;
         if (ts >= 0) this.trails.push(ts, px - tmpD.x * back, py - tmpD.y * back, pz - tmpD.z * back);
       }
-      // far arrows are drawn up to ~1.4× so they still read down the range (as the tennis ball is)
+      // far arrows are drawn bigger so they still read down the range
       const d = dist3(px - cam.x, py - cam.y, pz - cam.z);
-      const s = THREE.MathUtils.clamp(1 + (d - 12) * 0.02, 1, 1.4);
+      const g = this.grow;
+      const s = THREE.MathUtils.clamp(1 + (d - g.from) * g.rate, 1, g.max);
       tmpQ.setFromUnitVectors(NEG_Z, tmpD);
       tmpQ2.setFromAxisAngle(Z_AXIS, tr.roll);
       tmpQ.multiply(tmpQ2);
