@@ -103,12 +103,13 @@ function toResult(g: BaseballGame, dt = DT) {
   const r = new Rng(3);
   for (let i = 0; i < 3000; i++) {
     const pitching = r.next();
-    const pl = choosePitch(pitching, r);
+    const ph: 1 | -1 = i % 2 ? 1 : -1;
+    const pl = choosePitch(pitching, r, ph);
     kinds.add(pl.kind);
     const [lo, hi] = PITCH_KINDS[pl.kind].speed;
     if (pl.speed < lo - 1e-9 || pl.speed > hi + 1e-9) ok(false, `${pl.kind} at ${pl.speed} m/s: out of its range`);
-    for (const handed of [1, -1] as const) {
-      const { pitch, path } = planPitch(pl.kind, pl.speed, pl.px, pl.py, handed, 5);
+    {
+      const { pitch, path } = planPitch(pl.kind, pl.speed, pl.px, pl.py, ph, 5);
       const c = pitchAt(path, pitch.tc - pitch.t0, { x: 0, y: 0, z: 0 });
       worst = Math.max(worst, Math.hypot(c.x - pl.px, c.y - pl.py, c.z - FIELD.contactZ));
       const m = pitchAt(path, path.arrive, { x: 0, y: 0, z: 0 });
@@ -661,7 +662,7 @@ function path(f: WorldFlight) {
   near(turnAt, BASEBALL_TIMING.intro, 1e-9, "the intro: 'turn' after 2.5 s");
   pitchOut(g);
   until(g, () => wind.length === 2);
-  within(wind[1] - wind[0], 3.3, 3.8, 'a taken pitch: ~3.5 s windup to windup');
+  within(wind[1] - wind[0], 3.3, 3.85, 'a taken pitch: ~3.5 s windup to windup');
   pitchOut(g);
   swingAt(g, 0, 0, { power: 1, lift: 0.45, age: 0.06 });
   until(g, () => wind.length === 3, 20);

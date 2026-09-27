@@ -43,6 +43,7 @@ import {
   sample,
   type Batted,
   type FlightSample,
+  type RealFlight,
   type PitchPath,
   type V3,
   type WorldFlight,
@@ -73,7 +74,7 @@ export const BASEBALL_TIMING = {
   intro: 2.5,
   /** before each pitch: the batter settles in, the pitcher gets the sign (at least `set` of it with the ball) */
   ready: 1.2,
-  set: 0.5,
+  set: 0.3,
   /** the next hitter steps in */
   switch: 2,
   /** a batted ball: the beat after it comes down (a foul's is shorter); a home run's celebration after it comes down */
@@ -90,7 +91,7 @@ export const BASEBALL_TIMING = {
    *  the throw, reaches the pitcher's glove `toss` later; the throw's over at `throwEnd` */
   catchHold: 0.1,
   throwRelease: 0.3,
-  toss: 0.6,
+  toss: 0.7,
   throwEnd: 0.8,
   /** a home run this long (real m), or off the sweet spot, is a no-doubter: the batter celebrates (a bat flip) as soon as the swing's done */
   noDoubt: 132,
@@ -198,6 +199,8 @@ export class BaseballGame {
   /** the hitters waiting their turn, and whether they're cheering */
   private waiting: BatterState[];
   private waitT0: number[];
+  /** where each character looks (the pitcher, the catcher, the batter, then the hitters), reused frame to frame */
+  private looks: V3[];
   private cheerT0 = -1;
   private winners: number[] = [];
   private tracerOn = false;
@@ -258,6 +261,7 @@ export class BaseballGame {
       };
     });
     this.waitT0 = hitters.map(() => 0);
+    this.looks = [0, 0, 0, ...hitters].map(() => ({ x: 0, y: 0, z: 0 }));
     this.tossTo.x = 0.3 * this.pitcherHanded;
     this.tossTo.y = TOSS_TO_Y;
     this.tossTo.z = TOSS_TO_Z;
@@ -319,6 +323,11 @@ export class BaseballGame {
   /** the batted ball's world flight (for a camera that wants to look ahead), or null */
   get battedFlight(): WorldFlight | null {
     return this.flight;
+  }
+
+  /** the batted ball's real flight (real metres and seconds: its distance, hang and apex), or null */
+  get battedReal(): RealFlight | null {
+    return this.batted?.real ?? null;
   }
 
   /** where the batted ball is `ft` s into its flight (0 = off the bat), world */
@@ -391,26 +400,26 @@ export class BaseballGame {
     const lift = clamp(Number.isFinite(s.lift) ? s.lift : 0, -1, 1);
     const contact = Math.abs(e) <= WINDOW.contact;
     this.swung = true;
-    this.emit({ type: 'swing', who, timing: e, contact, power });
     if (!contact) {
       // a miss: the whole swing, from now; a strike as soon as the ball's in the mitt
       this.planned = null;
       this.startSwing(this.t, power, lift);
       this.swingResult = 'miss';
       this.settleAt = this.t;
+      this.emit({ type: 'swing', who, timing: e, contact, power });
       this.tick();
-      this.pose();
-      return;
-    }
-    if (this.t < p.tc) {
-      // here before the ball reached the plate: the bat meets it when it gets there
+    } else if (this.t < p.tc) {
+      // here before the ball reached the plate: the bat meets it when it gets there (the swing's
+      // shown from SWING.contact before that — already under way if that's passed)
       this.planned = { at: p.tc - SWING.contact, e, power, lift, contact: true, announce: false };
       this.contactAt = p.tc;
       this.swingNow = { e, power, lift };
       this.settleAt = Infinity;
       if (this.planned.at <= this.t) this.startPlanned();
+      this.emit({ type: 'swing', who, timing: e, contact, power });
     } else {
       // the usual case: the ball's gone by on screen — back to the moment the bat met it
+      this.emit({ type: 'swing', who, timing: e, contact, power });
       this.contact(e, power, lift, p.tc + e);
     }
     this.pose();
@@ -663,7 +672,7 @@ export class BaseballGame {
     const who = this.hitters[this.current];
     // a fresh ball if the last one's in play or gone (a strike comes back from the catcher)
     if (this.ballMode === 'play' || this.ballMode === 'gone') this.ballMode = 'hand';
-    this.plan = choosePitch(this.pitching, this.rngPitch);
+    this.plan = choosePitch(this.pitching, this.rngPitch, this.pitcherHanded);
     const aim = planPitch(this.plan.kind, this.plan.speed, this.plan.px, this.plan.py, this.pitcherHanded, 0).path;
     const c = this.catcher;
     c.targetX = aim.mittX;
@@ -938,15 +947,15 @@ export class BaseballGame {
       else if (t >= this.pitcherT0 + TM.follow) this.setPitcher('idle', this.pitcherT0 + TM.follow);
     }
     P.t = P.phase === 'windup' ? Math.max(0, t - this.windupT0) : Math.max(0, t - this.pitcherT0);
-    P.look = P.phase === 'watch' ? this.lookAt(ball) : null;
+    P.look = P.phase === 'watch' ? this.lookAt(this.looks[0], ball) : null;
     // the catcher
     const C = this.catcher;
     C.t = C.phase === 'catch' ? Math.max(0, t - this.catchT0) : Math.max(0, t - this.catcherT0);
-    C.look = C.phase === 'watch' ? this.lookAt(ball) : null;
+    C.look = C.phase === 'watch' ? this.lookAt(this.looks[1], ball) : null;
     // the batter
     const B = this.batter;
     B.t = Math.max(0, t - this.batterT0);
-    B.look = B.phase === 'stance' || B.phase === 'load' || B.phase === 'watch' || (B.phase === 'cheer' && this.ballMode === 'play') ? this.lookAt(ball) : null;
+    B.look = B.phase === 'stance' || B.phase === 'load' || B.phase === 'watch' || (B.phase === 'cheer' && this.ballMode === 'play') ? this.lookAt(this.looks[2], ball) : null;
     // the hitters waiting their turn
     for (let i = 0; i < this.waiting.length; i++) {
       if (i === this.current) continue;
@@ -958,12 +967,15 @@ export class BaseballGame {
         this.waitT0[i] = cheering && this.state !== 'over' ? this.cheerT0 : t;
       }
       w.t = Math.max(0, t - this.waitT0[i]);
-      w.look = inPlay ? this.lookAt(ball) : null;
+      w.look = inPlay ? this.lookAt(this.looks[3 + i], ball) : null;
     }
   }
 
-  private lookAt(p: V3) {
-    return { x: p.x, y: p.y, z: p.z };
+  private lookAt(out: V3, p: V3) {
+    out.x = p.x;
+    out.y = p.y;
+    out.z = p.z;
+    return out;
   }
 
   // ------------------------------------------------------------ the ball

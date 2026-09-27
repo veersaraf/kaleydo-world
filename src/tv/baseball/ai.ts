@@ -15,7 +15,7 @@
 // about 2, 4 and 6.5 home runs in 10 pitches against the middling pitcher.
 
 import { FIELD } from './field';
-import { PITCH_KINDS, PITCH_RUN } from './physics';
+import { PITCH_KINDS, PITCH_RUN, planPitch } from './physics';
 import type { PitchKind } from './types';
 import { Rng, clamp, lerp } from '../core/math';
 
@@ -51,8 +51,8 @@ export const PITCHER = {
   scatter: [0.035, 0.05] as const,
 };
 
-/** The pitcher's next pitch: kind, speed and where it's aimed (always a strike). */
-export function choosePitch(pitching: number, rng: Rng): PitchPlan {
+/** The next pitch from a `handed` pitcher: kind, speed and where it's aimed (always a strike, at the plate). */
+export function choosePitch(pitching: number, rng: Rng, handed: 1 | -1 = 1): PitchPlan {
   const P = PITCHER;
   const p = clamp(pitching);
   // (a fixed number of draws per pitch: the same seed, the same pitches, whoever's batting)
@@ -96,8 +96,13 @@ export function choosePitch(pitching: number, rng: Rng): PitchPlan {
   // an easy pitcher grooves it; a hard one paints
   const b = Math.pow(p, 0.8);
   const sc = lerp(P.scatter[0], P.scatter[1], p);
-  const px = clamp(lerp(0, ex, b) + sc * sx, -P.maxX, P.maxX);
-  const py = clamp(lerp(P.middleY, ey, b) + sc * sy, P.minY, P.maxY);
+  let px = clamp(lerp(0, ex, b) + sc * sx, -P.maxX, P.maxX);
+  let py = clamp(lerp(P.middleY, ey, b) + sc * sy, P.minY, P.maxY);
+  // a late breaker aimed at the very edge can dive or run out of the zone between here and the plate: bring it in
+  for (let i = 0; i < 12 && !planPitch(kind, speed, px, py, handed, 0).pitch.strike; i++) {
+    px *= 0.85;
+    py = P.middleY + (py - P.middleY) * 0.85;
+  }
   return { kind, speed, px, py };
 }
 
@@ -139,10 +144,10 @@ export interface HitterProfile {
  */
 const SKILLS = [0, 0.3, 0.6, 0.9, 1];
 export const HITTER_TABLE: Record<keyof HitterProfile, number[]> = {
-  timingSd: [0.08, 0.062, 0.053, 0.043, 0.032],
+  timingSd: [0.08, 0.06, 0.053, 0.045, 0.033],
   timingBias: [0.02, 0.013, 0.008, 0.004, 0.002],
   fooled: [0.3, 0.24, 0.18, 0.11, 0.07],
-  power: [0.48, 0.6, 0.71, 0.79, 0.86],
+  power: [0.48, 0.62, 0.71, 0.79, 0.86],
   powerSd: [0.16, 0.14, 0.12, 0.09, 0.07],
   lift: [0.0, 0.12, 0.23, 0.32, 0.38],
   liftSd: [0.45, 0.38, 0.32, 0.26, 0.2],

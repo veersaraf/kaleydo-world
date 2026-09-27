@@ -1,10 +1,12 @@
 // Baseball physics: the pitches, the swing's timing and what the bat does to the
 // ball, the batted ball's real flight, and its flight through the diorama.
 //
-// Pitches fly under gravity plus a constant 'break' per kind (a fastball's
-// backspin holds it up, a curve drops and moves to the glove side, a changeup
-// fades and drops), solved so they cross the contact plane where the pitcher
-// aimed at the moment the game says — closed form, the same at any frame rate.
+// Pitches fly under gravity plus a 'break' per kind — a constant acceleration (a
+// fastball's backspin holds it up, a curve drops and moves to the glove side),
+// and for the late movers a part that builds up on the way (a changeup comes out
+// looking like a fastball, then fades and drops; a slider bites late) — solved
+// so they cross the contact plane where the pitcher aimed at the moment the game
+// says. Closed form, the same at any frame rate.
 //
 // A swing is judged on its timing alone: how early or late its fastest moment
 // was against the ball reaching the contact plane (the phone's latency and the
@@ -70,21 +72,22 @@ export const PITCH_RUN = FIELD.contactZ - FIELD.releaseZ;
 export const REAL_PITCH_RUN = 16.8;
 
 /**
- * Each kind's speed range (world m/s, the average over its flight) and break: a
- * constant acceleration on top of gravity, m/s². `side` is towards the pitcher's
- * glove side (+) or throwing-arm side (−); `up` against gravity.
+ * Each kind's speed range (world m/s, the average over its flight) and break, an
+ * acceleration on top of gravity, m/s²: `side` towards the pitcher's glove side
+ * (+) or throwing-arm side (−), `up` against gravity — constant, plus a late part
+ * (`lateSide`, `lateUp`) that grows from nothing at the release to that at the plate.
  */
-export const PITCH_KINDS: Record<PitchKind, { speed: [number, number]; side: number; up: number }> = {
-  fastball: { speed: [22, 27], side: -1.2, up: 3.2 },
-  slider: { speed: [20, 23], side: 4.6, up: -1.2 },
-  curve: { speed: [17, 20], side: 2.6, up: -4.2 },
-  changeup: { speed: [16, 18], side: -2.8, up: -1.6 },
+export const PITCH_KINDS: Record<PitchKind, { speed: [number, number]; side: number; up: number; lateSide: number; lateUp: number }> = {
+  fastball: { speed: [22, 27], side: -1.2, up: 3.2, lateSide: 0, lateUp: 0 },
+  slider: { speed: [20, 23], side: 2.4, up: -1.2, lateSide: 5, lateUp: -1 },
+  curve: { speed: [17, 20], side: 2.6, up: -4.2, lateSide: 0, lateUp: 0 },
+  changeup: { speed: [16, 18], side: -0.8, up: 2.4, lateSide: -4.5, lateUp: -9 },
 };
 
 /** Where the catcher's mitt takes the ball: this plane (z). */
 export const MITT_Z = FIELD.catcherZ - 0.35;
 
-/** A pitch's flight from the release: p(τ) = p0 + v τ + ½ a τ² (τ = seconds since the release). */
+/** A pitch's flight from the release: p(τ) = p0 + v τ + ½ a τ² + ⅙ j τ³ (τ = seconds since the release; j the late break building up). */
 export interface PitchPath {
   x0: number;
   y0: number;
@@ -94,6 +97,8 @@ export interface PitchPath {
   vz: number;
   ax: number;
   ay: number;
+  jx: number;
+  jy: number;
   /** seconds from the release to the contact plane, and to the mitt */
   tc: number;
   arrive: number;
@@ -120,15 +125,20 @@ export function planPitch(kind: PitchKind, speed: number, px: number, py: number
   const T = PITCH_RUN / speed;
   const ax = handed * k.side;
   const ay = -FIELD.gravity + k.up;
+  // the late break reaches its full size at the plate
+  const jx = (handed * k.lateSide) / T;
+  const jy = k.lateUp / T;
   const path: PitchPath = {
     x0: r.x,
     y0: r.y,
     z0: r.z,
-    vx: (px - r.x - 0.5 * ax * T * T) / T,
-    vy: (py - r.y - 0.5 * ay * T * T) / T,
+    vx: (px - r.x - 0.5 * ax * T * T - (jx * T * T * T) / 6) / T,
+    vy: (py - r.y - 0.5 * ay * T * T - (jy * T * T * T) / 6) / T,
     vz: speed,
     ax,
     ay,
+    jx,
+    jy,
     tc: T,
     arrive: (MITT_Z - r.z) / speed,
     mittX: 0,
@@ -147,15 +157,18 @@ export function planPitch(kind: PitchKind, speed: number, px: number, py: number
 
 /** Where a pitch is τ seconds after it left the hand (it carries on past the plate the same way). */
 export function pitchAt(p: PitchPath, tau: number, out: V3): V3 {
-  out.x = p.x0 + p.vx * tau + 0.5 * p.ax * tau * tau;
-  out.y = p.y0 + p.vy * tau + 0.5 * p.ay * tau * tau;
+  const t2 = tau * tau;
+  const t3 = t2 * tau;
+  out.x = p.x0 + p.vx * tau + 0.5 * p.ax * t2 + (p.jx * t3) / 6;
+  out.y = p.y0 + p.vy * tau + 0.5 * p.ay * t2 + (p.jy * t3) / 6;
   out.z = p.z0 + p.vz * tau;
   return out;
 }
 
 /** A pitch's speed τ seconds after it left the hand. */
 export function pitchSpeed(p: PitchPath, tau: number) {
-  return Math.hypot(p.vx + p.ax * tau, p.vy + p.ay * tau, p.vz);
+  const h = 0.5 * tau * tau;
+  return Math.hypot(p.vx + p.ax * tau + p.jx * h, p.vy + p.ay * tau + p.jy * h, p.vz);
 }
 
 // ------------------------------------------------------------------ the swing meets the ball
@@ -264,27 +277,20 @@ export const REAL = {
   gravity: 9.81,
   /** quadratic drag: ρ·Cd·A / 2m, 1/m (ρ 1.2, Cd 0.35, a 7.3 cm ball of 145 g) */
   drag: (1.2 * 0.35 * Math.PI * 0.0366 ** 2) / (2 * 0.145),
-  /** lift: ρ·A / 2m, times the lift coefficient (from the spin: see liftOf) */
+  /** lift: ρ·A / 2m, times the lift coefficient (from the spin: see realFlight) */
   lift: (1.2 * Math.PI * 0.0366 ** 2) / (2 * 0.145),
   radius: 0.0366,
   /** the outfield wall, m, and the height a ball needs at the wall to be gone ("with height to spare") */
   wallH: 2.5,
   clear: 2.9,
-  /** integration step, s */
-  h: 1 / 200,
+  /** integration step, s (the midpoint rule: a millimetre off a fine step's distance) */
+  h: 1 / 100,
 };
 
 /** backspin, rad/s, for a ball launched at `deg` degrees (a fly ball ~2200 rpm; below level it's topspin) */
 function spinOf(deg: number) {
   const rpm = deg >= 0 ? 1100 + 40 * deg : -(900 + 25 * -deg);
   return (rpm * 2 * Math.PI) / 60;
-}
-
-/** lift coefficient for spin w (rad/s, + backspin) at speed v (Sawicki et al.) */
-function liftOf(w: number, v: number) {
-  const S = (REAL.radius * Math.abs(w)) / Math.max(1, v);
-  const cl = Math.min(0.32, S < 0.1 ? 1.5 * S : 0.09 + 0.6 * S);
-  return w >= 0 ? cl : -cl;
 }
 
 export interface RealFlight {
@@ -301,7 +307,11 @@ export interface RealFlight {
 export function realFlight(ev: number, launch: number, y0: number, fence = Infinity): RealFlight {
   const g = REAL.gravity;
   const kd = REAL.drag;
+  const kl0 = REAL.lift;
+  // the lift coefficient from the spin parameter S = r·|w|/v (Sawicki, Hubbard & Stronge): 1.5·S below 0.1, 0.09 + 0.6·S above
   const w = spinOf(launch / DEG);
+  const rw = REAL.radius * Math.abs(w);
+  const sgn = w >= 0 ? 1 : -1;
   let x = 0;
   let y = y0;
   let vx = ev * Math.cos(launch);
@@ -310,25 +320,22 @@ export function realFlight(ev: number, launch: number, y0: number, fence = Infin
   let apex = y0;
   let fenceY = -1;
   const h = REAL.h;
-  const acc = (vx: number, vy: number, out: number[]) => {
-    const s = Math.hypot(vx, vy);
-    const kl = REAL.lift * liftOf(w, s);
-    out[0] = -kd * s * vx - kl * s * vy;
-    out[1] = -g - kd * s * vy + kl * s * vx;
-  };
-  const a = [0, 0];
-  const b = [0, 0];
+  // the midpoint rule, the drag and the lift written out (no allocation: this runs as the bat meets the ball)
   while (t < 20) {
-    acc(vx, vy, a);
-    const mx = vx + 0.5 * h * a[0];
-    const my = vy + 0.5 * h * a[1];
-    acc(mx, my, b);
+    let sp = Math.hypot(vx, vy);
+    let S = rw / Math.max(1, sp);
+    let kl = sgn * kl0 * Math.min(0.32, S < 0.1 ? 1.5 * S : 0.09 + 0.6 * S);
+    const mx = vx + 0.5 * h * (-kd * sp * vx - kl * sp * vy);
+    const my = vy + 0.5 * h * (-g - kd * sp * vy + kl * sp * vx);
+    sp = Math.hypot(mx, my);
+    S = rw / Math.max(1, sp);
+    kl = sgn * kl0 * Math.min(0.32, S < 0.1 ? 1.5 * S : 0.09 + 0.6 * S);
     const px = x;
     const py = y;
     x += mx * h;
     y += my * h;
-    vx += b[0] * h;
-    vy += b[1] * h;
+    vx += h * (-kd * sp * mx - kl * sp * my);
+    vy += h * (-g - kd * sp * my + kl * sp * mx);
     t += h;
     if (y > apex) apex = y;
     if (fenceY < 0 && px < fence && x >= fence) fenceY = py + ((y - py) * (fence - px)) / (x - px);
