@@ -13,6 +13,7 @@
 //     set:<a.b>=<on>/<off>   sets a world property to one of two values (numbers)
 //     none        on and off are the same state: the noise floor
 //   VIEWS=a,b     only these views (play, far, bowl, side, aerial)
+//   RUN=1         keep the CPU match playing (players, ball, sparks) instead of pausing it
 import { chromium } from 'playwright-core';
 import fs from 'node:fs';
 const BASE = process.env.BASE || 'http://localhost:3200';
@@ -50,13 +51,13 @@ await p.evaluate(() => localStorage.setItem('kaleido.settings', JSON.stringify({
 await p.goto(BASE + '/');
 await p.waitForFunction(() => document.querySelector('.boot.done') || !document.querySelector('.boot'), null, { timeout: 30000 });
 await p.evaluate(
-  ([pr, world]) => {
+  ([pr, world, run]) => {
     const k = window.kaleido;
     window.flow.go(null);
     window.flow.attractShiftAt = 1e12;
     document.getElementById('ui').style.display = 'none';
     k.startAttract(world, 'tennis');
-    k.paused = true;
+    k.paused = !run;
     k.quality.update = () => null;
     k.stage.msaa = 0;
     k.pr = pr;
@@ -124,7 +125,7 @@ await p.evaluate(
     };
     window.__set = set;
   },
-  [+pr, world],
+  [+pr, world, !!process.env.RUN],
 );
 const pct = (a, q) => [...a].sort((x, y) => x - y)[Math.min(a.length - 1, Math.floor(a.length * q))];
 const f = (v, d = 2) => (v >= 0 ? '+' : '') + v.toFixed(d);
