@@ -1091,6 +1091,13 @@ export class Flow {
     this.syncPads(true);
   }
 
+  /** where a ball went, as a commentator would say it */
+  private static sprayWordFor(a: number) {
+    const d = Math.abs(a);
+    const side = a < 0 ? 'left' : 'right';
+    return d < 0.1 ? 'to dead centre' : d < 0.3 ? `to ${side}-centre` : `to ${side} field`;
+  }
+
   private baseballHint() {
     const g = this.app.baseball;
     const p = g?.hitters[g.current];
@@ -1176,7 +1183,7 @@ export class Flow {
         this.hrTicking = false;
         if (b.homeRun && !b.foul) {
           hud?.setDistance(b.distance, true);
-          hud?.say('HOME RUN!', `${Math.round(b.distance)} m`, 'hr');
+          hud?.say('HOME RUN!', b.distance >= 145 ? 'out of the park!' : Flow.sprayWordFor(b.spray), 'hr');
           crowd?.sfx.cheer(1);
           crowd?.music.jingle('point');
           if (a) for (let k = 0; k < 3; k++) window.setTimeout(() => this.app.baseball === g && a.sfx.firework(pan(b.landX) + (k - 1) * 0.3, k === 2), 200 + k * 380);
