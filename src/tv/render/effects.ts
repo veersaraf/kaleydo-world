@@ -81,7 +81,7 @@ export interface ShadowDef {
    * have its own (`sports`), e.g. a tighter one around a duel arena.
    */
   area: THREE.Box3;
-  sports?: Partial<Record<'tennis' | 'bowling' | 'duel', THREE.Box3>>;
+  sports?: Partial<Record<'tennis' | 'bowling' | 'duel' | 'archery', THREE.Box3>>;
   /** penumbra radius in metres, whatever the map size (PCF radius in texels follows) */
   softness?: number;
 }
