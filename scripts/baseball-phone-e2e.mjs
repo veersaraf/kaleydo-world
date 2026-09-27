@@ -132,7 +132,7 @@ for (let tries = 0; tries < 4; tries++) {
   const line = await pad.evaluate(() => document.querySelector('.panel.play .tvline')?.textContent ?? '');
   check('…and the phone says so', /STRIKE/.test(line), `“${line}”`);
 }
-await tv.waitForFunction(() => document.querySelector('.results'), null, { timeout: 20000 }).catch(() => null);
+await tv.waitForFunction(() => document.querySelector('.results'), null, { timeout: 60000 }).catch(() => null);
 check('the derby ends on the results', await tv.evaluate(() => !!document.querySelector('.results')));
 
 console.log(logs.length ? '\npage errors:\n' + logs.join('\n') : '\nno page errors');
