@@ -7,6 +7,9 @@ export interface NavItem {
   onSelect?: () => void;
   onLeft?: () => void;
   onRight?: () => void;
+  /** a horizontal list: up / down (to another row, say) */
+  onUp?: () => void;
+  onDown?: () => void;
   disabled?: boolean;
 }
 
@@ -58,6 +61,14 @@ export class Nav {
       }
       this.focus(i);
       return true;
+    }
+    if (this.horizontal && (b === 'up' || b === 'down')) {
+      const f = b === 'up' ? this.current.onUp : this.current.onDown;
+      if (f) {
+        f();
+        return true;
+      }
+      return false;
     }
     if (!this.horizontal && (b === 'left' || b === 'right')) {
       const it = this.current;

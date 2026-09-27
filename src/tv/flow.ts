@@ -47,6 +47,8 @@ export interface Settings {
   split: boolean;
   world: string;
   seenTutorial: boolean;
+  /** Kaleido mode: big moments shatter the world into the next one (every sport) */
+  kaleido: boolean;
 }
 
 const DEFAULTS: Settings = {
@@ -62,6 +64,7 @@ const DEFAULTS: Settings = {
   split: true,
   world: 'park',
   seenTutorial: false,
+  kaleido: false,
 };
 
 const LEVELS: { id: Level; label: string; stars: string }[] = [
@@ -414,37 +417,117 @@ export class Flow {
     this.go(this.mainMenu());
   }
 
+  /**
+   * Kaleido mode in bowling, the duel, archery and baseball: a big moment (a
+   * strike, a round won, a bullseye, a home run) shatters the world into the next
+   * one, `delay` ms later. (Tennis has its own: every couple of points, or a
+   * PERFECT shot deep in a rally.)
+   */
+  private kaleidoMoment(delay = 900) {
+    if (!this.settings.kaleido || this.app.attract || WORLDS.length < 2) return;
+    const sport = this.app.sport;
+    window.setTimeout(() => {
+      if (this.app.sport !== sport || this.app.attract || this.screen || this.app.paused || this.app.stage.transitioning) return;
+      const cur = this.app.stage.current?.def.id;
+      if (!this.kaleidoOrder.length || !this.kaleidoOrder.includes(cur ?? '')) {
+        this.kaleidoOrder = [cur ?? 'park', ...this.shuffledWorlds().filter((w) => w !== cur)];
+        this.kaleidoIdx = 0;
+      }
+      this.kaleidoIdx = (this.kaleidoIdx + 1) % this.kaleidoOrder.length;
+      const next = this.kaleidoOrder[this.kaleidoIdx];
+      this.warmSoon(this.kaleidoOrder[(this.kaleidoIdx + 1) % this.kaleidoOrder.length], 3000);
+      this.app.stage.setWorld(next, { transition: true, origin: { x: 0.5, y: 0.45 } });
+      this.audio?.sfx.ui('shift');
+      const def = worldDef(next);
+      this.applyTheme(def);
+      this.toast(`✦ ${def.name}`, '#b07cff');
+    }, delay);
+  }
+
+  /** The Kaleido toggle on every setup screen: big moments shatter the world into the next one. */
+  private kaleidoRow() {
+    const S = this.settings;
+    const v = h('span');
+    const r = h('div', { class: 'row kal' }, h('span', { class: 'k' }, h('i', { class: 'kgem' }), 'Kaleido mode'), h('span', { class: 'v' }, h('span', { class: 'arrow' }, '◀'), v, h('span', { class: 'arrow' }, '▶')));
+    const refresh = () => {
+      v.textContent = S.kaleido ? 'On — big moments shatter the world' : 'Off';
+      r.classList.toggle('on', S.kaleido);
+    };
+    const toggle = () => {
+      S.kaleido = !S.kaleido;
+      this.save();
+      refresh();
+    };
+    refresh();
+    return { r, item: { el: r, onLeft: toggle, onRight: toggle, onSelect: toggle } };
+  }
+
+  /** The sports on the home screen: what each is and how it plays. */
+  private static SPORTS = [
+    { id: 'tennis', ico: '🎾', name: 'Tennis', tag: 'Rally, smash, serve — singles or doubles', c: '#2f9bff', c2: '#1a5fd6' },
+    { id: 'bowling', ico: '🎳', name: 'Bowling', tag: 'Swing, let go, hook it — ten frames', c: '#ff9a3d', c2: '#e2541f' },
+    { id: 'duel', ico: '⚔️', name: 'Sword Duel', tag: 'Slash, block, knock them off', c: '#ff5a78', c2: '#c82456' },
+    { id: 'archery', ico: '🏹', name: 'Archery', tag: 'Point, draw, let go — mind the wind', c: '#3ccf74', c2: '#138a55' },
+    { id: 'baseball', ico: '⚾', name: 'Home Run Derby', tag: 'Swing for the fences', c: '#6f7dff', c2: '#3a3fcf' },
+  ] as const;
+
+  /** The home screen: a card per sport (the showcase behind switches to the one you're on), the tour and settings. */
   private mainMenu(): Screen {
-    const item = (ico: string, color: string, label: string, sub: string) =>
-      h('div', { class: 'item' }, h('div', { class: 'ico', style: `background:${color}` }, ico), h('div', { class: 'txt' }, h('span', null, label), h('span', { class: 'sub' }, sub)));
-    const quick = item('🎾', '#3aa8ff', 'Tennis', 'Singles or doubles, vs friends or CPU');
-    const kal = item('◆', 'linear-gradient(135deg,#ff5a8a,#ffb13d,#4be3a2,#52a7ff)', 'Kaleido Rally', 'The world shatters as you play');
+    const sports = Flow.SPORTS;
+    const open = (id: (typeof sports)[number]['id']) => {
+      if (id === 'tennis') this.go(this.setupScreen(this.settings.kaleido ? 'kaleido' : 'quick'));
+      else if (id === 'bowling') this.go(this.bowlSetup());
+      else if (id === 'duel') this.go(this.duelSetup());
+      else if (id === 'archery') this.go(this.archerySetup());
+      else this.go(this.baseballSetup());
+    };
+    const cards = sports.map((sp) =>
+      h(
+        'div',
+        { class: 'scard', style: `--c:${sp.c};--c2:${sp.c2}` },
+        h('div', { class: 'art' }, h('span', null, sp.ico)),
+        h('div', { class: 'nm' }, sp.name),
+        h('div', { class: 'tg' }, sp.tag),
+        h('div', { class: 'go' }, 'Play ▶'),
+      ),
+    );
     const tb = loadTour().beaten;
-    const tour = item('🏆', '#ffb13d', 'World Tour', tb >= TOUR.length ? 'The Prism is whole — play again' : `${Math.min(tb, 8)} of 8 shards restored`);
-    const help = item('?', '#35d49a', 'How to Play', 'Tennis, bowling, duels, archery & baseball');
-    const set = item('⚙', '#8a7dff', 'Settings', 'Sound, voice, controls');
-    const labItem = item('🎯', '#ff5a8a', 'Swing Lab', 'Ball machine + a read-out of every swing');
-    const bowlItem = item('🎳', '#ff8a3d', 'Bowling', 'Grip, swing, let go — ten frames');
-    const duelItem = item('⚔', '#ff5a6e', 'Sword Duel', 'Swing to strike, hold to guard — knock them off');
-    const archItem = item('🏹', '#35c46a', 'Archery', 'Point, draw, let go — mind the wind');
-    const hrItem = item('⚾', '#5b7cff', 'Home Run Derby', 'Swing for the fences — ten pitches each');
-    const nav = new Nav([
-      { el: quick, onSelect: () => this.go(this.setupScreen('quick')) },
-      { el: bowlItem, onSelect: () => this.go(this.bowlSetup()) },
-      { el: duelItem, onSelect: () => this.go(this.duelSetup()) },
-      { el: archItem, onSelect: () => this.go(this.archerySetup()) },
-      { el: hrItem, onSelect: () => this.go(this.baseballSetup()) },
-      { el: tour, onSelect: () => this.go(this.tourScreen()) },
-      { el: set, onSelect: () => this.go(this.settingsScreen()) },
-    ]);
+    const pill = (ico: string, label: string, sub: string) => h('div', { class: 'hpill' }, h('i', null, ico), h('span', null, label), h('small', null, sub));
+    const tour = pill('🏆', 'World Tour', tb >= TOUR.length ? 'The Prism is whole' : `${Math.min(tb, 8)} of 8 shards`);
+    const set = pill('⚙', 'Settings', 'Sound, controls');
+    let lastCard = Math.max(0, sports.findIndex((sp) => sp.id === this.app.attractSport));
+    const n = sports.length;
+    const nav = new Nav(
+      [
+        ...sports.map((sp, i) => ({ el: cards[i], onSelect: () => open(sp.id), onDown: () => nav.focus(i < n / 2 ? n : n + 1) })),
+        { el: tour, onSelect: () => this.go(this.tourScreen()), onUp: () => nav.focus(lastCard) },
+        { el: set, onSelect: () => this.go(this.settingsScreen()), onUp: () => nav.focus(lastCard) },
+      ],
+      true,
+    );
+    // the showcase behind follows the card you're on (after a moment: flicking past doesn't reload it)
+    let showTimer = 0;
+    nav.onChange = (i) => {
+      if (i >= n) return;
+      lastCard = i;
+      const sp = sports[i].id;
+      window.clearTimeout(showTimer);
+      showTimer = window.setTimeout(() => {
+        if (this.screen?.name !== 'menu' || !this.app.attract || this.app.attractSport === sp) return;
+        this.attractSportAt = this.time + 90;
+        this.app.startAttract(this.app.stage.current?.def.id ?? 'park', sp);
+      }, 380);
+    };
+    nav.focus(lastCard);
     const el = h(
       'div',
-      { class: 'screen mainmenu' },
-      h('div', { class: 'col' }, h('div', { class: 'mini-logo' }, h('span', null, 'KALEIDO')), h('div', { class: 'menu' }, quick, bowlItem, duelItem, archItem, hrItem, tour, set)),
+      { class: 'screen home' },
+      h('div', { class: 'mini-logo' }, h('span', null, 'KALEIDO')),
+      h('div', { class: 'hbottom' }, h('div', { class: 'hpills' }, tour, set), h('div', { class: 'scards' }, ...cards)),
       this.join.el,
     );
     this.join.refresh();
-    return this.navScreen('menu', el, nav, () => this.go(this.titleScreen()), { title: 'Main menu', hint: 'Use the pad · A to choose' });
+    return this.navScreen('menu', el, nav, () => this.go(this.titleScreen()), { title: 'Pick a sport', hint: '◀ ▶ choose · A play' });
   }
 
   // team presets from the humans present
@@ -477,12 +560,10 @@ export class Flow {
     this.mode = mode;
     const S = this.settings;
     const sheet = h('div', { class: 'sheet panel' });
-    const title = h('h2', null, mode === 'kaleido' ? 'Kaleido Rally' : 'Quick Match');
-    const desc = h(
-      'div',
-      { class: 'hintline' },
-      mode === 'kaleido' ? 'Every couple of points — or any PERFECT shot in a long rally — shatters the court into the next world.' : 'Choose your match, then pick a world.',
-    );
+    void mode;
+    const title = h('h2', null, 'Tennis');
+    const desc = h('div', { class: 'hintline' }, 'Choose your match, then pick a world. In Kaleido mode every couple of points — or a PERFECT shot in a long rally — shatters the court into the next world.');
+    const kal = this.kaleidoRow();
     const teamsView = h('div', { class: 'teams' });
     const row = (k: string) => {
       const v = h('span');
@@ -493,7 +574,7 @@ export class Flow {
     const rFormat = row('Format');
     const rLevel = row('CPU level');
     const rLen = row('Match');
-    const go = h('div', { class: 'row go' }, mode === 'kaleido' ? 'Start the rally ▶' : 'Choose a world ▶');
+    const go = h('div', { class: 'row go' }, 'Choose a world ▶');
     const refresh = () => {
       const ps = this.presets();
       S.teamPreset = Math.min(S.teamPreset, ps.length - 1);
@@ -547,20 +628,21 @@ export class Flow {
         onRight: () => ((S.games = cyc([1, 2, 3], S.games, 1)), refresh()),
         onSelect: () => ((S.games = cyc([1, 2, 3], S.games, 1)), refresh()),
       },
+      kal.item,
       {
         el: go,
         onSelect: () => {
-          if (mode === 'kaleido') this.beginMatch(this.shuffledWorlds()[0]);
-          else this.go(this.worldScreen());
+          this.mode = this.settings.kaleido ? 'kaleido' : 'quick';
+          this.go(this.worldScreen());
         },
       },
     ]);
     navRef = nav;
-    nav.focus(4);
-    sheet.append(title, desc, teamsView, rTeams.r, rFormat.r, rLevel.r, rLen.r, go, h('div', { class: 'hintline' }, '◀ ▶ change · A select · B back'));
+    nav.focus(5);
+    sheet.append(title, desc, teamsView, rTeams.r, rFormat.r, rLevel.r, rLen.r, kal.r, go, h('div', { class: 'hintline' }, '◀ ▶ change · A select · B back'));
     const el = h('div', { class: 'screen center' }, sheet);
     refresh();
-    const scr = this.navScreen('setup', el, nav, () => this.go(this.mainMenu()), { title: mode === 'kaleido' ? 'Kaleido Rally' : 'Quick Match', hint: '◀ ▶ to change' });
+    const scr = this.navScreen('setup', el, nav, () => this.go(this.mainMenu()), { title: 'Tennis', hint: '◀ ▶ to change' });
     const baseInput = scr.input;
     scr.input = (s, b) => {
       baseInput(s, b);
@@ -1014,6 +1096,7 @@ export class Flow {
     const pitchRow = row('Pitcher');
     const countRow = row('Pitches');
     const worldRow = row('World');
+    const kal = this.kaleidoRow();
     const go = h('div', { class: 'row go' }, 'Play ball!');
     const refresh = () => {
       const names = this.app.input.activeSeats.map((st) => st.name);
@@ -1035,6 +1118,7 @@ export class Flow {
       { el: pitchRow.r, onLeft: () => ((pi = step(pi, -1, 3)), refresh()), onRight: () => ((pi = step(pi, 1, 3)), refresh()), onSelect: () => ((pi = step(pi, 1, 3)), refresh()) },
       { el: countRow.r, onLeft: () => ((ci = step(ci, -1, 3)), refresh()), onRight: () => ((ci = step(ci, 1, 3)), refresh()), onSelect: () => ((ci = step(ci, 1, 3)), refresh()) },
       { el: worldRow.r, onLeft: () => cycle(-1), onRight: () => cycle(1), onSelect: () => cycle(1) },
+      kal.item,
       { el: go, onSelect: begin },
     ]);
     refresh();
@@ -1048,6 +1132,7 @@ export class Flow {
       pitchRow.r,
       countRow.r,
       worldRow.r,
+      kal.r,
       go,
     );
     return this.navScreen('hrsetup', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Home Run Derby', hint: '◀ ▶ to change · A to play' });
@@ -1183,6 +1268,7 @@ export class Flow {
           hud?.say('HOME RUN!', b.distance >= 145 ? 'out of the park!' : Flow.sprayWordFor(b.spray), 'hr');
           crowd?.sfx.cheer(1);
           crowd?.music.jingle('point');
+          this.kaleidoMoment(1500);
           if (a) for (let k = 0; k < 3; k++) window.setTimeout(() => this.app.baseball === g && a.sfx.firework(pan(b.landX) + (k - 1) * 0.3, k === 2), 200 + k * 380);
         } else if (b.foul) {
           hud?.setDistance(null);
@@ -1296,6 +1382,7 @@ export class Flow {
     const who = h('div', { class: 'hintline' });
     const cpuRow = row('Opponent');
     const worldRow = row('World');
+    const kal = this.kaleidoRow();
     const go = h('div', { class: 'row go' }, 'Shoot!');
     const refresh = () => {
       const names = this.app.input.activeSeats.map((st) => st.name);
@@ -1311,6 +1398,7 @@ export class Flow {
     const nav = new Nav([
       { el: cpuRow.r, onLeft: () => ((cpu = (cpu + 3) % 4), refresh()), onRight: () => ((cpu = (cpu + 1) % 4), refresh()), onSelect: () => ((cpu = (cpu + 1) % 4), refresh()) },
       { el: worldRow.r, onLeft: () => cycle(-1), onRight: () => cycle(1), onSelect: () => cycle(1) },
+      kal.item,
       { el: go, onSelect: () => this.beginArchery(WORLDS[wi].id, cpuLevels[cpu].skill) },
     ]);
     refresh();
@@ -1322,6 +1410,7 @@ export class Flow {
       who,
       cpuRow.r,
       worldRow.r,
+      kal.r,
       go,
     );
     return this.navScreen('archsetup', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Archery', hint: '◀ ▶ to change · A to shoot' });
@@ -1431,6 +1520,7 @@ export class Flow {
           cls = 'good';
           crowd?.sfx.cheer(0.9);
           crowd?.music.jingle('point');
+          this.kaleidoMoment(1400);
         } else if (e.points >= 8) crowd?.sfx.applause(0.5);
         else if (e.points === 0) {
           cls = 'bad';
@@ -1524,6 +1614,7 @@ export class Flow {
     };
     const oppRow = row('Opponent');
     const worldRow = row('World');
+    const kal = this.kaleidoRow();
     const go = h('div', { class: 'row go' }, 'Fight!');
     const refresh = () => {
       oppRow.v.textContent = opp[oi].label;
@@ -1538,6 +1629,7 @@ export class Flow {
     const nav = new Nav([
       { el: oppRow.r, onLeft: () => ((oi = (oi + n - 1) % n), refresh()), onRight: () => ((oi = (oi + 1) % n), refresh()), onSelect: () => ((oi = (oi + 1) % n), refresh()) },
       { el: worldRow.r, onLeft: () => cycle(-1), onRight: () => cycle(1), onSelect: () => cycle(1) },
+      kal.item,
       { el: go, onSelect: () => this.beginDuel(WORLDS[wi].id, opp[oi].skill) },
     ]);
     refresh();
@@ -1548,6 +1640,7 @@ export class Flow {
       h('div', { class: 'hintline' }, 'Your phone is the sword. Swing to strike; hold GUARD and hold the sword across their swing to block — a blocked attacker is stunned. Knock them off the end!'),
       oppRow.r,
       worldRow.r,
+      kal.r,
       go,
     );
     return this.navScreen('duelsetup', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Sword Duel', hint: '◀ ▶ to change · A to fight' });
@@ -1644,7 +1737,10 @@ export class Flow {
         hud?.tag(0, '');
         hud?.tag(1, '');
         hud?.say(e.final ? 'FINAL ROUND' : `ROUND ${e.round}`, e.final ? 'on a shorter platform' : '');
-        if (e.round > 1) hud?.setHint('');
+        if (e.round > 1) {
+          hud?.setHint('');
+          this.kaleidoMoment(150);
+        }
         this.syncPads(true);
         break;
       case 'fight':
@@ -1768,6 +1864,7 @@ export class Flow {
     const who = h('div', { class: 'hintline' });
     const cpuRow = row('Opponent');
     const worldRow = row('World');
+    const kal = this.kaleidoRow();
     const go = h('div', { class: 'row go' }, 'Bowl!');
     const refresh = () => {
       const names = this.app.input.activeSeats.map((st) => st.name);
@@ -1783,6 +1880,7 @@ export class Flow {
     const nav = new Nav([
       { el: cpuRow.r, onLeft: () => ((cpu = (cpu + 3) % 4), refresh()), onRight: () => ((cpu = (cpu + 1) % 4), refresh()), onSelect: () => ((cpu = (cpu + 1) % 4), refresh()) },
       { el: worldRow.r, onLeft: () => cycle(-1), onRight: () => cycle(1), onSelect: () => cycle(1) },
+      kal.item,
       { el: go, onSelect: () => void this.beginBowling(WORLDS[wi].id, cpuLevels[cpu].skill) },
     ]);
     refresh();
@@ -1794,6 +1892,7 @@ export class Flow {
       who,
       cpuRow.r,
       worldRow.r,
+      kal.r,
       go,
     );
     return this.navScreen('bowlsetup', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Bowling', hint: '◀ ▶ to change · A to bowl' });
@@ -1910,7 +2009,11 @@ export class Flow {
         if (e.mark === 'strike') {
           crowd?.sfx.cheer(1);
           crowd?.music.jingle('point');
-        } else if (e.mark === 'spare') crowd?.sfx.cheer(0.7);
+          this.kaleidoMoment(1300);
+        } else if (e.mark === 'spare') {
+          crowd?.sfx.cheer(0.7);
+          this.kaleidoMoment(1300);
+        }
         else if (e.mark === 'split' || e.mark === 'gutter') crowd?.sfx.aww();
         else if (e.pins >= 7) crowd?.sfx.applause(0.4);
         const pid = padOf(e.bowler.slot);

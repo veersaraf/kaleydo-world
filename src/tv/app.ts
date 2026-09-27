@@ -552,11 +552,13 @@ export class App {
 
   /** The world on screen shows the ballpark; its characters carry bats and gloves. */
   private prepareBaseballWorld() {
-    const w = this.stage.current;
     const g = this.baseball;
-    if (!w || !g) return;
-    if (w.sport !== 'baseball') w.setSport('baseball', (kit) => new FieldVenue(kit, { particles: w.particles, world: w.def.id }));
-    if (!this.batGear.has(w)) this.batGear.set(w, new BaseballGear(w, [...g.hitters.map((h) => h.color), ...this.fieldColors]));
+    if (!g) return;
+    // (the world on screen, and the one it's shattering into)
+    for (const w of this.stage.shown) {
+      if (w.sport !== 'baseball') w.setSport('baseball', (kit) => new FieldVenue(kit, { particles: w.particles, world: w.def.id }));
+      if (!this.batGear.has(w)) this.batGear.set(w, new BaseballGear(w, [...g.hitters.map((h) => h.color), ...this.fieldColors]));
+    }
   }
 
   stopBaseball() {
@@ -617,7 +619,7 @@ export class App {
       field: view,
     };
     this.stage.update(fv);
-    this.batGear.get(w)?.update({ hitters, pitcher: g.pitcher, catcher: g.catcher, ball: view.ball }, realDt);
+    for (const sw of this.stage.shown) this.batGear.get(sw)?.update({ hitters, pitcher: g.pitcher, catcher: g.catcher, ball: view.ball }, realDt);
     this.stage.render(cam);
     this.hrMarks = view.marks;
     if (gdt > 0) this.recordHr(g.t, poses, hitters, g.pitcher, g.catcher, view.ball, view.fx);
@@ -730,7 +732,7 @@ export class App {
       field: view,
     };
     this.stage.update(fv);
-    this.batGear.get(w)?.update({ hitters: f.hitters, pitcher: f.pitcher, catcher: f.catcher, ball: f.ball }, realDt * speed);
+    for (const sw of this.stage.shown) this.batGear.get(sw)?.update({ hitters: f.hitters, pitcher: f.pitcher, catcher: f.catcher, ball: f.ball }, realDt * speed);
     this.stage.render(cam);
     this.onFrame(realDt);
     if (r.time >= r.end) this.endHrReplay();
@@ -765,10 +767,11 @@ export class App {
 
   /** The world on screen shows the range; its characters carry bows. */
   private prepareArcheryWorld() {
-    const w = this.stage.current;
-    if (!w || !this.archery) return;
-    if (w.sport !== 'archery') w.setSport('archery', (kit) => new RangeVenue(kit, { particles: w.particles, world: w.def.id }));
-    if (!this.archGear.has(w)) this.archGear.set(w, new ArcheryGear(w, this.archery.archers.map((a) => a.color)));
+    if (!this.archery) return;
+    for (const w of this.stage.shown) {
+      if (w.sport !== 'archery') w.setSport('archery', (kit) => new RangeVenue(kit, { particles: w.particles, world: w.def.id }));
+      if (!this.archGear.has(w)) this.archGear.set(w, new ArcheryGear(w, this.archery.archers.map((a) => a.color)));
+    }
   }
 
   stopArchery() {
@@ -884,7 +887,7 @@ export class App {
       range: view,
     };
     this.stage.update(fv);
-    this.archGear.get(w)?.update(states, realDt);
+    for (const sw of this.stage.shown) this.archGear.get(sw)?.update(states, realDt);
     this.stage.render(this.archCam.cam);
     // the sight: where a full-draw arrow would land on the target's plane with no
     // wind (so the drop is taken care of and you judge the wind); it shakes as the aim does
@@ -938,10 +941,11 @@ export class App {
 
   /** The world on screen shows the arena; its characters hold swords. */
   private prepareDuelWorld() {
-    const w = this.stage.current;
-    if (!w || !this.duel) return;
-    if (w.sport !== 'duel') w.setSport('duel', (kit) => new DuelVenue(kit, { particles: w.particles, world: w.def.id }));
-    if (!this.duelGear.has(w)) this.duelGear.set(w, new DuelGear(w, this.duel.duelists.map((d) => d.color)));
+    if (!this.duel) return;
+    for (const w of this.stage.shown) {
+      if (w.sport !== 'duel') w.setSport('duel', (kit) => new DuelVenue(kit, { particles: w.particles, world: w.def.id }));
+      if (!this.duelGear.has(w)) this.duelGear.set(w, new DuelGear(w, this.duel.duelists.map((d) => d.color)));
+    }
   }
 
   stopDuel() {
@@ -1030,7 +1034,7 @@ export class App {
       duel: g.view(),
     };
     this.stage.update(view);
-    this.duelGear.get(w)?.update(g.fighters, realDt, g.halfLength);
+    for (const sw of this.stage.shown) this.duelGear.get(sw)?.update(g.fighters, realDt, g.halfLength);
     this.stage.render(this.splitOn ? this.duelCam.cams : this.duelCam.cams[0]);
     this.onFrame(realDt);
   }
@@ -1065,10 +1069,11 @@ export class App {
 
   /** The world on screen shows lanes; its characters put their rackets away. */
   private prepareBowlWorld() {
-    const w = this.stage.current;
-    if (!w) return;
-    w.setSport('bowling', (kit) => new BowlVenue(kit));
-    for (const r of w.rigs) r.racket.visible = false;
+    for (const w of this.stage.shown) {
+      if (w.sport === 'bowling') continue;
+      w.setSport('bowling', (kit) => new BowlVenue(kit));
+      for (const r of w.rigs) r.racket.visible = false;
+    }
   }
 
   stopBowling() {
@@ -1089,7 +1094,7 @@ export class App {
   private bowlFrame(realDt: number) {
     const g = this.bowl!;
     const w = this.stage.current!;
-    if (w.sport !== 'bowling') this.prepareBowlWorld();
+    this.prepareBowlWorld();
     const dt = this.paused ? 0 : Math.min(0.05, realDt);
     if (dt > 0) g.step(dt);
     this.bowlCam.update(g, realDt, this.realT);
