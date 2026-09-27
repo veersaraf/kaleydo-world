@@ -9,7 +9,11 @@ import { BowlDetector, swipeThrow, MIN_SPEED, MAX_SPEED, type BowlThrow, type Sw
 import { SwordDetector, swipeStrike, guardLine, type GuardLine, type SwordStrike } from './sword';
 import { Orientation, qrot, type Vec3 } from './orient';
 import { PadAudio } from './audio';
-import type { Handed, PadButton, PadFx, PadMode, PadMsg, ServerToPad } from '../shared/protocol';
+import type { Handed, LookPrefs, PadButton, PadFx, PadMode, PadMsg, ServerToPad } from '../shared/protocol';
+import { HAIRS, HAIR_NAMES, EYES, SKIN_TONES, HAIR_TONES } from '../shared/protocol';
+import { hashStr } from '../shared/hash';
+import { playerLook } from '../tv/chars/look';
+import { avatarSvg } from './avatar';
 import { PLAYER_COLORS } from '../shared/protocol';
 
 // ------------------------------------------------------------------ prefs
@@ -58,10 +62,20 @@ const pid = choosePid();
 setInterval(() => store.set('lock.' + pid, String(Date.now())), 1000);
 store.set('lock.' + pid, String(Date.now()));
 
+function loadLook(): LookPrefs | null {
+  try {
+    const v = JSON.parse(store.get('look', 'null'));
+    return v && typeof v.hair === 'string' && typeof v.skin === 'string' ? v : null;
+  } catch {
+    return null;
+  }
+}
 const prefs = {
   name: store.get('name', ''),
   handed: (store.get('handed', 'R') as Handed) || 'R',
   sens: Number(store.get('sens', '1')) || 1,
+  /** the character you made (null = the one the TV picks for this phone) */
+  look: loadLook(),
 };
 
 // ------------------------------------------------------------------ dom
@@ -98,12 +112,14 @@ const handL = h('button', { class: 'seg-btn', 'data-h': 'L' }, 'Left hand');
 const handR = h('button', { class: 'seg-btn', 'data-h': 'R' }, 'Right hand');
 const joinBtn = h('button', { class: 'join-btn' }, h('span', {}, 'Join game'));
 const joinNote = h('p', { class: 'join-note' }, 'Hold your phone like a racket handle. Swing to hit.');
+// your character: tap to change it
+const joinFace = h('button', { class: 'face-btn', 'aria-label': 'Change your character' }, h('i', { class: 'face' }), h('span', {}, 'Edit'));
 const joinScreen = h(
   'section',
   { class: 'join' },
   h('div', { class: 'logo', 'aria-label': 'KALEIDO' }, ...'KALEIDO'.split('').map((ch, i) => h('span', { style: `--i:${i}` }, ch))),
   h('div', { class: 'tagline' }, 'Your phone is the remote'),
-  h('div', { class: 'card' }, nameInput, h('div', { class: 'seg' }, handL, handR), joinBtn, joinNote),
+  h('div', { class: 'card' }, joinFace, nameInput, h('div', { class: 'seg' }, handL, handR), joinBtn, joinNote),
   h(
     'details',
     { class: 'cert' },
@@ -329,6 +345,48 @@ const swordPanel = h(
   h('div', { class: 'gseg' }, guardVert, guardHorz),
 );
 
+// archery: point the phone at the target, hold DRAW to pull the string, let go
+// to shoot. The TV aims from how the phone turns while you draw, so it never
+// drifts; without motion sensors, drag on the pad to aim.
+function bowGlyph() {
+  const svg = document.createElementNS(SVG, 'svg');
+  svg.setAttribute('viewBox', '0 0 64 64');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const [d, stroke, w] of [
+    ['M20 6C40 14 40 50 20 58', '#fff', 5],
+    ['M20 6L20 58', 'rgba(255,255,255,.75)', 1.6],
+    ['M8 32H56', 'rgba(29,28,43,.8)', 3],
+    ['M56 32l-7-5v10z', 'rgba(29,28,43,.8)', 1],
+    ['M8 32l-4-4M8 32l-4 4', 'rgba(29,28,43,.8)', 2.4],
+  ] as const) {
+    const p = document.createElementNS(SVG, 'path');
+    p.setAttribute('d', d);
+    p.setAttribute('fill', d.endsWith('z') ? stroke : 'none');
+    p.setAttribute('stroke', stroke);
+    p.setAttribute('stroke-width', String(w));
+    p.setAttribute('stroke-linecap', 'round');
+    svg.append(p);
+  }
+  return svg;
+}
+const bowTitle = h('div', { class: 'ptitle' }, '');
+const bowHint = h('div', { class: 'phint' }, '');
+const bowTv = h('div', { class: 'tvline' }, '');
+const drawBig = h('b', {}, 'DRAW');
+const drawSub = h('span', {}, 'hold · aim · let go');
+const drawPad = h('div', { class: 'guard draw', role: 'button', 'aria-label': 'Hold to draw the bow, point at the target, let go to shoot' }, h('i', { class: 'blade bowglyph' }, bowGlyph()), drawBig, drawSub);
+const drawWrap = h('div', { class: 'guard-wrap' }, h('div', { class: 'guard-meter' }), drawPad);
+const bowShot = h('div', { class: 'shotline' }, '');
+const bowHome = padBtn('home', 'small home', h('i', { class: 'house' }));
+bowHome.dataset.lock = '';
+bowHome.setAttribute('aria-label', 'Pause');
+const bowPanel = h(
+  'div',
+  { class: 'panel bow' },
+  h('div', { class: 'stop' }, h('div', { class: 'sbtn' }, bowHome, h('span', {}, 'PAUSE')), h('div', { class: 'shead' }, bowTitle, bowHint), h('div', { class: 'sbtn' })),
+  h('div', { class: 'sstage' }, bowTv, drawWrap, bowShot),
+);
+
 const panels: Record<PadMode, HTMLElement> = {
   menu: menuPanel,
   play: playPanel,
@@ -338,6 +396,7 @@ const panels: Record<PadMode, HTMLElement> = {
   skip: skipPanel,
   bowl: bowlPanel,
   sword: swordPanel,
+  bow: bowPanel,
 };
 
 const leds = h('div', { class: 'leds' }, h('i'), h('i'), h('i'), h('i'));
@@ -348,7 +407,7 @@ const remoteScreen = h(
   'section',
   { class: 'remote' },
   header,
-  h('div', { class: 'shell' }, menuPanel, playPanel, servePanel, waitPanel, skipPanel, bowlPanel, swordPanel),
+  h('div', { class: 'shell' }, menuPanel, playPanel, servePanel, waitPanel, skipPanel, bowlPanel, swordPanel, bowPanel),
   footer,
   flash,
   toast,
@@ -365,6 +424,26 @@ const setL = h('button', { class: 'seg-btn', 'data-h': 'L' }, 'Left hand');
 const setR = h('button', { class: 'seg-btn', 'data-h': 'R' }, 'Right hand');
 const sheetClose = h('button', { class: 'join-btn small' }, h('span', {}, 'Done'));
 const motionState = h('p', { class: 'join-note' }, '');
+// the character editor: a face that shows every change, and the pieces
+const faceBig = h('i', { class: 'face big' });
+const cycleRow = (label: string) => {
+  const v = h('b', {});
+  const prev = h('button', { class: 'cyc', 'aria-label': `Previous ${label}` }, '◀');
+  const next = h('button', { class: 'cyc', 'aria-label': `Next ${label}` }, '▶');
+  return { row: h('div', { class: 'look-row' }, h('span', { class: 'label' }, label), h('div', { class: 'cycle' }, prev, v, next)), v, prev, next };
+};
+const swatchRow = (label: string, colors: readonly string[], key: 'hairColor' | 'skin') => {
+  const btns = colors.map((c) => h('button', { class: 'sw', style: `--c:${c}`, 'data-c': c, 'aria-label': `${label} ${c}` }));
+  for (const b of btns) b.addEventListener('click', () => editLook({ [key]: b.dataset.c! }));
+  return { row: h('div', { class: 'look-row' }, h('span', { class: 'label' }, label), h('div', { class: 'swatches' }, ...btns)), btns };
+};
+const hairRow = cycleRow('Hair');
+const hairColRow = swatchRow('Hair colour', HAIR_TONES, 'hairColor');
+const skinRow = swatchRow('Skin', SKIN_TONES, 'skin');
+const eyesRow = cycleRow('Eyes');
+const surprise = h('button', { class: 'seg-btn surprise' }, 'Surprise me');
+const EYE_NAMES: Record<string, string> = { oval: 'Round', dot: 'Dots', tall: 'Tall', wide: 'Wide', sleepy: 'Sleepy' };
+const lookCard = h('div', { class: 'look' }, faceBig, h('div', { class: 'look-rows' }, hairRow.row, hairColRow.row, skinRow.row, eyesRow.row, surprise));
 const recenterBtn = h('button', { class: 'join-btn small recenter' }, h('span', {}, 'Recenter aim'));
 const recenterNote = h('p', { class: 'join-note' }, 'Point the top of your phone at the screen, then tap.');
 const sheet = h(
@@ -376,6 +455,8 @@ const sheet = h(
     h('h2', {}, 'Remote settings'),
     setName,
     h('div', { class: 'seg' }, setL, setR),
+    h('div', { class: 'label' }, 'Your character'),
+    lookCard,
     h('div', { class: 'label' }, 'Swing sensitivity'),
     h('div', { class: 'seg three' }, ...sensBtns),
     recenterBtn,
@@ -409,7 +490,7 @@ let motionSeen = false;
 let seq = 0;
 let joined = false;
 /** which game the TV's fx lines are about (they can arrive while on 'watch') */
-let sport: 'tennis' | 'bowl' | 'duel' = 'tennis';
+let sport: 'tennis' | 'bowl' | 'duel' | 'archery' = 'tennis';
 /** bowling: the pointer holding the grip (the ball is in the hand), or null */
 let gripId: number | null = null;
 /** sword: the guard pad is held (by these pointers) */
@@ -421,10 +502,49 @@ let touchGuard: 'vertical' | 'horizontal' = store.get('guard') === 'horizontal' 
  *  a thumb sliding off the grip or the guard, a hand flailing after a blow */
 let lockUntil = 0;
 
+let myColor = '#8a7dff';
 function setColor(c: string) {
+  myColor = c;
   root.style.setProperty('--pc', c);
   document.querySelector('meta[name=theme-color]')?.setAttribute('content', c);
+  drawFaces();
 }
+
+/** Your character as the TV will build it: the look you made, or this phone's default. */
+function faceLook() {
+  const d = playerLook(myColor, hashStr(pid));
+  const L = prefs.look;
+  return { skin: L?.skin ?? d.skin, hair: L?.hair ?? d.hair, hairColor: L?.hairColor ?? d.hairColor, eyes: L?.eyes ?? d.eyes, shirt: myColor };
+}
+
+function drawFaces() {
+  const f = faceLook();
+  for (const el of document.querySelectorAll('.face')) el.replaceChildren(avatarSvg(f));
+  hairRow.v.textContent = HAIR_NAMES[f.hair] ?? f.hair;
+  eyesRow.v.textContent = EYE_NAMES[f.eyes] ?? f.eyes;
+  for (const b of hairColRow.btns) b.classList.toggle('on', b.dataset.c === f.hairColor);
+  for (const b of skinRow.btns) b.classList.toggle('on', b.dataset.c === f.skin);
+}
+
+/** Change a piece of your character: saved on the phone and sent to the TV (it shows from the next game). */
+function editLook(change: Partial<LookPrefs>) {
+  const f = faceLook();
+  prefs.look = { hair: f.hair, hairColor: f.hairColor, skin: f.skin, eyes: f.eyes, ...change };
+  store.set('look', JSON.stringify(prefs.look));
+  drawFaces();
+  sendPrefs();
+  audio.tick();
+}
+
+const cycle = (list: readonly string[], cur: string, d: number) => list[(Math.max(0, list.indexOf(cur)) + d + list.length) % list.length];
+hairRow.prev.addEventListener('click', () => editLook({ hair: cycle(HAIRS, faceLook().hair, -1) }));
+hairRow.next.addEventListener('click', () => editLook({ hair: cycle(HAIRS, faceLook().hair, 1) }));
+eyesRow.prev.addEventListener('click', () => editLook({ eyes: cycle(EYES, faceLook().eyes, -1) }));
+eyesRow.next.addEventListener('click', () => editLook({ eyes: cycle(EYES, faceLook().eyes, 1) }));
+surprise.addEventListener('click', () => {
+  const pick = <T,>(a: readonly T[]) => a[Math.floor(Math.random() * a.length)];
+  editLook({ hair: pick(HAIRS.filter((x) => x !== 'none')), hairColor: pick(HAIR_TONES), skin: pick(SKIN_TONES), eyes: pick(EYES) });
+});
 setColor('#8a7dff');
 
 function syncHandButtons() {
@@ -457,7 +577,7 @@ for (const b of sensBtns) {
 }
 
 function sendPrefs() {
-  if (joined) link.send({ type: 'prefs', name: prefs.name || 'Player', handed: prefs.handed });
+  if (joined) link.send({ type: 'prefs', name: prefs.name || 'Player', handed: prefs.handed, ...(prefs.look ? { look: prefs.look } : {}) });
 }
 
 let toastTimer = 0;
@@ -479,16 +599,28 @@ function doFlash(strong = false, tint: '' | 'red' | 'steel' = '') {
   if (tint) flash.classList.add(tint);
 }
 
-function setMode(m: PadMode, title?: string, hint?: string) {
+/** the bowling / bow panel is showing but not taking input (your ball is rolling, your arrow flying) */
+let locked = false;
+
+function setMode(m: PadMode, title?: string, hint?: string, lock = false) {
   const prev = mode;
   mode = m;
+  locked = lock && (m === 'bowl' || m === 'bow');
+  bowlPanel.classList.toggle('locked', locked && m === 'bowl');
+  bowPanel.classList.toggle('locked', locked && m === 'bow');
   if (m === 'bowl') sport = 'bowl';
   else if (m === 'sword') sport = 'duel';
+  else if (m === 'bow') sport = 'archery';
   else if (m === 'play' || m === 'serve') sport = 'tennis';
   if (prev === 'bowl' && m !== 'bowl') {
     // the game moved on with the ball still in the hand: drop it, don't throw
     gripCancel();
     // and whatever the tennis detector made of the bowling swings is forgotten
+    detector.reset();
+  }
+  if (prev === 'bow' && m !== 'bow') {
+    // the game moved on mid-draw (a pause): let go of the string (the TV doesn't shoot then)
+    drawCancel();
     detector.reset();
   }
   if (prev === 'sword' && m !== 'sword') {
@@ -518,7 +650,17 @@ function setMode(m: PadMode, title?: string, hint?: string) {
   if (m === 'bowl') {
     bowlTitle.textContent = title || 'Your turn!';
     bowlHint.textContent = hint || (motionOK ? 'Hold the ball, swing back, then forward' : 'Hold the ball, drag up and let go');
-    if (gripId === null) gripIdle();
+    // (locked: the throw's read-out stays on the ball until the next turn)
+    if (gripId === null && !locked) gripIdle();
+  }
+  if (m === 'bow') {
+    bowTitle.textContent = title || 'Your turn!';
+    bowHint.textContent = hint || (motionOK ? 'Point at the target · hold DRAW · let go' : 'Hold DRAW · drag to aim · let go');
+    if (drawId === null) drawIdle();
+    if (locked) {
+      drawBig.textContent = 'LOOSED';
+      drawSub.textContent = 'watch the target';
+    }
   }
   if (m === 'sword') {
     // a fresh duel: the motion so far was something else
@@ -540,7 +682,7 @@ function setStatus(s: LinkStatus) {
   if (s === 'offline' || s === 'connecting') {
     if (slot < 0) setMode('wait', s === 'connecting' ? 'Connecting…' : 'Disconnected', 'Make sure KALEIDO is running on your Mac');
   } else if (joined) {
-    link.send({ type: 'hello', name: prefs.name || 'Player', handed: prefs.handed, ver: 1, motion: motionOK });
+    link.send({ type: 'hello', name: prefs.name || 'Player', handed: prefs.handed, ver: 1, motion: motionOK, ...(prefs.look ? { look: prefs.look } : {}) });
   }
 }
 
@@ -558,7 +700,7 @@ function onMessage(m: ServerToPad) {
       setMode('wait', 'Game is full', 'Four remotes are already connected');
       break;
     case 'mode':
-      setMode(m.mode, m.title, m.hint);
+      setMode(m.mode, m.title, m.hint, !!m.lock);
       break;
     case 'score':
       scoreLine.textContent = m.line;
@@ -568,16 +710,17 @@ function onMessage(m: ServerToPad) {
         duelFx(m);
         break;
       }
-      const bowling = sport === 'bowl';
-      // bowling: the TV's verdict on the throw, e.g. "STRIKE! · 7.6 m/s · hook"
+      const bowling = sport === 'bowl' || sport === 'archery';
+      // bowling / archery: the TV's verdict on the throw or the shot, e.g. "STRIKE! · 7.6 m/s · hook"
       const line = [m.label, m.detail].filter(Boolean).join(' · ');
       if (bowling && line) {
-        bowlTv.textContent = line;
-        bowlTv.classList.remove('pop');
-        void bowlTv.offsetWidth;
-        bowlTv.classList.add('pop');
-        // on 'watch' while the ball rolls the bowling panel isn't showing: say it anyway
-        if (mode !== 'bowl' || m.fx === 'perfect') showToast(m.label || line, 1800);
+        const tv = sport === 'bowl' ? bowlTv : bowTv;
+        tv.textContent = line;
+        tv.classList.remove('pop');
+        void tv.offsetWidth;
+        tv.classList.add('pop');
+        // on 'watch' while the ball rolls (the arrow flies) the panel isn't showing: say it anyway
+        if ((mode !== 'bowl' && mode !== 'bow') || m.fx === 'perfect') showToast(m.label || line, 1800);
       }
       switch (m.fx) {
         case 'hit':
@@ -701,7 +844,7 @@ function lookingAtPhone() {
 /** the locked buttons (bowling's move/aim/home, the duel's pause) that are down: let go of them all */
 const lockedBtnUps: (() => void)[] = [];
 /** the thumb is on the grip or the guard, or just came off it */
-const handBusy = () => gripId !== null || guarding || performance.now() < lockUntil;
+const handBusy = () => gripId !== null || guarding || drawId !== null || performance.now() < lockUntil;
 
 for (const el of root.querySelectorAll<HTMLButtonElement>('.pb')) {
   const b = el.dataset.b as PadButton;
@@ -791,6 +934,7 @@ skipBtn.addEventListener('pointerdown', (e) => {
   link.send({ type: 'btn', b: 'a', down: false });
 });
 
+joinFace.addEventListener('click', () => gearBtn.click());
 gearBtn.addEventListener('click', () => {
   setName.value = prefs.name;
   motionState.textContent = motionOK
@@ -829,7 +973,7 @@ function swingPath(sw: SwingEvent): number | null {
 
 function emitSwing(sw: SwingEvent, touch = false) {
   // bowling: the arm swing is a throw, not a racket swing; the duel has its own
-  if (mode === 'bowl' || mode === 'sword') return;
+  if (mode === 'bowl' || mode === 'sword' || mode === 'bow') return;
   if (!touch && sw.t < noSwingUntil) return;
   const age = Math.max(0, performance.now() - sw.t);
   const path = touch ? null : swingPath(sw);
@@ -867,7 +1011,7 @@ function showSwing(sw: SwingEvent, path: number | null) {
 
 detector.onSwing = (s) => emitSwing(s);
 detector.onPrep = (side) => {
-  if (mode !== 'bowl' && mode !== 'sword') link.send({ type: 'prep', side, lat: Math.round(link.lat) });
+  if (mode !== 'bowl' && mode !== 'sword' && mode !== 'bow') link.send({ type: 'prep', side, lat: Math.round(link.lat) });
 };
 
 // Live motion meter — reassures players that the sensor works.
@@ -909,6 +1053,16 @@ function sendOri() {
     link.send({ type: 'ori', s: p.s, n: p.n });
     return;
   }
+  if (mode === 'bow' && !motionOK) {
+    // no motion sensor: the drag on the DRAW pad turns an imaginary phone pointed at the screen
+    const a = -dragAim.dx * 0.0011,
+      b = -dragAim.dy * 0.0011;
+    const r2 = (x: number) => Math.round(x * 1000) / 1000;
+    const s: [number, number, number] = [r2(-Math.sin(a) * Math.cos(b)), r2(Math.cos(a) * Math.cos(b)), r2(Math.sin(b))];
+    const n: [number, number, number] = [r2(Math.sin(a) * Math.sin(b)), r2(-Math.cos(a) * Math.sin(b)), r2(Math.cos(b))];
+    link.send({ type: 'ori', s, n });
+    return;
+  }
   if (!orient.have || orient.heading === null) return;
   const r2 = (v: [number, number, number]) => v.map((x) => Math.round(x * 100) / 100) as [number, number, number];
   const msg: Extract<PadMsg, { type: 'ori' }> = { type: 'ori', s: r2(orient.devToPlayer([0, 1, 0])), n: r2(orient.devToPlayer([0, 0, 1])) };
@@ -929,7 +1083,7 @@ function startOriStream() {
   // the sword follows the phone 1:1 and the guard's angle decides blocks: a little quicker
   swordOriTimer = window.setInterval(
     () => {
-      if (mode === 'sword') sendOri();
+      if (mode === 'sword' || mode === 'bow') sendOri();
     },
     link.transport === 'http' ? 100 : 33,
   );
@@ -1081,7 +1235,7 @@ function gripIdle() {
 
 gripBall.addEventListener('pointerdown', (e) => {
   e.preventDefault();
-  if (mode !== 'bowl' || !joined || gripId !== null) return;
+  if (mode !== 'bowl' || locked || !joined || gripId !== null) return;
   gripId = e.pointerId;
   try {
     gripBall.setPointerCapture(e.pointerId);
@@ -1363,6 +1517,95 @@ for (const b of [guardVert, guardHorz]) {
   });
 }
 
+// ------------------------------------------------------------------ archery
+
+/** the pointer holding DRAW (the string is pulled back), or null */
+let drawId: number | null = null;
+let drawT0 = 0;
+let drawRaf = 0;
+/** no motion sensor: how far the finger has dragged since the draw began (px) */
+const dragAim = { x0: 0, y0: 0, dx: 0, dy: 0 };
+/** as the TV's RANGE.drawT: the ring fills as the string comes back */
+const DRAW_T = 900;
+
+function drawIdle() {
+  drawPad.classList.remove('held');
+  drawBig.textContent = 'DRAW';
+  drawSub.textContent = motionOK ? 'hold · aim · let go' : 'hold · drag · let go';
+  drawWrap.style.setProperty('--p', '0');
+}
+
+function drawMeter() {
+  if (drawId === null) return;
+  drawWrap.style.setProperty('--p', Math.min(1, (performance.now() - drawT0) / DRAW_T).toFixed(3));
+  drawRaf = requestAnimationFrame(drawMeter);
+}
+
+drawPad.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  if (mode !== 'bow' || locked || !joined || drawId !== null) return;
+  drawId = e.pointerId;
+  try {
+    drawPad.setPointerCapture(e.pointerId);
+  } catch {}
+  for (const up of lockedBtnUps) up(); // the palm on pause as the thumb lands isn't a press
+  drawT0 = performance.now();
+  dragAim.x0 = e.clientX;
+  dragAim.y0 = e.clientY;
+  dragAim.dx = dragAim.dy = 0;
+  sendOri(); // where the aim starts from
+  link.send({ type: 'draw', down: true, lat: Math.round(link.lat) });
+  drawPad.classList.add('held');
+  drawBig.textContent = 'AIM';
+  drawSub.textContent = motionOK ? 'point · let go' : 'drag · let go';
+  bowTv.textContent = '';
+  audio.creak();
+  cancelAnimationFrame(drawRaf);
+  drawRaf = requestAnimationFrame(drawMeter);
+});
+
+drawPad.addEventListener('pointermove', (e) => {
+  if (e.pointerId !== drawId) return;
+  dragAim.dx = e.clientX - dragAim.x0;
+  dragAim.dy = e.clientY - dragAim.y0;
+});
+
+const drawLift = (e: PointerEvent) => {
+  if (e.pointerId !== drawId) return;
+  drawId = null;
+  cancelAnimationFrame(drawRaf);
+  sendOri(); // the aim it left the bow on
+  link.send({ type: 'draw', down: false, lat: Math.round(link.lat) });
+  const held = performance.now() - drawT0;
+  // a hand coming off the pad after a shot isn't pressing pause
+  lockUntil = Math.max(lockUntil, performance.now() + 400);
+  if (held > DRAW_T * 0.25) {
+    audio.twang(Math.min(1, held / DRAW_T));
+    bowShot.textContent = held >= DRAW_T ? 'LOOSED · full draw' : `LOOSED · ${Math.round((held / DRAW_T) * 100)}% draw`;
+    drawWrap.classList.remove('pop');
+    void drawWrap.offsetWidth;
+    drawWrap.classList.add('pop');
+  } else bowShot.textContent = 'hold DRAW longer to shoot';
+  drawIdle();
+};
+drawPad.addEventListener('pointerup', drawLift);
+drawPad.addEventListener('pointercancel', drawLift);
+drawPad.addEventListener('lostpointercapture', drawLift);
+drawPad.addEventListener('contextmenu', (e) => e.preventDefault());
+
+/** The game moved on mid-draw: let go of the string. */
+function drawCancel() {
+  if (drawId === null) return;
+  const id = drawId;
+  drawId = null;
+  cancelAnimationFrame(drawRaf);
+  try {
+    drawPad.releasePointerCapture(id);
+  } catch {}
+  link.send({ type: 'draw', down: false, lat: Math.round(link.lat) });
+  drawIdle();
+}
+
 // ------------------------------------------------------------------ join
 
 let wakeLock: { release(): Promise<void> } | null = null;
@@ -1394,7 +1637,7 @@ joinBtn.addEventListener('click', () => {
     if (!ok) showToast(window.isSecureContext ? 'No motion sensor: swipe to swing' : 'Motion needs https', 2200);
     setMode(mode);
     if (link.status === 'online') {
-      link.send({ type: 'hello', name: prefs.name || 'Player', handed: prefs.handed, ver: 1, motion: motionOK });
+      link.send({ type: 'hello', name: prefs.name || 'Player', handed: prefs.handed, ver: 1, motion: motionOK, ...(prefs.look ? { look: prefs.look } : {}) });
     }
     cancelAnimationFrame(liveRaf);
     liveLoop();

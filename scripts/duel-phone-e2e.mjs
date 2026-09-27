@@ -44,9 +44,11 @@ await pad.waitForSelector('.panel.sword.on', { timeout: 10000 });
 check('the pad shows the sword panel', true);
 await tv.evaluate(() => window.kaleido.duel.skip());
 await tv.waitForFunction(() => window.kaleido.duel?.state === 'fight', null, { timeout: 20000 });
-// record fighter 0's attacks and guard
+// record fighter 0's attacks and guard; the CPU stands still (it would knock the
+// test player about — this checks the phone, not the fight)
 await tv.evaluate(() => {
   const g = window.kaleido.duel;
+  for (const c of g.cpus) if (c) c.think = () => {};
   window.__ev = [];
   const on = g.onEvent;
   g.onEvent = (e) => {

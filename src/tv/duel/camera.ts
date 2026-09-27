@@ -49,8 +49,9 @@ export class DuelCamera {
     const them = g.fighters[1 - i];
     const back = me.facing; // fighter 0 faces −z, so behind them is +z
     const right = me.facing; // …and their right is +x
-    v.tp.set(me.x + right * 1.8 * me.handed, ARENA.top + 2.45, me.z + back * (3.5 - push));
-    v.tl.set(them.x, ARENA.top + 1.0, them.z);
+    // high enough that their head shows above yours (heads level with the lens overlap)
+    v.tp.set(me.x + right * 1.6 * me.handed, ARENA.top + 3.05, me.z + back * (4.1 - push));
+    v.tl.set(them.x - right * 0.15 * me.handed, ARENA.top + 0.95, them.z + back * 0.2);
     v.fov = 46;
   }
 
@@ -102,9 +103,10 @@ export class DuelCamera {
           const f = w ?? g.fighters[i];
           const k = clamp(since / 3);
           const side = f.facing * (i === 0 ? 1 : -1);
-          v.tp.set(f.x + side * (1.4 + (g.state === 'over' ? Math.sin(t * 0.4) * 0.8 : 0)), ARENA.top + 1.55 - k * 0.1, f.z - f.facing * (4.4 - k * 0.5));
-          v.tl.set(f.x, ARENA.top + 1.3, f.z);
-          v.fov = 44;
+          // far enough back that the raised sword stays in the frame
+          v.tp.set(f.x + side * (1.6 + (g.state === 'over' ? Math.sin(t * 0.4) * 0.9 : 0)), ARENA.top + 1.75 - k * 0.1, f.z - f.facing * (5.4 - k * 0.5));
+          v.tl.set(f.x, ARENA.top + 1.55, f.z);
+          v.fov = 46;
           lambda = since < 0.05 ? 1000 : 2.5;
           break;
         }

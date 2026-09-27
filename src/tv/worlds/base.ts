@@ -15,8 +15,9 @@ import { Crowd } from './crowd';
 import { batchStatic, type BatchStats } from '../render/batch';
 import type { BowlView } from '../bowling/types';
 import type { DuelView } from '../duel/types';
+import type { RangeView } from '../archery/types';
 
-export type Sport = 'tennis' | 'bowling' | 'duel';
+export type Sport = 'tennis' | 'bowling' | 'duel' | 'archery';
 
 /** What a world needs from the bowling venue (lanes, pins, ball) — see bowling/venue.ts. */
 export interface BowlVenueLike {
@@ -31,6 +32,13 @@ export interface BowlVenueLike {
 export interface DuelVenueLike {
   group: THREE.Group;
   update(v: DuelView, realDt: number): void;
+  dispose(): void;
+}
+
+/** What a world needs from the archery range (targets, arrows, wind flags) — see archery/venue.ts. */
+export interface RangeVenueLike {
+  group: THREE.Group;
+  update(v: RangeView, realDt: number): void;
   dispose(): void;
 }
 
@@ -97,6 +105,8 @@ export interface FrameView {
   bowl?: BowlView;
   /** sword duel: the arena's state and effects */
   duel?: DuelView;
+  /** archery: targets, arrows, wind */
+  range?: RangeView;
 }
 
 export interface CourtStyle {
@@ -150,6 +160,7 @@ export abstract class World {
    *  its sport comes to this world, with the world's own materials */
   bowlVenue: BowlVenueLike | null = null;
   duelVenue: DuelVenueLike | null = null;
+  rangeVenue: RangeVenueLike | null = null;
   netWob = 0;
   netWobX = 0;
   w = 1;
@@ -635,6 +646,7 @@ export abstract class World {
     this.crowd?.update(v.realT, v.realDt, v.excitement);
     if (this.sport === 'bowling' && v.bowl) this.bowlVenue?.update(v.bowl, v.realDt);
     else if (this.sport === 'duel' && v.duel) this.duelVenue?.update(v.duel, v.realDt);
+    else if (this.sport === 'archery' && v.range) this.rangeVenue?.update(v.range, v.realDt);
     this.updateNet(v.realDt);
     this.flash = Math.max(0, this.flash - v.realDt * 3.5);
     this.animate(v);
@@ -651,7 +663,8 @@ export abstract class World {
   setSport(sport: 'tennis'): void;
   setSport(sport: 'bowling', make?: (kit: MaterialKit) => BowlVenueLike): void;
   setSport(sport: 'duel', make?: (kit: MaterialKit) => DuelVenueLike): void;
-  setSport(sport: Sport, make?: (kit: MaterialKit) => BowlVenueLike | DuelVenueLike) {
+  setSport(sport: 'archery', make?: (kit: MaterialKit) => RangeVenueLike): void;
+  setSport(sport: Sport, make?: (kit: MaterialKit) => BowlVenueLike | DuelVenueLike | RangeVenueLike) {
     this.sport = sport;
     if (sport === 'bowling' && !this.bowlVenue && make) {
       this.bowlVenue = make(this.kit) as BowlVenueLike;
@@ -659,9 +672,13 @@ export abstract class World {
     } else if (sport === 'duel' && !this.duelVenue && make) {
       this.duelVenue = make(this.kit) as DuelVenueLike;
       this.scene.add(this.duelVenue.group);
+    } else if (sport === 'archery' && !this.rangeVenue && make) {
+      this.rangeVenue = make(this.kit) as RangeVenueLike;
+      this.scene.add(this.rangeVenue.group);
     }
     if (this.bowlVenue) this.bowlVenue.group.visible = sport === 'bowling';
     if (this.duelVenue) this.duelVenue.group.visible = sport === 'duel';
+    if (this.rangeVenue) this.rangeVenue.group.visible = sport === 'archery';
     const tennis = sport === 'tennis';
     if (this.courtGroup) this.courtGroup.visible = tennis;
     if (this.netGroup) this.netGroup.visible = tennis;

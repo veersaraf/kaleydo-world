@@ -18,7 +18,17 @@ import { DuelAnimator } from './duel/anim';
 import { DuelGear } from './duel/sword';
 import { aimFromPhone, type Duelist, type DuelEvent, type SlashInput, type SwordAim } from './duel/types';
 import { readyAim, guardAim, cockAim, newAim } from './duel/aim';
+import { ArcheryGame } from './archery/game';
+import { flyTo } from './archery/physics';
+import { ArcheryCamera } from './archery/camera';
+import { RangeVenue } from './archery/venue';
+import { ArcherAnimator } from './archery/anim';
+import { ArcheryGear } from './archery/bow';
+import { RANGE } from './archery/range';
+import type { Archer, ArcheryEvent, ArcherState } from './archery/types';
 import type { World } from './worlds/base';
+import { hashStr } from '../shared/hash';
+import { PLAYER_COLORS } from '../shared/protocol';
 import { CHAR_SCALE } from './chars/rig';
 import { newPose, copyPose } from './chars/pose';
 import { WORLDS } from './worlds';
@@ -62,7 +72,7 @@ export class App {
   beat: () => number = () => 0;
   worldId = 'plaza';
   // ---- bowling
-  sport: 'tennis' | 'bowling' | 'duel' = 'tennis';
+  sport: 'tennis' | 'bowling' | 'duel' | 'archery' = 'tennis';
   bowl: BowlingGame | null = null;
   bowlCam = new BowlCamera();
   private bowlAnims: BowlAnimator[] = [];
@@ -78,6 +88,23 @@ export class App {
   private keySlash: { slot: number; attack: SlashInput; at: number } | null = null;
   private localSword = newAim();
   onDuelEvent: (e: DuelEvent) => void = () => {};
+  // ---- archery
+  archery: ArcheryGame | null = null;
+  archCam = new ArcheryCamera();
+  private archAnims: ArcherAnimator[] = [];
+  private archGear = new Map<World, ArcheryGear>();
+  onArcheryEvent: (e: ArcheryEvent) => void = () => {};
+  /** a phone's pose when the draw began, and the aim it started from (the aim follows the turn since) */
+  private aimFrom: { q: THREE.Quaternion; yaw: number; pitch: number } | null = null;
+  /** how much of the phone's turn the aim takes: well under 1:1 keeps a steady hand's
+   *  tremor within a ring or two at 30 m (a ring there is 0.09°) */
+  aimGain = 0.55;
+  /** the reticle on screen for the HUD (CSS pixels), or null */
+  reticle: { x: number; y: number; draw: number } | null = null;
+  private tmpQ = new THREE.Quaternion();
+  private tmpM = new THREE.Matrix4();
+  private tmpV3 = new THREE.Vector3();
+  private cross = { x: 0, y: 0, t: 0, ok: false, speed: 0 };
 
   /** player preference: give each side its own view in local versus */
   splitPref = true;
@@ -142,6 +169,7 @@ export class App {
     const a = this.stage.vw / this.stage.h;
     this.bowlCam.aspect = this.stage.w / this.stage.h;
     this.duelCam.aspect = a;
+    this.archCam.aspect = this.stage.w / this.stage.h;
     this.duelCam.split = this.splitOn;
     this.rig.aspect = a;
     this.rig2.aspect = a;
@@ -151,7 +179,37 @@ export class App {
 
   // ---------------------------------------------------------------- matches
 
-  startAttract(worldId = this.worldId) {
+  /** which sport the menu's background is showing */
+  attractSport: 'tennis' | 'bowling' | 'duel' | 'archery' = 'tennis';
+
+  /** CPUs to fill a showcase game: random looks, the player colours */
+  private attractCpus(n: number) {
+    return Array.from({ length: n }, (_, i) => ({
+      name: 'CPU',
+      color: PLAYER_COLORS[(i + this.rng.int(0, 3)) % 4],
+      look: randomLook(this.rng),
+      handed: (this.rng.chance(0.15) ? -1 : 1) as 1 | -1,
+      slot: -1,
+      cpu: this.rng.range(0.6, 0.95),
+    }));
+  }
+
+  /** The menu's background: CPUs playing one of the sports (they take turns showing off). */
+  startAttract(worldId = this.worldId, sport = this.attractSport) {
+    this.attractSport = sport;
+    if (sport === 'bowling') {
+      void this.startBowling(this.attractCpus(2), worldId, true);
+      return;
+    }
+    if (sport === 'duel') {
+      const [a, b] = this.attractCpus(2);
+      this.startDuel([a, b], worldId, true);
+      return;
+    }
+    if (sport === 'archery') {
+      this.startArchery(this.attractCpus(2), worldId, true);
+      return;
+    }
     const doubles = this.rng.chance(0.3);
     const players: PlayerSpec[] = [];
     for (const team of [0, 1] as const) {
@@ -177,6 +235,7 @@ export class App {
   private begin(cfg: MatchConfig, worldId: string) {
     this.stopBowling();
     this.stopDuel();
+    this.stopArchery();
     this.replay = null;
     for (const f of this.rec) this.recPool.push(f);
     this.rec.length = 0;
@@ -341,23 +400,36 @@ export class App {
     const realDt = Math.min(0.1, Math.max(0, gapMs / 1000));
     this.last = now;
     this.realT += realDt;
+    // (each sport's frame ends by calling onFrame, which can start another sport —
+    // the menu's showcase moving on — so hold on to this frame's game)
     if (this.sport === 'bowling') {
-      if (!this.bowl || !this.stage.current) return;
+      const g = this.bowl;
+      if (!g || !this.stage.current) return;
       this.quality.beginFrame();
       this.bowlFrame(realDt);
       this.quality.endFrame();
       if (!document.hidden) {
-        const st = this.bowl.state;
+        const st = g.state;
         if (this.quality.update(now, gapMs, this.paused || (st !== 'approach' && st !== 'lane' && st !== 'pins')) !== null) this.applyQuality();
       }
       return;
     }
+    if (this.sport === 'archery') {
+      const g = this.archery;
+      if (!g || !this.stage.current) return;
+      this.quality.beginFrame();
+      this.archeryFrame(realDt);
+      this.quality.endFrame();
+      if (!document.hidden && this.quality.update(now, gapMs, this.paused || g.state !== 'aim') !== null) this.applyQuality();
+      return;
+    }
     if (this.sport === 'duel') {
-      if (!this.duel || !this.stage.current) return;
+      const g = this.duel;
+      if (!g || !this.stage.current) return;
       this.quality.beginFrame();
       this.duelFrame(realDt);
       this.quality.endFrame();
-      if (!document.hidden && this.quality.update(now, gapMs, this.paused || this.duel.state !== 'fight') !== null) this.applyQuality();
+      if (!document.hidden && this.quality.update(now, gapMs, this.paused || g.state !== 'fight') !== null) this.applyQuality();
       return;
     }
     const m = this.match;
@@ -376,16 +448,177 @@ export class App {
     }
   }
 
+  // ---------------------------------------------------------------- archery
+
+  /** Turn the current world's court into a range and start a round. */
+  startArchery(archers: Archer[], worldId: string, attract = false) {
+    this.stopBowling();
+    this.stopDuel();
+    this.stopArchery();
+    this.match = null;
+    this.replay = null;
+    this.attract = attract;
+    this.paused = false;
+    this.sport = 'archery';
+    this.input.archeryMode = true;
+    this.worldId = worldId;
+    this.stage.setWorld(worldId);
+    this.archery = new ArcheryGame(archers);
+    this.archery.onEvent = (e) => {
+      if (e.type === 'score' && e.points >= 10) this.archCam.kick(0.25);
+      this.onArcheryEvent(e);
+    };
+    this.archAnims = archers.map((a) => new ArcherAnimator(a.handed, a.look));
+    this.stage.setPlayers(archers.map((a) => a.look));
+    this.aimFrom = null;
+    this.prepareArcheryWorld();
+  }
+
+  /** The world on screen shows the range; its characters carry bows. */
+  private prepareArcheryWorld() {
+    const w = this.stage.current;
+    if (!w || !this.archery) return;
+    if (w.sport !== 'archery') w.setSport('archery', (kit) => new RangeVenue(kit, { particles: w.particles, world: w.def.id }));
+    if (!this.archGear.has(w)) this.archGear.set(w, new ArcheryGear(w, this.archery.archers.map((a) => a.color)));
+  }
+
+  stopArchery() {
+    if (this.sport !== 'archery') return;
+    this.sport = 'tennis';
+    this.input.archeryMode = false;
+    this.archery = null;
+    this.reticle = null;
+    for (const gear of this.archGear.values()) gear.dispose();
+    this.archGear.clear();
+    this.stage.forEachWorld((w) => {
+      if (w.sport === 'archery') w.setSport('tennis');
+    });
+  }
+
+
+  /**
+   * A phone's aim: when the draw begins the aim sits on the target; from then on
+   * it turns as the phone turns (so compass drift doesn't matter, only the turn).
+   */
+  private phoneAim(g: ArcheryGame, s: [number, number, number], n: [number, number, number]) {
+    // the phone's orientation in its player frame (x right, y towards the screen, z up)
+    const S = this.tmpV3.set(s[0], s[1], s[2]).normalize();
+    const N = new THREE.Vector3(n[0], n[1], n[2]);
+    N.addScaledVector(S, -N.dot(S)).normalize();
+    const X = new THREE.Vector3().crossVectors(S, N);
+    const q = this.tmpQ.setFromRotationMatrix(this.tmpM.makeBasis(S, N, X));
+    const drawing = g.archer.phase === 'draw' || g.archer.phase === 'hold';
+    if (!drawing || !this.aimFrom) {
+      // the straight line to the middle of the main target
+      const b = g.home;
+      if (drawing) this.aimFrom = { q: q.clone(), yaw: b.yaw, pitch: b.pitch };
+      return { yaw: b.yaw, pitch: b.pitch };
+    }
+    // the turn since the draw began, a little damped
+    const turn = q.clone().multiply(this.aimFrom.q.clone().invert());
+    turn.slerp(new THREE.Quaternion(), 1 - this.aimGain);
+    // the starting aim as a player-frame direction, turned
+    const { yaw, pitch } = this.aimFrom;
+    const w0 = new THREE.Vector3(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
+    const d = new THREE.Vector3(w0.x, -w0.z, w0.y).applyQuaternion(turn);
+    const w = { x: d.x, y: d.z, z: -d.y };
+    return { yaw: Math.atan2(-w.x, -w.z), pitch: Math.asin(Math.max(-1, Math.min(1, w.y))) };
+  }
+
+  /** A mouse/keyboard player's aim: through the cursor (on the target's plane), nudged by the arrows. */
+  private mouseAim(g: ArcheryGame) {
+    const f = g.mainTarget();
+    const m = this.input.mouseNdc;
+    const cam = this.archCam.cam;
+    const ray = new THREE.Vector3(m.x, m.y, 0.5).unproject(cam).sub(cam.position).normalize();
+    const zPlane = f ? f.z : RANGE.lineZ - 15;
+    const k = Math.abs(ray.z) > 1e-4 ? (zPlane - cam.position.z) / ray.z : 20;
+    const p = cam.position.clone().addScaledVector(ray, Math.max(1, k));
+    const a = g.archer;
+    const nudge = this.input.aimNudge;
+    const dx = p.x - a.x,
+      dy = p.y - RANGE.eyeY,
+      dz = p.z - a.z;
+    return { yaw: Math.atan2(-dx, -dz) + nudge.yaw, pitch: Math.atan2(dy, Math.hypot(dx, dz)) + nudge.pitch };
+  }
+
+  private archeryFrame(realDt: number) {
+    const g = this.archery!;
+    const w = this.stage.current!;
+    this.prepareArcheryWorld();
+    const dt = this.paused ? 0 : Math.min(0.05, realDt);
+    // the aim: the phone's turn since the draw began, or the mouse
+    const who = g.archers[g.current];
+    let aimOn = false;
+    if (who && who.cpu === null && g.state === 'aim') {
+      const r = this.input.racket[who.slot];
+      const seat = this.input.seats[who.slot];
+      const a = r && performance.now() - r.t < 400 && seat && !seat.local ? this.phoneAim(g, r.s, r.n) : this.mouseAim(g);
+      g.aim(who.slot, a.yaw, a.pitch);
+      aimOn = true;
+    }
+    if (g.state !== 'aim') this.aimFrom = null;
+    // the arrow cam: the last few metres before the target go by in slow motion
+    let gdt = dt;
+    const arrow = g.shotArrow;
+    const main = g.mainTarget();
+    if (g.state === 'flight' && arrow && arrow.state === 'flying' && main) {
+      const left = arrow.z - main.z;
+      if (left > 0 && left < 4.5) gdt = dt * (0.3 + 0.7 * Math.max(0, (left - 1.5) / 3));
+    }
+    if (gdt > 0) g.step(gdt);
+    const view = g.view();
+    this.archCam.update(g, view, realDt, this.realT);
+    // the archer up on the line; the others wait to the side, watching
+    const states = g.archers.map((a, i): ArcherState => {
+      if (i === g.current) return g.archer;
+      const order = (i - g.current + g.archers.length) % g.archers.length;
+      return { x: -(2.2 + (order - 1) * 0.9), z: RANGE.lineZ + 1.6, handed: a.handed, phase: 'idle', t: g.t, draw: 0, yaw: -0.6, pitch: 0 };
+    });
+    const poses = states.map((s, i) => this.archAnims[i].update(g.t, Math.max(1e-4, i === g.current ? gdt : dt), s));
+    const fv: FrameView = {
+      t: g.t,
+      dt,
+      realT: this.realT,
+      realDt,
+      ball: { x: 0, y: -10, z: 0 },
+      ballSpeed: 0,
+      ballVisible: false,
+      holder: -1,
+      poses,
+      excitement: g.state === 'flight' || g.state === 'result' ? 0.6 : 0.3,
+      state: 'play',
+      cam: this.archCam.cam,
+      beat: this.beat(),
+      range: view,
+    };
+    this.stage.update(fv);
+    this.archGear.get(w)?.update(states, realDt);
+    this.stage.render(this.archCam.cam);
+    // the sight: where a full-draw arrow would land on the target's plane with no
+    // wind (so the drop is taken care of and you judge the wind); it shakes as the aim does
+    const drawn = g.archer.phase === 'draw' || g.archer.phase === 'hold';
+    const f = g.mainTarget();
+    if (aimOn && f && (drawn || !this.input.racket[who!.slot])) {
+      const a = g.archer;
+      const c = flyTo(a.yaw, a.pitch, RANGE.fullSpeed, f.z, 0, this.cross);
+      const p = this.tmpV3.set(c.x, c.y, f.z).project(this.archCam.cam);
+      this.reticle = c.ok ? { x: ((p.x + 1) / 2) * this.stage.w, y: ((1 - p.y) / 2) * this.stage.h, draw: a.draw } : null;
+    } else this.reticle = null;
+    this.onFrame(realDt);
+  }
+
   // ---------------------------------------------------------------- sword duel
 
   /** Turn the current world's court into a duel arena and start a match. Two
    *  people on the same screen get half each. */
-  startDuel(duelists: [Duelist, Duelist], worldId: string) {
+  startDuel(duelists: [Duelist, Duelist], worldId: string, attract = false) {
     this.stopBowling();
     this.stopDuel();
+    this.stopArchery();
     this.match = null;
     this.replay = null;
-    this.attract = false;
+    this.attract = attract;
     this.paused = false;
     this.bowl = null;
     this.sport = 'duel';
@@ -478,12 +711,17 @@ export class App {
       this.keySlash = null;
       g.slash(ks.slot, ks.attack);
     }
-    if (dt > 0) g.step(dt);
+    // over the edge: the knock-off plays in slow motion, then eases back to speed
+    // for the splash (game time only — the camera and effects keep real time)
+    const since = g.t - g.stateT0;
+    const slow = g.state === 'fall' ? Math.min(1, 0.35 + Math.max(0, since - 0.45) * 1.6) : 1;
+    const gdt = dt * slow;
+    if (gdt > 0) g.step(gdt);
     this.duelCam.update(g, realDt, this.realT);
-    const poses = g.fighters.map((f, i) => this.duelAnims[i].update(g.t, Math.max(1e-4, dt), f));
+    const poses = g.fighters.map((f, i) => this.duelAnims[i].update(g.t, Math.max(1e-4, gdt), f));
     const view: FrameView = {
       t: g.t,
-      dt,
+      dt: gdt,
       realT: this.realT,
       realDt,
       ball: { x: 0, y: -10, z: 0 },
@@ -506,12 +744,13 @@ export class App {
   // ---------------------------------------------------------------- bowling
 
   /** Turn the current world's court into lanes and start a game. */
-  async startBowling(specs: Omit<Bowler, 'score' | 'x' | 'aim'>[], worldId: string) {
+  async startBowling(specs: Omit<Bowler, 'score' | 'x' | 'aim'>[], worldId: string, attract = false) {
     this.phys ??= await BowlPhysics.load();
     this.stopDuel();
+    this.stopArchery();
     this.match = null;
     this.replay = null;
-    this.attract = false;
+    this.attract = attract;
     this.paused = false;
     this.split = false;
     this.sport = 'bowling';
@@ -701,11 +940,4 @@ interface RecFrame {
   events: MatchEvent[];
 }
 
-export function hashStr(s: string) {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
+export { hashStr };
