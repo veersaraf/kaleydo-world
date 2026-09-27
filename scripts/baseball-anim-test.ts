@@ -226,7 +226,8 @@ console.log(`pitcher: ball on the release point (${fails ? 'see failures' : 'all
 // ---------------------------------------------------------------- the catcher
 
 {
-  let worstC = 0;
+  let worstC = 0,
+    worstArm = 0;
   for (const tx of [-0.5, -0.2, 0, 0.25, 0.5])
     for (const ty of [0.25, 0.5, 0.8, 1.15, 1.4])
       for (const height of [0.94, 1.06]) {
@@ -253,12 +254,14 @@ console.log(`pitcher: ball on the release point (${fails ? 'see failures' : 'all
             worstC = Math.max(worstC, e);
             const sM = shoulder(p, -1, 1);
             const arm = len(sub(p.hands[0], sM)) / 0.5;
-            if (verbose || arm > 1.1) console.log(`catcher ${tx},${ty} H${height}: mitt arm ${arm.toFixed(2)}×`);
+            worstArm = Math.max(worstArm, arm);
+            if (verbose) console.log(`catcher ${tx},${ty} H${height}: mitt arm ${arm.toFixed(2)}×`);
+            if (arm > 1.06) fail(`catcher ${tx},${ty} H${height}: the mitt arm stretched to ${arm.toFixed(2)}×`);
           }
         }
       }
   if (worstC > 1e-6) fail(`catcher: pocket ${(worstC * 100).toFixed(2)} cm off the ball`);
-  console.log(`catcher: pocket error ≤ ${(worstC * 1000).toFixed(4)} mm`);
+  console.log(`catcher: pocket error ≤ ${(worstC * 1000).toFixed(4)} mm; the mitt arm ≤ ${worstArm.toFixed(2)}× (targets ±0.5 m, 0.25–1.4 m up)`);
 }
 
 // ---------------------------------------------------------------- the throw back: out of the catcher's hand, into the pitcher's glove

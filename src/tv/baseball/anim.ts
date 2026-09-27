@@ -1256,17 +1256,22 @@ export class BatterAnimator extends Base {
       // turned to the field (the hero camera's out there) — in the air, on the first hop — or,
       // waiting, to where we're told
       T.rootYaw = flip ? 0 : s.yaw;
-      set(T.body, 0, HIP + 0.01, 0);
-      T.pitch = 0.1;
-      T.yaw = 0;
-      T.roll = 0;
+      // after the hops: a fist-pumping groove, one arm then the other, dipping and swaying into each
+      const groove = v > 1.15 ? smooth(clamp((v - 1.15) / 0.2)) : 0;
+      const ph = (v - 1.15) * ((Math.PI * 2) / 0.62);
+      const pa = groove * Math.max(0, Math.sin(ph)),
+        pb = groove * Math.max(0, -Math.sin(ph));
+      set(T.body, 0, HIP + 0.01 - 0.03 * (pa + pb), 0);
+      T.pitch = 0.1 - 0.06 * (pa + pb);
+      T.yaw = h * 0.16 * (pa - pb);
+      T.roll = -h * 0.07 * (pa - pb);
       set(T.feet[0], -HIP_X * 1.35, air * 0.08, 0.01);
       set(T.feet[1], HIP_X * 1.35, air * 0.08, 0.01);
       T.footPitch[0] = T.footPitch[1] = -0.4 * air;
       if (flip) {
         // both arms up, fists pumping (the bat's gone)
-        set(T.top, h * 0.36, 1.66 + pump, -0.08);
-        set(T.bottom, -h * 0.36, 1.66 - pump, -0.08);
+        set(T.top, h * 0.36, 1.66 + pump * (1 - groove) - 0.36 * pa, -0.08 - 0.12 * pa);
+        set(T.bottom, -h * 0.36, 1.66 - pump * (1 - groove) - 0.36 * pb, -0.08 - 0.12 * pb);
         cp(T.grip, T.top);
         set(T.dir, 0, 1, 0);
         T.topOff = 1;
@@ -1274,10 +1279,10 @@ export class BatterAnimator extends Base {
         T.armLam = 16;
       } else {
         // the bat held up in the top hand, the other fist pumping
-        set(T.grip, h * 0.34, 1.5 + pump * 0.6, -0.06);
+        set(T.grip, h * 0.34, 1.5 + pump * 0.6 * (1 - groove) - 0.2 * pa, -0.06);
         set(T.dir, h * 0.2, 1, 0.12);
         norm(T.dir);
-        set(T.bottom, -h * 0.36, 1.55 - pump, -0.1);
+        set(T.bottom, -h * 0.36, 1.55 - pump * (1 - groove) - 0.36 * pb, -0.1 - 0.12 * pb);
         T.both = 0;
         T.armLam = 14;
       }
@@ -2055,6 +2060,9 @@ export class CatcherAnimator extends Base {
   private snapFace = V(0, 0, -1);
   private snapBody = V();
   private snapHand = V();
+  private snapPitch = 0;
+  private snapYaw = 0;
+  private snapRoll = 0;
   private a = V();
   private b = V();
   private X = V();
@@ -2163,6 +2171,9 @@ export class CatcherAnimator extends Base {
     cp(this.snapFace, P.racketFace);
     cp(this.snapBody, P.body);
     cp(this.snapHand, P.hands[1]);
+    this.snapPitch = P.bodyPitch;
+    this.snapYaw = P.bodyYaw;
+    this.snapRoll = P.bodyRoll;
     if (s.phase === 'catch') this.squashV -= 0.1;
   }
 
@@ -2210,6 +2221,36 @@ export class CatcherAnimator extends Base {
     set(T.mitt, lx - ox, ly - oy, lz - oz);
   }
 
+  /**
+   * The squat goes with the mitt (after mittOn): over towards a pitch off the
+   * plate, the shoulders turned to bring the mitt across for one on the
+   * throwing-hand side, leaning in and down for a low one, up out of the crouch
+   * for a high one — then, whatever's still out of the arm's reach, the body
+   * goes after it (the arm never stretches).
+   */
+  private reachMitt(T: CatchTargets, s: CatcherState, tx: number, ty: number) {
+    const side = clamp((tx - s.x) / 0.5, -1, 1);
+    const low = clamp((0.62 - ty) / 0.35);
+    const high = clamp((ty - 0.95) / 0.45);
+    T.body.x += side * 0.08;
+    T.body.y += 0.2 * high - 0.03 * low;
+    T.body.z -= 0.05 * low;
+    T.pitch += 0.1 * high - 0.2 * low;
+    T.yaw = -0.4 * Math.max(0, side);
+    T.roll = -side * 0.06;
+    const R = 0.5 * 1.02;
+    for (let pass = 0; pass < 3; pass++) {
+      const sh = shoulderAt(this.b, -1, this.girth, T.body, T.pitch, T.yaw, T.roll);
+      const d = Math.hypot(T.mitt.x - sh.x, T.mitt.y - sh.y, T.mitt.z - sh.z);
+      if (d <= R) break;
+      const k = (d - R) / d;
+      T.body.x += (T.mitt.x - sh.x) * k;
+      T.body.y += (T.mitt.y - sh.y) * k;
+      T.body.z += (T.mitt.z - sh.z) * k;
+    }
+    T.body.y = Math.max(0.08, T.body.y);
+  }
+
   /** The pocket's centre (root space) for the pose as it stands. */
   pocket(o: V3) {
     const P = this.pose;
@@ -2236,6 +2277,7 @@ export class CatcherAnimator extends Base {
       ty = s.targetY > 0 ? s.targetY : TARGET.y;
     const bob = Math.sin(t * 2.4) * 0.008;
     this.mittOn(T, tx, ty + bob, FIELD.catcherZ - 0.35);
+    this.reachMitt(T, s, tx, ty);
     // after a watch, the throwing hand pulls the mask back down first
     const u = s.t;
     if (this.from === 'watch' && u < MASK.on + 0.15) {
@@ -2256,10 +2298,6 @@ export class CatcherAnimator extends Base {
     const u = s.t;
     const ar = Math.max(0.05, s.arrive);
     this.squat(T, 0);
-    // the body shifts a little towards a pitch off the plate
-    const side = clamp((s.targetX - s.x) / 0.6, -1, 1);
-    T.body.x = side * 0.06;
-    T.roll = -side * 0.05;
     const z = FIELD.catcherZ - 0.35;
     // the target held (a touch relaxed while the ball's on its way, then up to meet it, exactly
     // there at `arrive`); after it arrives, the pop
@@ -2273,6 +2311,8 @@ export class CatcherAnimator extends Base {
       const frame = smooth(clamp((v - 0.12) / 0.3)) * 0.03;
       this.mittOn(T, s.targetX + (TARGET.x - s.targetX) * frame, s.targetY - give * 0.3 + (TARGET.y - s.targetY) * frame, z + give);
     }
+    // the body over to where the mitt has to go
+    this.reachMitt(T, s, s.targetX, s.targetY);
     // blend in from the pose it was in (a crouch, normally the same)
     const b = smooth(clamp(u / 0.12));
     if (b < 1) {
@@ -2280,9 +2320,18 @@ export class CatcherAnimator extends Base {
       lerpV(T.mittDir, this.snapDir, T.mittDir, b);
       norm(T.mittDir);
       lerpV(T.mittFace, this.snapFace, T.mittFace, b);
+      lerpV(T.body, this.snapBody, T.body, b);
+      T.pitch = lerp(this.snapPitch, T.pitch, b);
+      T.yaw = lerp(this.snapYaw, T.yaw, b);
+      T.roll = lerp(this.snapRoll, T.roll, b);
     }
     this.tuck(T);
-    if (!gazeAt(T.gaze, s.look)) gazeAt(T.gaze, { x: s.targetX, y: s.targetY, z });
+    // eyes on the ball all the way in from the pitcher's hand (near enough: a line from the release
+    // point to the mitt), the head coming down only as it reaches the mitt
+    if (!gazeAt(T.gaze, s.look)) {
+      const k = clamp(u / ar);
+      gazeAt(T.gaze, set(this.a, s.targetX * k, FIELD.releaseY + (s.targetY - FIELD.releaseY) * k, FIELD.releaseZ + (z - FIELD.releaseZ) * k));
+    }
     T.eyes = 'focus';
     T.mouth = u >= ar && u < ar + 0.3 ? 'o' : 'flat';
     T.brow = 0.7;

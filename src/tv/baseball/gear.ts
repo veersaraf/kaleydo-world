@@ -600,11 +600,6 @@ function seamTexture(ball: string, seam: string) {
   return tex;
 }
 
-/** How much bigger a ball this far (metres) from the camera is drawn, so it never shrinks to a speck (the tennis ball's rule). */
-export function ballDrawScale(dist: number) {
-  return THREE.MathUtils.clamp(1 + (dist - 9) * 0.045, 1, 2.1);
-}
-
 // ---------------------------------------------------------------- the gear
 
 /** The parts of a World that BaseballGear uses. */
@@ -622,8 +617,6 @@ export interface BaseballChars {
   pitcher: PitcherState;
   catcher: CatcherState;
   ball: FieldBall;
-  /** the camera's position (FieldView.eye): the ball in a hand is drawn as big as the venue draws a flying one */
-  eye?: { x: number; y: number; z: number };
 }
 
 /** The bat flying free (a flip): world space. */
@@ -632,7 +625,12 @@ interface Flight {
   w: THREE.Vector3;
   t: number;
   bounces: number;
-  rest: number;
+  /** −1 while it's flying and bouncing; then 0 → 1 as it lies down flat (from q0/p0 to q1/p1) */
+  settle: number;
+  q0: THREE.Quaternion;
+  q1: THREE.Quaternion;
+  p0: THREE.Vector3;
+  p1: THREE.Vector3;
 }
 
 interface HitterKit {
@@ -654,7 +652,7 @@ interface HitterKit {
   pop: number;
   /** hair meshes hidden under the helmet, hair moved to fit under it: put back on dispose */
   hidden: THREE.Object3D[];
-  moved: { o: THREE.Object3D; p: THREE.Vector3; s: THREE.Vector3 }[];
+  moved: Moved[];
 }
 
 interface PitcherKit {
@@ -670,6 +668,8 @@ interface CatcherKit {
   mask: THREE.Mesh;
   chest: THREE.Mesh;
   hand: THREE.Object3D[];
+  /** hair turned or moved to go under the mask: put back on dispose */
+  moved: Moved[];
   maskOn: boolean;
   phase: string;
   from: string;
@@ -682,13 +682,25 @@ const smooth01 = (u: number) => {
   return x * x * (3 - 2 * x);
 };
 
-const UP = new THREE.Vector3(0, 1, 0);
+/** A mesh of the rig's moved to fit the gear, and where it was. */
+interface Moved {
+  o: THREE.Object3D;
+  p: THREE.Vector3;
+  s: THREE.Vector3;
+  r: THREE.Euler;
+}
+const keep = (o: THREE.Object3D): Moved => ({ o, p: o.position.clone(), s: o.scale.clone(), r: o.rotation.clone() });
+const putBack = (m: Moved) => {
+  m.o.position.copy(m.p);
+  m.o.scale.copy(m.s);
+  m.o.rotation.copy(m.r);
+};
+
 const vA = new THREE.Vector3();
 const vB = new THREE.Vector3();
 const vC = new THREE.Vector3();
 const qA = new THREE.Quaternion();
 const qB = new THREE.Quaternion();
-const mA = new THREE.Matrix4();
 
 /**
  * Everything the characters carry in a Home Run Derby. One per world; call
@@ -847,17 +859,32 @@ export class BaseballGear {
       o.visible = false;
       k.hidden.push(o);
     };
-    const move = (o: THREE.Object3D | undefined, x: number, y: number, z: number, s = 1) => {
+    const move = (o: THREE.Object3D | undefined, x: number, y: number, z: number, s = 1, rx?: number) => {
       if (!o) return;
-      k.moved.push({ o, p: o.position.clone(), s: o.scale.clone() });
+      k.moved.push(keep(o));
       o.position.set(x, y, z);
       o.scale.multiplyScalar(s);
+      if (rx !== undefined) o.rotation.x = rx;
     };
     switch (k.rig.look.hair) {
       case 'cap':
       case 'beanie':
       case 'mohawk':
         hair.forEach(hide);
+        break;
+      // (the rig's bob, bowl and afro come down over the eyes: under a helmet the fringe's swept up
+      // under the rim, and the afro sits back, puffing out round the sides and the back)
+      case 'bob':
+        move(hair[0], 0, 0.0, 0.04, 1, 0.75);
+        break;
+      case 'bowl':
+        move(hair[0], 0, 0.03, 0.03, 1, 0.42);
+        break;
+      case 'afro':
+        if (hair[0]) {
+          move(hair[0], 0, 0.09, 0.13);
+          hair[0].scale.set(hair[0].scale.x, hair[0].scale.y * 0.92, hair[0].scale.z * 0.85);
+        }
         break;
       case 'spiky':
       case 'crown':
@@ -882,10 +909,7 @@ export class BaseballGear {
     k.jersey.removeFromParent();
     k.trail.dispose();
     for (const o of k.hidden) o.visible = true;
-    for (const m of k.moved) {
-      m.o.position.copy(m.p);
-      m.o.scale.copy(m.s);
-    }
+    k.moved.forEach(putBack);
   }
 
   private makePitcher(i: number, rig: Rig, s: PitcherState): PitcherKit {
@@ -944,7 +968,30 @@ export class BaseballGear {
     chest.castShadow = !!this.w.kit.castShadow;
     rig.body.add(chest);
     this.wornHull(rig, chest, 0.7);
-    return { rig, mitt, mask, chest, hand, maskOn: true, phase: '', from: '' };
+    const k: CatcherKit = { rig, mitt, mask, chest, hand, moved: [], maskOn: true, phase: '', from: '' };
+    this.maskHair(k);
+    return k;
+  }
+
+  /**
+   * The hair under the mask: a cap's turned round (its peak would come out
+   * through the cage — a catcher wears it backwards), an afro sits back as it
+   * does under a batting helmet. Everything else fits as it is.
+   */
+  private maskHair(k: CatcherKit) {
+    const hair = k.rig.head.children.slice(2).filter((o) => !o.userData.baseball);
+    if (k.rig.look.hair === 'cap') {
+      for (const o of hair) {
+        k.moved.push(keep(o));
+        // turned half round the head's axis: Ry(π)·Rx(a)Ry(b)Rz(c) = Rx(−a)Ry(π + b)Rz(c)
+        o.position.set(-o.position.x, o.position.y, -o.position.z);
+        o.rotation.set(-o.rotation.x, Math.PI + o.rotation.y, o.rotation.z);
+      }
+    } else if (k.rig.look.hair === 'afro' && hair[0]) {
+      k.moved.push(keep(hair[0]));
+      hair[0].position.set(0, 0.09, 0.13);
+      hair[0].scale.set(hair[0].scale.x, hair[0].scale.y * 0.92, hair[0].scale.z * 0.85);
+    }
   }
 
   private dropCatcher(k: CatcherKit) {
@@ -953,6 +1000,7 @@ export class BaseballGear {
     k.mask.removeFromParent();
     k.chest.removeFromParent();
     for (const o of k.hand) o.visible = true;
+    k.moved.forEach(putBack);
   }
 
   // ---------------------------------------------------------------- per frame
@@ -1053,17 +1101,25 @@ export class BaseballGear {
     const d = vA.set(0, 1, 0).applyQuaternion(bat.getWorldQuaternion(qA));
     const axis = new THREE.Vector3().crossVectors(d, v).normalize();
     if (axis.lengthSq() < 1e-6) axis.set(h, 0, 0);
-    k.flight = { v, w: axis.multiplyScalar(14), t: 0, bounces: 0, rest: 0 };
+    k.flight = { v, w: axis.multiplyScalar(14), t: 0, bounces: 0, settle: -1, q0: new THREE.Quaternion(), q1: new THREE.Quaternion(), p0: new THREE.Vector3(), p1: new THREE.Vector3() };
     k.flipped = true;
   }
 
-  /** The flipped bat: a spinning arc, a clatter of bounces, then lying on the dirt. */
+  /** The flipped bat: a spinning arc, a clatter of a bounce or two, then it lies down flat on the dirt. */
   private fly(k: HitterKit, dt: number) {
     const f = k.flight;
     const bat = k.bat;
     if (!f) return;
     f.t += dt;
-    if (f.rest >= 1) return;
+    if (f.settle >= 0) {
+      // lying down where it came to rest (a little slide)
+      if (f.settle >= 1) return;
+      f.settle = Math.min(1, f.settle + dt / 0.3);
+      const u = smooth01(f.settle);
+      bat.quaternion.slerpQuaternions(f.q0, f.q1, u);
+      bat.position.lerpVectors(f.p0, f.p1, 1 - (1 - u) * (1 - u));
+      return;
+    }
     const sc = k.rig.scale;
     f.v.y -= FIELD.gravity * dt;
     bat.position.addScaledVector(f.v, dt);
@@ -1078,35 +1134,29 @@ export class BaseballGear {
     const yk = bat.position.y + d.y * BAT.knob * sc,
       yt = bat.position.y + d.y * BAT.tip * sc;
     const low = Math.min(yk, yt);
-    if (low < r) {
-      bat.position.y += r - low;
-      if (f.v.y < 0) {
-        const hard = -f.v.y;
-        f.v.y = hard > 1.2 ? hard * 0.32 : 0;
-        f.v.x *= 0.55;
-        f.v.z *= 0.55;
-        f.w.multiplyScalar(0.45);
-        f.bounces++;
-        if (hard > 1.5 && this.w.particles) this.dust(bat.position, hard);
-      }
-      // slow enough: lie down flat
-      if (f.v.y === 0 || f.bounces > 3) {
-        f.rest = Math.min(1, f.rest + dt / 0.22);
-        f.w.multiplyScalar(Math.exp(-10 * dt));
-        f.v.multiplyScalar(Math.exp(-12 * dt));
-        // turn towards lying along the ground (the bat's axis level)
-        const flat = vB.set(d.x, 0, d.z);
-        if (flat.lengthSq() < 1e-6) flat.set(1, 0, 0);
-        flat.normalize();
-        qB.setFromUnitVectors(d, flat);
-        qA.identity().slerp(qB, Math.min(1, dt * 10));
-        bat.quaternion.premultiply(qA);
-        // the barrel rests on the ground (the knob's thinner: a slight tilt is right)
-        const d2 = vC.set(0, 1, 0).applyQuaternion(bat.quaternion);
-        const mid = (BAT.barrel + BAT.tip) / 2;
-        bat.position.y += (BAT.barrelR * sc - (bat.position.y + d2.y * mid * sc)) * Math.min(1, dt * 12);
-      }
+    if (low >= r || f.v.y >= 0) return;
+    bat.position.y += r - low;
+    const hard = -f.v.y;
+    f.bounces++;
+    if (hard > 1.5 && this.w.particles) this.dust(bat.position, hard);
+    if (f.bounces < 2 && hard > 1.6) {
+      // a clattering bounce: up a little, the spin mostly gone
+      f.v.y = hard * 0.33;
+      f.v.x *= 0.5;
+      f.v.z *= 0.5;
+      f.w.multiplyScalar(0.3);
+      return;
     }
+    // then down flat: the axis level along the way it's pointing, resting on the barrel
+    f.settle = 0;
+    f.q0.copy(bat.quaternion);
+    const flat = vB.set(d.x, 0, d.z);
+    if (flat.lengthSq() < 1e-6) flat.set(1, 0, 0);
+    flat.normalize();
+    qB.setFromUnitVectors(d, flat);
+    f.q1.copy(bat.quaternion).premultiply(qB);
+    f.p0.copy(bat.position);
+    f.p1.set(bat.position.x + f.v.x * 0.1, r, bat.position.z + f.v.z * 0.1);
   }
 
   private dust(p: THREE.Vector3, hard: number) {
@@ -1181,7 +1231,8 @@ export class BaseballGear {
     if (!shown) return;
     ball.position.copy(at);
     ball.rotation.set(0, 0, 0);
-    ball.scale.setScalar(c.eye ? ballDrawScale(Math.hypot(at.x - c.eye.x, at.y - c.eye.y, at.z - c.eye.z)) : 1);
+    // (true size: the venue draws its ball 1:1 near the pitcher and at the plate, so nothing pops at a handover)
+    ball.scale.setScalar(1);
   }
 
   /** The ball in a throwing hand (hands[1], on the `side` shoulder): out along the arm from the hand, as anim.ts puts it. */
@@ -1281,7 +1332,3 @@ function hideHand(rig: Rig, i: number) {
   }
   return out;
 }
-
-// silence unused imports kept for the helpers' types
-void mA;
-void UP;

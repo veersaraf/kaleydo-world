@@ -5,6 +5,7 @@
 //     &cam=play|side|front|back|top|close|hero|portrait|pitcher|mound|catcher|wait|flip|wide
 //     &t=12.3 (freeze at that moment of the cycle)   &handed=-1 (a left-handed batter)
 //     &phand=-1 (a left-handed pitcher)   &seed=7 (other people)   &hair=afro (the batter's hair)
+//     &hair2=… (the waiting hitter's)   &khair=… (the catcher's: the App gives the fielders caps)
 //     &still=1 (wait for window.bb.seek)
 //   keys: 1–9, 0 cameras · space pause · ←/→ step · [ ] previous / next world · h batter's hand · p pitcher's
 //
@@ -29,7 +30,7 @@ import { Rng } from '../core/math';
 import { FIELD, DELIVERY, SWING } from './field';
 import type { BatterState, PitcherState, CatcherState, FieldBall, PitchKind, LookAt } from './types';
 import { BatterAnimator, PitcherAnimator, CatcherAnimator, THROW, TOSS, BAT } from './anim';
-import { BaseballGear, ballDrawScale } from './gear';
+import { BaseballGear } from './gear';
 
 const q = new URLSearchParams(location.search);
 const worldId = q.get('world') ?? 'park';
@@ -37,8 +38,9 @@ const handed = (Number(q.get('handed')) === -1 ? -1 : 1) as 1 | -1;
 const phand = (Number(q.get('phand')) === -1 ? -1 : 1) as 1 | -1;
 const still = q.has('still') || q.has('t');
 const seed = Number(q.get('seed') ?? 3);
-/** the batter, the waiting hitter, then one team: the pitcher and the catcher */
-const COLORS = ['#3aa8ff', '#ff5a8c', '#ffb02e', '#ffb02e'];
+/** the batter, the waiting hitter, then the fielders: the pitcher and the catcher (in the App's navy) */
+const NAVY = '#2c4a8c';
+const COLORS = ['#3aa8ff', '#ff5a8c', NAVY, NAVY];
 
 // ---------------------------------------------------------------- renderer + world
 
@@ -58,17 +60,15 @@ w.setSport('baseball');
 
 const looks = [0, 1, 2, 3].map((i) => {
   const l = randomLook(new Rng(seed * 31 + i * 7), COLORS[i]);
-  if (i >= 2) {
-    // one team: the App gives the pitcher and the catcher the same colours
-    l.shirt = COLORS[i];
-    l.shorts = '#f4f2fa';
-  }
-  return l;
+  // the fielders: the home side in navy, caps on (as the App dresses them)
+  return i < 2 ? l : { ...l, shirt: NAVY, shorts: '#f3f1ea', shoes: '#1d1b2a', hair: 'cap' as Hair, hat: '#1f3366', racket: '#c8a27a' };
 });
 const hairQ = q.get('hair');
 if (hairQ) looks[0].hair = hairQ as Hair;
 const hairQ2 = q.get('hair2');
 if (hairQ2) looks[1].hair = hairQ2 as Hair;
+const hairQ3 = q.get('khair');
+if (hairQ3) looks[3].hair = hairQ3 as Hair;
 w.setPlayers(looks);
 const batterA = new BatterAnimator(handed, looks[0]);
 const waiterA = new BatterAnimator(handed, looks[1]);
@@ -495,6 +495,15 @@ const CAMS: Record<string, CamFn> = {
     c.lookAt(0.06 * h, 1.18, 2.4);
     c.fov = 33;
   },
+  // any view: &cp=x,y,z (x mirrored for a left-handed batter) &cl=x,y,z (looking at) &fov=
+  custom: (c) => {
+    const v = (k: string, d: number[]) => (q.get(k)?.split(',').map(Number) ?? d).map((n, i) => (i === 0 ? n * h : n));
+    const [px, py, pz] = v('cp', [0.3, 2.02, FIELD.homeZ + 4.7]);
+    const [lx, ly, lz] = v('cl', [0.06, 1.18, 2.4]);
+    c.position.set(px, py, pz);
+    c.lookAt(lx, ly, lz);
+    c.fov = Number(q.get('fov') ?? 33);
+  },
   // the batter from across the plate, level with the hands
   side: (c) => {
     c.position.set(X0 + h * 3.6, 1.15, Z0 - 0.35);
@@ -619,12 +628,14 @@ function step(dt: number) {
   placeCam();
   const fv: FrameView = { t: total, dt, realT: total, realDt: dt, ball: noBall, ballSpeed: 0, ballVisible: false, holder: -1, poses, excitement: 0.4, state: 'play', cam, beat: 0 };
   w.update(fv);
-  const eye = cam.position;
-  gear.update({ hitters: [batter, waiter], pitcher, catcher, ball, eye }, dt);
-  // the stand-in flying ball
+  gear.update({ hitters: [batter, waiter], pitcher, catcher, ball }, dt);
+  // the stand-in flying ball: drawn bigger far from the camera, as the venue does — but only once it's
+  // clear of the pitcher's hand (1:1 there and at the plate, like the gear's ball in a hand or the mitt)
   flyBall.visible = ball.phase === 'pitch' || ball.phase === 'play';
   flyBall.position.set(ball.x, ball.y, ball.z);
-  flyBall.scale.setScalar(ballDrawScale(flyBall.position.distanceTo(eye)));
+  const away = THREE.MathUtils.smoothstep(Math.hypot(ball.x, ball.y - FIELD.releaseY, ball.z - FIELD.releaseZ), 0.6, 4);
+  const grow = THREE.MathUtils.clamp(1 + (flyBall.position.distanceTo(cam.position) - 9) * 0.045, 1, 2.1);
+  flyBall.scale.setScalar(1 + (grow - 1) * away);
 }
 
 function render() {
@@ -682,6 +693,12 @@ function setParam(k: string, v: string) {
 /** seek() and hand back the frame as a PNG data url (read in the same task as the draw: the buffer is still there) */
 function capture(t: number, camera?: string) {
   seek(t, camera);
+  return canvas.toDataURL('image/png');
+}
+
+/** draw the frame as it stands (after a script changed something) and hand it back as a PNG data url */
+function shot() {
+  render();
   return canvas.toDataURL('image/png');
 }
 
@@ -745,7 +762,7 @@ function perf(n = 600) {
   }
   const ta = (performance.now() - t0) / n;
   const t1 = performance.now();
-  for (let i = 0; i < n; i++) gear.update({ hitters: [batter, waiter], pitcher, catcher, ball, eye: cam.position }, dt);
+  for (let i = 0; i < n; i++) gear.update({ hitters: [batter, waiter], pitcher, catcher, ball }, dt);
   const tg = (performance.now() - t1) / n;
   return { animMs: +ta.toFixed(4), gearMs: +tg.toFixed(4) };
 }
@@ -773,7 +790,7 @@ function timings() {
   return Object.fromEntries(plays.map((p) => [p.name, { ...Object.fromEntries(names.map((m) => [m, +at(p.name, m).toFixed(3)])), end: +p.tend.toFixed(3) }]));
 }
 
-(window as unknown as { bb: unknown }).bb = { ready: false, seek, capture, strip, stats, perf, probe, at, timings, cycle: CYCLE, gear, world: w, batter, pitcher, catcher, ball, anims: { batterA, waiterA, pitcherA, catcherA } };
+(window as unknown as { bb: unknown }).bb = { ready: false, seek, capture, shot, strip, stats, perf, probe, at, timings, cycle: CYCLE, gear, world: w, batter, pitcher, catcher, ball, anims: { batterA, waiterA, pitcherA, catcherA } };
 
 if (q.has('t')) seek(Number(q.get('t')));
 else seek(0);
