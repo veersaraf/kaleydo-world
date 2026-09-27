@@ -1,5 +1,6 @@
 // Sword duel referee checks: the block rule through the game (mirroring,
-// diagonals, the 55° line, thrusts), knockback and the fall, the stun window,
+// diagonals, a person's 35° line and a CPU's 55°, thrusts, a person's pointed
+// guard), queued swings, knockback and the fall, the stun window,
 // recovery, energy, clashes, rounds (timeout, draws, the final round), the order
 // of events, effects, and the CPU (seeded, telegraphs its cuts, valid poses).
 //   npx tsx scripts/duel-game-test.ts
@@ -108,9 +109,10 @@ const cases: [string, SlashInput, number | null, string][] = [
   ['down-right diagonal vs a / guard (it lies along the cut once mirrored)', cut(-Math.PI / 4), Math.PI / 4, 'hit'],
   ['down-left diagonal vs a / guard', cut((-3 * Math.PI) / 4), Math.PI / 4, 'block'],
   ['down-left diagonal vs a \\ guard', cut((-3 * Math.PI) / 4), (3 * Math.PI) / 4, 'hit'],
-  // the 55° line: a guard 60° off the cut's path stops it, 50° doesn't
-  ['cut to the right vs a guard 60° across it', cut(0), deg(60), 'block'],
-  ['cut to the right vs a guard 50° across it', cut(0), deg(50), 'hit'],
+  // a person's guard is judged kindly — the 35° line: a guard 40° off the cut's path stops it, 30° doesn't
+  ['cut to the right vs a guard 40° across it', cut(0), deg(40), 'block'],
+  ['cut to the right vs a guard 30° across it', cut(0), deg(30), 'hit'],
+  ['down-right diagonal vs an upright guard (45° across)', cut(-Math.PI / 4), Math.PI / 2, 'block'],
   ['thrust vs a flat guard', thrust(), 0, 'block'],
   ['thrust vs an upright guard', thrust(), Math.PI / 2, 'block'],
   ['thrust, no guard', thrust(), null, 'hit'],
@@ -126,17 +128,53 @@ for (const [name, a, angle, want] of cases) {
 ok(exchange(0, cut(-Math.PI / 4), (3 * Math.PI) / 4, [1, -1]).what === 'block', "a left-hander's \\ guard stops the down-right diagonal too");
 ok(exchange(0, cut(-Math.PI / 4), Math.PI / 4, [1, -1]).what === 'hit', "a left-hander's / guard doesn't");
 {
-  // a guard held pointing straight at the opponent has no line: it stops a thrust, not a cut
-  const pointed = (a: SlashInput) => {
+  // a person's guard pointed straight at the opponent (a phone held like a remote) guards with
+  // its broad side: screen up, it's a flat guard
+  const pointed = (a: SlashInput, edge: [number, number, number] = [0, 1, -0.2]) => {
     const { g, ev } = fight();
-    g.aim(1, { blade: [0.05, 0.2, 1], edge: [0, 1, -0.2] });
+    g.aim(1, { blade: [0.05, 0.2, 1], edge });
     g.guard(1, true);
     g.slash(0, a);
     run(g, 0.3);
     return ev.find((e) => e.type === 'hit' || e.type === 'block')?.type;
   };
   ok(pointed(thrust()) === 'block', 'a guard pointed at the opponent stops a thrust');
-  ok(pointed(cut(0)) === 'hit' && pointed(cut(-Math.PI / 2)) === 'hit' && pointed(cut(-Math.PI / 4)) === 'hit', '…but no cut, whichever way');
+  ok(pointed(cut(-Math.PI / 2)) === 'block' && pointed(cut(0)) === 'hit', "…and, a person's, with the screen up (flat): a chop, not a side cut");
+  ok(pointed(cut(0), [1, 0, -0.05]) === 'block' && pointed(cut(-Math.PI / 2), [1, 0, -0.05]) === 'hit', '…with the screen to the side (upright): a side cut, not a chop');
+}
+{
+  // a CPU's guard needs the full 55°, and pointed it stops thrusts only
+  const vsCpu = (angle: number | null, a: SlashInput, blade?: [number, number, number]) => {
+    const g = new DuelGame([person(0), cpu(0.5)]);
+    const ev: DuelEvent[] = [];
+    g.onEvent = (e) => ev.push(e);
+    g.skip();
+    run(g, DUEL_TIMING.ready + 0.02);
+    // (the CPU's own brain is switched off: the test holds its sword)
+    const c = g as unknown as { cpus: ({ think: () => void; pose: () => void } | null)[] };
+    for (const x of c.cpus) if (x) x.think = x.pose = () => {};
+    if (blade) g.fighters[1].aim = { blade, edge: [0, 1, -0.2] };
+    else g.fighters[1].aim = guardAim({ blade: [0, 0, 1], edge: [0, 1, 0] }, angle!, 1);
+    g.cpuGuard(1, true);
+    run(g, 0.05);
+    g.slash(0, a);
+    run(g, 0.3);
+    return ev.find((e) => e.type === 'hit' || e.type === 'block')?.type;
+  };
+  ok(vsCpu(deg(60), cut(0)) === 'block' && vsCpu(deg(50), cut(0)) === 'hit', "a CPU's guard: 60° across stops it, 50° doesn't");
+  ok(vsCpu(null, cut(-Math.PI / 2), [0.05, 0.2, 1]) === 'hit' && vsCpu(null, thrust(), [0.05, 0.2, 1]) === 'block', "a CPU's guard pointed at you: thrusts only");
+}
+{
+  // a swing that comes while bouncing off a clash goes as soon as that's over; one while reeling from a hit doesn't
+  const { g, ev } = fight();
+  g.slash(0, cut(0));
+  g.slash(1, cut(0));
+  run(g, 0.15);
+  ok(g.fighters[0].phase === 'clash', 'a clash', g.fighters[0].phase);
+  const n = ev.filter((e) => e.type === 'attack').length;
+  g.slash(0, cut(-Math.PI / 2));
+  run(g, DUEL_TIMING.clash + 0.02);
+  ok(ev.filter((e) => e.type === 'attack').length === n + 1 && g.fighters[0].phase === 'slash', 'a swing during the clash goes when it ends');
 }
 {
   // the guard's aim is right but the button isn't held

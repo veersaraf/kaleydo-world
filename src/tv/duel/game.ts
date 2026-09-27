@@ -101,12 +101,28 @@ export const DUEL_TIMING = {
 } as const;
 
 /** a guard whose blade hardly crosses the view (held pointing at the opponent: |blade x,y|
- *  under this) has no line to speak of — its bladeAngle is noise — so it stops thrusts only */
+ *  under this) has no line to speak of — its bladeAngle is noise */
 const POINTED = 0.35;
+/** A person's guard is judged kindly: a phone held roughly across a cut stops it (the CPU's own
+ *  guard, which it angles exactly, needs the full 55°). */
+const PERSON_BLOCK_DEG = 35;
 
-/** Does this guard stop this attack? The block rule (types.ts blocks()), for a guard that has a line at all. */
-export function guardStops(guard: SwordAim, a: SlashInput) {
-  return a.kind === 'thrust' || (aimSpread(guard) >= POINTED && blocks(guard, a));
+/**
+ * Does this guard stop this attack? The block rule (types.ts blocks()). A CPU's guard pointed at
+ * the opponent has no line, and stops thrusts only; a person's — a phone held like a remote,
+ * pointed at the TV — guards with its broad side: the line across the phone's face (flat when the
+ * screen faces up, so it stops chops).
+ */
+export function guardStops(guard: SwordAim, a: SlashInput, person = false) {
+  if (a.kind === 'thrust') return true;
+  const minDeg = person ? PERSON_BLOCK_DEG : 55;
+  if (aimSpread(guard) >= POINTED) return blocks(guard, a, minDeg);
+  if (!person) return false;
+  // the phone's width: blade × edge (the screen's normal), as a guard's line
+  const b = guard.blade,
+    e = guard.edge;
+  const w = { blade: [b[1] * e[2] - b[2] * e[1], b[2] * e[0] - b[0] * e[2], b[0] * e[1] - b[1] * e[0]] as [number, number, number], edge: e };
+  return aimSpread(w) >= POINTED && blocks(w, a, minDeg);
 }
 
 /** Per fighter bookkeeping the animator doesn't need. */
@@ -247,8 +263,9 @@ export class DuelGame {
   /**
    * A swing measured by the phone (or a key). It has already happened, so there's
    * no windup: the strike lands CONTACT_T from now. Only counts during the fight,
-   * from the ready stance (not while guarding, dazed or knocked back); one that
-   * comes while recovering from the last goes as soon as that's over.
+   * from the ready stance (not while guarding, dazed, or reeling from a hit — the
+   * phone hears why); one that comes while recovering from the last, or bouncing
+   * off a clash, goes as soon as that's over.
    */
   slash(slot: number, input: SlashInput) {
     const i = this.seat(slot);
@@ -258,7 +275,7 @@ export class DuelGame {
     if (f.phase === 'ready') {
       setAttack(s.attack, input);
       this.strike(i, this.t);
-    } else if (f.phase === 'recover') {
+    } else if (f.phase === 'recover' || f.phase === 'clash') {
       setAttack(s.queued, input);
       s.hasQueued = true;
     }
@@ -426,9 +443,16 @@ export class DuelGame {
             this.strike(i, s.phaseEnd);
           } else this.free(i, s.phaseEnd);
           break;
+        case 'clash':
+          if (t < s.phaseEnd) break;
+          if (s.hasQueued && this.state === 'fight') {
+            s.hasQueued = false;
+            setAttack(s.attack, s.queued);
+            this.strike(i, s.phaseEnd);
+          } else this.free(i, s.phaseEnd);
+          break;
         case 'stagger':
         case 'stunned':
-        case 'clash':
           if (t >= s.phaseEnd) this.free(i, s.phaseEnd);
           break;
         case 'ready':
@@ -480,7 +504,7 @@ export class DuelGame {
     if (Math.abs(other - at) <= CLASH_WINDOW) return this.clash(at);
     const p = def.phase;
     if (p === 'fall' || p === 'win' || p === 'lose' || p === 'idle') return;
-    if (p === 'guard' && guardStops(def.aim, sa.attack)) this.block(i, at);
+    if (p === 'guard' && guardStops(def.aim, sa.attack, this.duelists[j].cpu === null)) this.block(i, at);
     else this.hit(i, at);
   }
 

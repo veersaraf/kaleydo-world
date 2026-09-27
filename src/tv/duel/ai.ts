@@ -32,6 +32,9 @@ export interface CpuProfile {
   /** when the opponent's sword gives nothing away (held at it, not cocked): chance it guards
    *  the line they've been cutting along most, rather than just expecting a chop */
   adapt: number;
+  /** chance it reads the opponent's sword at all (a cocked sword tells where the cut starts) —
+   *  a weak CPU mostly doesn't, so a beginner's natural stance isn't used against them */
+  tell: number;
   /** chance an attack goes along the line the opponent's sword leaves open (else any cut) */
   read: number;
   /** how far off that line it aims (σ, radians) */
@@ -52,26 +55,29 @@ export interface CpuProfile {
 
 /**
  * Each number at skill 0, then the menu's Rookie (0.3), Pro (0.65) and Ace (0.9),
- * then 1 — tuned with scripts/duel-sim.ts against a simulated person (an average
- * one should beat Rookie ~85% of matches, Pro ~50%, Ace ~20%).
+ * then 1 — tuned with scripts/duel-sim.ts against simulated people: a beginner (who
+ * just swings, and hardly guards) should beat Rookie most matches, an average
+ * player nearly always; Pro is a fair fight for them, Ace a hard one. Rookie is
+ * slow and easy to read, rarely guards, doesn't read your sword, and hits softly.
  */
 const SKILLS = [0, 0.3, 0.65, 0.9, 1];
 export const CPU_TABLE: Record<Exclude<keyof CpuProfile, 'guardErr' | 'aimErr'> | 'guardErrDeg' | 'aimErrDeg', number[]> = {
-  windup: [0.66, 0.56, 0.51, 0.49, 0.44],
+  windup: [0.75, 0.6, 0.51, 0.49, 0.44],
   quick: [0, 0, 0.05, 0.08, 0.12],
   feintT: [0.3, 0.28, 0.22, 0.18, 0.16],
-  react: [0.33, 0.27, 0.245, 0.23, 0.21],
-  guardErrDeg: [26, 19, 18, 16, 13],
-  guardTurn: [7.5, 8.8, 10, 11, 13],
-  guardUp: [0.68, 0.8, 0.8, 0.82, 0.88],
-  adapt: [0.2, 0.5, 0.9, 0.95, 0.97],
-  read: [0.2, 0.4, 0.55, 0.68, 0.78],
-  aimErrDeg: [28, 24, 16, 11, 9],
+  react: [0.38, 0.31, 0.245, 0.23, 0.21],
+  guardErrDeg: [30, 24, 18, 16, 13],
+  guardTurn: [6, 7.5, 10, 11, 13],
+  guardUp: [0.45, 0.68, 0.8, 0.82, 0.88],
+  adapt: [0.1, 0.2, 0.9, 0.95, 0.97],
+  tell: [0.05, 0.25, 0.8, 0.92, 0.96],
+  read: [0.1, 0.25, 0.62, 0.75, 0.82],
+  aimErrDeg: [30, 26, 16, 11, 9],
   feint: [0, 0, 0.2, 0.45, 0.5],
-  thrust: [0.06, 0.08, 0.12, 0.15, 0.16],
-  pace: [2.4, 2.2, 2, 1.85, 1.75],
-  power: [0.52, 0.62, 0.66, 0.7, 0.74],
-  counter: [0.45, 0.68, 0.68, 0.68, 0.76],
+  thrust: [0.05, 0.06, 0.12, 0.15, 0.16],
+  pace: [2.6, 1.9, 1.9, 1.75, 1.65],
+  power: [0.5, 0.6, 0.68, 0.72, 0.76],
+  counter: [0.25, 0.4, 0.72, 0.75, 0.8],
   patience: [0.25, 0.3, 0.45, 0.55, 0.6],
 };
 /** a quick attack's windup, as a share of the usual */
@@ -95,6 +101,7 @@ export function cpuProfile(skill: number): CpuProfile {
     guardTurn: at(T.guardTurn, s),
     guardUp: at(T.guardUp, s),
     adapt: at(T.adapt, s),
+    tell: at(T.tell, s),
     read: at(T.read, s),
     aimErr: deg(at(T.aimErrDeg, s)),
     feint: at(T.feint, s),
@@ -139,6 +146,8 @@ export class DuelCpu {
   private oppStriking = false;
   /** going by that habit for now (re-decided every so often: a chance of `adapt`) */
   private trust = false;
+  /** reading the opponent's sword for now (re-decided with it: a chance of `tell`) */
+  private reads = false;
   private err = 0;
   private errUntil = 0;
   /** the guard: which way the blade points now (a direction), and the line it's turning to */
@@ -249,6 +258,7 @@ export class DuelCpu {
     // they've been cutting along.
     const k2 = this.seen(t - p.react - SETTLE);
     const telling =
+      this.reads &&
       this.rspr[k] > 0.7 &&
       this.rspr[k2] > 0.7 &&
       Math.abs(angleDiff(this.rang[k2], oang)) < SETTLE_ANG &&
@@ -259,6 +269,7 @@ export class DuelCpu {
       this.err = r.gauss() * p.guardErr;
       this.errUntil = t + r.range(0.4, 0.9);
       this.trust = r.chance(p.adapt);
+      this.reads = r.chance(p.tell);
     }
     // a one-trick opponent: it stops believing their sword and guards their favourite line
     const fav = this.favourite();

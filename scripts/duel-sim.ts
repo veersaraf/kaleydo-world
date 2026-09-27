@@ -51,6 +51,8 @@ export interface PersonSkill {
 }
 
 export const PEOPLE: PersonSkill[] = [
+  // a first-timer: swings a lot, in any direction, rarely guards (and late, and roughly), always winds up
+  { name: 'beginner', react: 0.55, reactSd: 0.1, guardErr: 32, misread: 0.3, guardMove: 0.22, discipline: 0.2, trade: 0.5, guardRate: 0.15, dropRate: 1.2, attackRate: 1.3, aimSmart: 0, counter: 0.3, cockT: 0.3, swingT: 0.2, power: 0.6, thrust: 0.05 },
   { name: 'novice', react: 0.45, reactSd: 0.08, guardErr: 28, misread: 0.2, guardMove: 0.18, discipline: 0.5, trade: 0.4, guardRate: 0.4, dropRate: 0.8, attackRate: 1.1, aimSmart: 0.1, counter: 0.45, cockT: 0.32, swingT: 0.18, power: 0.7, thrust: 0.08 },
   { name: 'average', react: 0.35, reactSd: 0.06, guardErr: 18, misread: 0.1, guardMove: 0.14, discipline: 0.75, trade: 0.4, guardRate: 0.6, dropRate: 0.6, attackRate: 0.7, aimSmart: 0.35, counter: 0.7, cockT: 0.26, swingT: 0.16, power: 0.65, thrust: 0.1 },
   { name: 'expert', react: 0.27, reactSd: 0.04, guardErr: 11, misread: 0.04, guardMove: 0.11, discipline: 0.9, trade: 0.3, guardRate: 0.8, dropRate: 0.4, attackRate: 0.6, aimSmart: 0.65, counter: 0.9, cockT: 0.2, swingT: 0.13, power: 0.65, thrust: 0.12 },
@@ -58,7 +60,7 @@ export const PEOPLE: PersonSkill[] = [
 
 /** an average player who found a trick: flick sideways cuts straight from the stance, never
  *  cocking (nothing for the CPU to read) — it shouldn't be a win button */
-export const FLICKER: PersonSkill = { ...PEOPLE[1], name: 'flicker', cockT: 0.04, aimSmart: 0, thrust: 0, cuts: [0, Math.PI] };
+export const FLICKER: PersonSkill = { ...PEOPLE[2], name: 'flicker', cockT: 0.04, aimSmart: 0, thrust: 0, cuts: [0, Math.PI] };
 
 const CUTS = [-Math.PI / 2, -Math.PI / 4, (-3 * Math.PI) / 4, 0, Math.PI, Math.PI / 4, (3 * Math.PI) / 4];
 

@@ -108,7 +108,7 @@ export function guardDir(angle: number, handed: 1 | -1, near?: number) {
  * Guarding: the blade across the view at `angle` (radians, as bladeAngle: 0 =
  * pointing right, π/2 = up — a line, so angle and angle + π are the same guard),
  * leaning a little towards the opponent, edge forward. It stops cuts whose path
- * crosses that line at 55° or more (types.ts blocks()).
+ * crosses that line at 55° or more (types.ts blocks(); a person's guard, 35°: game.ts guardStops()).
  */
 export function guardAim(out: SwordAim, angle: number, handed: 1 | -1 = 1): SwordAim {
   return guardAimDir(out, guardDir(angle, handed));
