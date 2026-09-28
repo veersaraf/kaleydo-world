@@ -2824,3 +2824,306 @@ kbd {
   color: transparent;
   font-weight: 700;
 }
+
+/* ------------------------------------------------------------ the smash */
+
+/* the world dims and warms around the edges while a smash chance builds */
+.sm-dim {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  opacity: 0;
+  background:
+    radial-gradient(ellipse 62% 58% at 50% 42%, transparent 38%, rgba(60, 6, 0, 0.42) 78%, rgba(20, 0, 0, 0.72) 100%),
+    linear-gradient(180deg, rgba(255, 150, 40, 0.08), rgba(120, 10, 0, 0.1));
+  transition: opacity 0.12s linear;
+}
+
+/* a reticle that closes on the ball: swing as it meets it */
+.sm-ret {
+  --s: 1;
+  --spin: 0deg;
+  position: absolute;
+  width: calc(var(--u) * 9);
+  height: calc(var(--u) * 9);
+  transform: translate(-50%, -50%);
+  display: none;
+}
+
+.sm-ret i {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+}
+
+.sm-ret .r1 {
+  transform: scale(var(--s));
+  border: calc(var(--u) * 0.55) solid #ffd23c;
+  box-shadow:
+    0 0 calc(var(--u) * 1.4) rgba(255, 190, 40, 0.9),
+    inset 0 0 calc(var(--u) * 1.2) rgba(255, 190, 40, 0.6);
+}
+
+.sm-ret .r2 {
+  transform: scale(calc(var(--s) * 1.18)) rotate(var(--spin));
+  border: calc(var(--u) * 0.3) dashed rgba(255, 244, 200, 0.85);
+}
+
+/* four ticks pointing in at the ball */
+.sm-ret .tk {
+  transform: scale(var(--s)) rotate(calc(var(--spin) * -0.5));
+  background:
+    linear-gradient(#ffd23c, #ffd23c) 50% 0 / calc(var(--u) * 0.5) 22% no-repeat,
+    linear-gradient(#ffd23c, #ffd23c) 50% 100% / calc(var(--u) * 0.5) 22% no-repeat,
+    linear-gradient(#ffd23c, #ffd23c) 0 50% / 22% calc(var(--u) * 0.5) no-repeat,
+    linear-gradient(#ffd23c, #ffd23c) 100% 50% / 22% calc(var(--u) * 0.5) no-repeat;
+  filter: drop-shadow(0 0 calc(var(--u) * 0.6) rgba(255, 180, 30, 0.9));
+}
+
+.sm-ret.hot .r1 {
+  border-color: #ff3d2e;
+  box-shadow:
+    0 0 calc(var(--u) * 2.2) rgba(255, 60, 30, 0.95),
+    inset 0 0 calc(var(--u) * 1.6) rgba(255, 90, 30, 0.7);
+}
+
+.sm-ret b {
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  transform: translate(-50%, calc(var(--u) * 2.6));
+  font-family: var(--display);
+  font-size: calc(var(--u) * 4.2);
+  color: #fff;
+  -webkit-text-stroke: calc(var(--u) * 0.5) #b0130a;
+  paint-order: stroke fill;
+  text-shadow: 0 0 calc(var(--u) * 2) rgba(255, 80, 20, 0.9);
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.08s;
+}
+
+/* SMASH! up top while the chance is on */
+.sm-title {
+  position: absolute;
+  left: 50%;
+  top: calc(var(--u) * 5);
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sm-title b {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: calc(var(--u) * 11);
+  line-height: 0.95;
+  letter-spacing: 0.02em;
+  background: linear-gradient(180deg, #fff6b0 0%, #ffd23c 45%, #ff7a1a 75%, #ff3d2e 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-stroke: calc(var(--u) * 0.55) #5a0a04;
+  filter: drop-shadow(0 calc(var(--u) * 0.7) 0 #5a0a04) drop-shadow(0 0 calc(var(--u) * 2.4) rgba(255, 110, 20, 0.85));
+  animation: sm-throb 0.42s ease-in-out infinite alternate;
+}
+
+.sm-title span {
+  margin-top: calc(var(--u) * 1.2);
+  padding: calc(var(--u) * 0.7) calc(var(--u) * 2.4);
+  border-radius: 999px;
+  background: rgba(40, 4, 0, 0.72);
+  color: #ffe9a8;
+  font-weight: 700;
+  font-size: calc(var(--u) * 2.2);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.sm-title.show {
+  animation: sm-title-in 0.45s cubic-bezier(0.2, 1.6, 0.35, 1) both;
+}
+
+.hud.split .sm-title b {
+  font-size: calc(var(--u) * 7);
+}
+
+@keyframes sm-title-in {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) scale(2.4) rotate(-8deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1) rotate(-3deg);
+  }
+}
+
+@keyframes sm-throb {
+  to {
+    transform: scale(1.07);
+  }
+}
+
+/* contact: anime speed lines bursting from the racket */
+.sm-lines {
+  --x: 50%;
+  --y: 45%;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  opacity: 0;
+  background: repeating-conic-gradient(from 0deg at var(--x) var(--y), rgba(255, 255, 255, 0) 0deg 3.1deg, rgba(255, 250, 225, 0.9) 3.4deg 3.9deg, rgba(255, 255, 255, 0) 4.3deg 7.2deg);
+  -webkit-mask: radial-gradient(circle at var(--x) var(--y), transparent 16%, rgba(0, 0, 0, 0.6) 34%, #000 60%);
+  mask: radial-gradient(circle at var(--x) var(--y), transparent 16%, rgba(0, 0, 0, 0.6) 34%, #000 60%);
+  mix-blend-mode: screen;
+}
+
+.sm-lines.show {
+  animation: sm-lines 0.75s ease-out both;
+}
+
+.sm-lines.lite.show {
+  animation: sm-lines-lite 0.45s ease-out both;
+}
+
+@keyframes sm-lines {
+  0% {
+    opacity: 1;
+    transform: scale(1.25);
+  }
+  60% {
+    opacity: 0.7;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1);
+  }
+}
+
+@keyframes sm-lines-lite {
+  0% {
+    opacity: 0.45;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* SMASH · 184 km/h */
+.sm-hit {
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.sm-hit b {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: calc(var(--u) * 12);
+  line-height: 0.95;
+  background: linear-gradient(180deg, #ffffff 0%, #fff0a0 35%, #ffb52e 70%, #ff4a1c 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-stroke: calc(var(--u) * 0.6) #4a0802;
+  filter: drop-shadow(0 calc(var(--u) * 0.8) 0 #4a0802) drop-shadow(0 0 calc(var(--u) * 3) rgba(255, 120, 20, 0.9));
+}
+
+.sm-hit.perfect b {
+  font-size: calc(var(--u) * 10.5);
+}
+
+.sm-hit span {
+  margin-top: calc(var(--u) * 0.8);
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: calc(var(--u) * 6);
+  color: #fff;
+  -webkit-text-stroke: calc(var(--u) * 0.45) #4a0802;
+  paint-order: stroke fill;
+  text-shadow: 0 0 calc(var(--u) * 2.4) rgba(255, 110, 20, 0.85);
+  font-variant-numeric: tabular-nums;
+}
+
+.sm-hit.show {
+  animation: sm-hit 1.7s cubic-bezier(0.2, 1.4, 0.3, 1) both;
+}
+
+.sm-hit.lite b {
+  font-size: calc(var(--u) * 6);
+}
+
+.sm-hit.lite span {
+  font-size: calc(var(--u) * 3.6);
+}
+
+.hud.split .sm-hit b {
+  font-size: calc(var(--u) * 7);
+}
+
+.hud.split .sm-hit span {
+  font-size: calc(var(--u) * 4);
+}
+
+@keyframes sm-hit {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(3) rotate(-10deg);
+  }
+  10% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(0.9) rotate(-2deg);
+  }
+  18% {
+    transform: translate(-50%, -50%) scale(1.06) rotate(-4deg);
+  }
+  26%,
+  78% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1) rotate(-3deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -64%) scale(0.92) rotate(-3deg);
+  }
+}
+
+/* the whole HUD jolts with the hit */
+.hud.smash-kick {
+  animation: sm-kick 0.32s cubic-bezier(0.3, 1.8, 0.4, 1);
+}
+
+@keyframes sm-kick {
+  0% {
+    transform: translate(calc(var(--u) * -1.2), calc(var(--u) * 0.9));
+  }
+  30% {
+    transform: translate(calc(var(--u) * 0.9), calc(var(--u) * -0.7));
+  }
+  60% {
+    transform: translate(calc(var(--u) * -0.4), calc(var(--u) * 0.3));
+  }
+}
+
+/* while a smash chance is on, the everyday clutter steps back */
+.hud.smashing .float,
+.hud.smashing .rally,
+.hud.smashing .ptags {
+  opacity: 0.35;
+  transition: opacity 0.2s;
+}

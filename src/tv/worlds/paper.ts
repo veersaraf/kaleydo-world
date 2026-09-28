@@ -17,6 +17,9 @@
 // one call; what moves does so in vertex shaders.
 
 import * as THREE from 'three';
+import { FIRE_STYLE } from '../render/smashfx';
+
+const cs = (a: string[]) => a.map((c) => new THREE.Color(c));
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { World, type WorldDef, type FrameView } from './base';
 import type { MaterialKit, CharRole } from './types';
@@ -265,6 +268,8 @@ class PaperWorld extends World {
   private optional: [THREE.InstancedMesh, number][] = [];
 
   protected build() {
+    // a smash in paper: confetti flames, a crayon-scribble crater
+    this.smashStyle = { ...FIRE_STYLE, fire: cs(['#ff7b3a', '#ffd166', '#ef476f', '#fffaf0']), fireShape: 'confetti', sparks: cs(['#ff7b3a', '#ffd166', '#ef476f', '#2a9d8f']), sparkShape: 'confetti', ring: new THREE.Color('#e76f51'), hot: new THREE.Color('#ff9f43'), scorch: new THREE.Color('#3b2f28'), scorchAlpha: 0.5, dust: cs(['#e8c58f', '#ffffff']), dustShape: 'confetti', flash: new THREE.Color('#fff3d6') };
     const s = this.scene;
     s.background = new THREE.Color('#bfe6f5');
     s.fog = new THREE.Fog('#d6eef5', 80, 330);

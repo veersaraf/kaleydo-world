@@ -118,6 +118,10 @@ export class Flow {
   private hitTimes: number[] = [];
   private lastHit: { kind: string; kph: number; perfect: boolean } = { kind: '', kph: 0, perfect: false };
   private pointsSinceReplay = 99;
+  private replaySmash = false;
+  /** a smash in flight this rally: whose (a human's?), how good, and when it was struck */
+  private smashFlight: { team: number; human: boolean; perfect: boolean; t: number; landed: boolean } | null = null;
+  private lastSmash: { team: number; human: boolean; t: number } | null = null;
   private versusEnd: (() => void) | null = null;
   private kaleidoOrder: string[] = [];
   private kaleidoIdx = 0;
@@ -224,6 +228,14 @@ export class Flow {
       const a = this.audio;
       const pan = (x: number) => Math.max(-1, Math.min(1, x / 8));
       if (e.type === 'hit') a?.sfx.hit(e.power, e.perfect, pan(e.pos.x), e.kind === 'smash');
+      if (e.type === 'hit' && e.kind === 'smash') {
+        a?.sfx.smashCrack(e.perfect && e.p.human, pan(e.pos.x), !e.p.human);
+        this.replaySmash = true;
+      } else if (e.type === 'hit') this.replaySmash = false;
+      if (e.type === 'bounce' && this.replaySmash) {
+        this.replaySmash = false;
+        a?.sfx.smashBoom(pan(e.pos.x));
+      }
       if (e.type === 'bounce' && e.impact > 0.8) a?.sfx.bounce(e.impact, pan(e.pos.x));
       if (e.type === 'net') a?.sfx.net(e.cord, pan(e.pos.x));
       if (e.type === 'hit' || e.type === 'bounce') for (const w of [app.stage.current, app.stage.next]) w?.onEvent(e);
@@ -2341,6 +2353,16 @@ export class Flow {
         if (this.hitTimes.length > 8) this.hitTimes.shift();
         this.lastHit = { kind: e.kind, kph: e.kph, perfect: e.perfect };
         a?.sfx.hit(e.power, e.perfect, pan(e.pos.x), e.kind === 'smash' || !!e.rocket);
+        if (e.kind === 'smash') {
+          a?.sfx.smashCrack(e.perfect && e.p.human, pan(e.pos.x), !e.p.human);
+          this.smashFlight = { team: e.p.team, human: e.p.human, perfect: e.perfect, t: m.t, landed: false };
+          this.lastSmash = { team: e.p.team, human: e.p.human, t: m.t };
+          if (real) {
+            // yours: the full works; one coming at you: a lighter version
+            const humanTeam = m.players.find((q) => q.human)?.team ?? 0;
+            this.hud?.smashHit(e.kph, e.perfect, e.pos, e.p.human ? e.p.team : humanTeam, e.p.human);
+          }
+        } else this.smashFlight = null;
         if (e.rocket) {
           a?.sfx.swish(1, pan(e.pos.x));
           if (real) a?.sfx.ooh();
@@ -2355,17 +2377,23 @@ export class Flow {
             const strokeName = e.serve ? 'Serve' : e.kind === 'smash' ? 'Smash' : e.stroke === 'bh' ? 'Backhand' : e.stroke === 'oh' ? 'Overhead' : 'Forehand';
             const spinName = e.kind === 'lob' ? ' lob' : e.kind === 'drop' ? ' drop shot' : e.kind === 'wobbly' ? ' floater' : e.spin > 0.3 ? ' topspin' : e.spin < -0.3 ? ' slice' : '';
             const detail = `${strokeName}${spinName} · ${Math.round(e.kph)} km/h`;
-            if (seat?.pid) this.app.link.toPad(seat.pid, { type: 'fx', fx: e.perfect ? 'perfect' : 'hit', power: e.power, label: timing, detail });
+            if (seat?.pid)
+              this.app.link.toPad(
+                seat.pid,
+                e.kind === 'smash' && !e.serve
+                  ? { type: 'fx', fx: 'smash', power: e.power, label: e.perfect ? 'PERFECT SMASH' : e.tau > 0.4 ? 'SMASH · LATE' : e.tau < -0.4 ? 'SMASH · EARLY' : 'SMASH', detail: `${Math.round(e.kph)} km/h` }
+                  : { type: 'fx', fx: e.perfect ? 'perfect' : 'hit', power: e.power, label: timing, detail },
+              );
             const label = e.rocket ? 'ROCKET SERVE!' : e.perfect ? 'PERFECT!' : e.tau < -0.55 ? 'EARLY' : e.tau > 0.55 ? 'LATE' : e.kind === 'lob' ? 'LOB' : e.kind === 'drop' ? 'DROP SHOT' : e.kind === 'smash' ? 'SMASH!' : e.serve ? '' : '';
             const sub = e.serve ? '' : `${strokeName.toUpperCase()}${spinName.toUpperCase()}`;
-            if (label || sub) this.hud?.float(label ? `${label}${sub ? ' · ' + sub : ''}` : sub, { x: e.pos.x, y: e.pos.y + 0.9, z: e.pos.z }, e.perfect ? 'perfect' : label ? '' : 'soft', e.p.team);
+            if ((label || sub) && e.kind !== 'smash') this.hud?.float(label ? `${label}${sub ? ' · ' + sub : ''}` : sub, { x: e.pos.x, y: e.pos.y + 0.9, z: e.pos.z }, e.perfect ? 'perfect' : label ? '' : 'soft', e.p.team);
             if (!this.settings.seenTutorial && this.stats.fastest[e.p.team] > 0) {
               this.settings.seenTutorial = true;
               this.save();
               this.hud?.setHint('');
             }
           }
-          if (e.kph > 105 && (e.serve || e.kind === 'smash' || e.perfect)) this.hud?.showSpeed(e.kph);
+          if (e.kph > 105 && (e.serve || e.perfect) && e.kind !== 'smash') this.hud?.showSpeed(e.kph);
           this.hud?.setRally(e.rally);
           if (a) a.music.setIntensity(e.rally >= 9 ? 3 : e.rally >= 4 ? 2 : 1);
           // Kaleido: a perfect shot deep in a rally shatters the world
@@ -2388,6 +2416,13 @@ export class Flow {
         break;
       case 'bounce':
         if (e.impact > 0.8) a?.sfx.bounce(e.impact, pan(e.pos.x));
+        if (this.smashFlight && !this.smashFlight.landed) {
+          // a smash landing: a thump through the court, and the crowd goes up
+          this.smashFlight.landed = true;
+          a?.sfx.smashBoom(pan(e.pos.x), this.smashFlight.human ? 1 : 0.6);
+          if (real && this.smashFlight.human) a?.sfx.roar(this.smashFlight.perfect ? 1 : 0.8);
+          else if (real) a?.sfx.ooh();
+        }
         break;
       case 'athletic':
         if (e.move !== 'lunge') a?.sfx.swish(e.move === 'dive' ? 1 : 0.55, pan(e.p.x));
@@ -2401,7 +2436,13 @@ export class Flow {
         if (real) this.hud?.float('Tired!', { x: e.p.x, y: 2.3, z: e.p.z }, 'soft');
         break;
       case 'smash-chance':
-        if (real) this.hud?.float('SMASH!', { x: e.p.x, y: 2.5, z: e.p.z }, 'perfect', e.p.team);
+        if (real) {
+          // the crowd rises; the phone lights up; the slow motion hums in
+          a?.sfx.ooh();
+          a?.sfx.smashRiser(1.5);
+          const seat = this.app.input.seats[e.p.slot];
+          if (seat?.pid) this.app.link.toPad(seat.pid, { type: 'fx', fx: 'smash-chance', label: 'SMASH!' });
+        }
         break;
       case 'net':
         a?.sfx.net(e.cord, pan(e.pos.x));
@@ -2479,14 +2520,20 @@ export class Flow {
         // instant replay for highlights
         this.pointsSinceReplay++;
         const lh = this.lastHit;
+        const ls = this.lastSmash;
+        // a smash that won the point (a winner or a forced error): always worth seeing again
+        const smashWon = !!ls && ls.human && ls.team === w && m.t - ls.t < 4;
+        this.smashFlight = null;
+        this.lastSmash = null;
         const highlight =
+          smashWon ||
           e.rally >= 8 ||
           (e.reason === 'winner' && (lh.kind === 'smash' || lh.perfect || lh.kph > 118)) ||
           (e.reason === 'ace' && lh.kph > 150) ||
           ((e.gameWon || e.matchWon) && e.rally >= 3);
-        if (highlight && (this.pointsSinceReplay >= 3 || e.matchWon || e.rally >= 12)) {
+        if (highlight && (smashWon || this.pointsSinceReplay >= 3 || e.matchWon || e.rally >= 12)) {
           const tPoint = m.t;
-          const from = Math.max(tPoint - 6.5, (this.hitTimes[this.hitTimes.length - 3] ?? tPoint - 4) - 0.5);
+          const from = smashWon && ls ? Math.max(tPoint - 6.5, ls.t - 2.4) : Math.max(tPoint - 6.5, (this.hitTimes[this.hitTimes.length - 3] ?? tPoint - 4) - 0.5);
           window.setTimeout(() => {
             if (this.app.match !== m || this.screen || this.app.replay) return;
             if (m.state !== 'dead' && m.state !== 'over') return;
@@ -2685,6 +2732,11 @@ export class Flow {
         if (!(m.state === 'play' && !this.settings.seenTutorial)) this.hud.setHint('');
       }
       if (this.audio) this.audio.sfx.setCrowd(m.excitement);
+      const cue = this.app.smashCue;
+      if (cue && !this.versusEnd) {
+        const seat = this.app.input.seats[cue.p.slot];
+        this.hud.smashFrame({ team: cue.p.team, tl: cue.tl, w: cue.w, ball: m.ballView(m.t, this.cueBall), hint: seat?.local ? 'press SPACE as the ring closes' : 'swing hard as the ring closes' });
+      } else this.hud.smashFrame(null);
       if (!this.versusEnd) {
         const seat = srv?.human ? this.app.input.seats[srv.slot] : null;
         this.hud.track(m, dt, !seat ? '' : seat.local ? 'Space to toss' : 'lift your phone to toss');
@@ -2719,6 +2771,7 @@ export class Flow {
 
   // ---------------------------------------------------------------- misc
 
+  private cueBall = { x: 0, y: 0, z: 0 };
   private toastTimer = 0;
   private joinRefreshAt = 0;
   toast(text: string, color = '#3aa8ff') {

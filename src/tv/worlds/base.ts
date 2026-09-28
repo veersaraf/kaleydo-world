@@ -11,6 +11,7 @@ import { Rig, blobShadowTexture } from '../chars/rig';
 import type { MaterialKit } from './types';
 import { Trail, type TrailStyle } from '../render/trail';
 import { Particles } from '../render/particles';
+import { SmashFx, FIRE_STYLE, type SmashStyle } from '../render/smashfx';
 import { Crowd } from './crowd';
 import { batchStatic, type BatchStats } from '../render/batch';
 import type { BowlView } from '../bowling/types';
@@ -61,6 +62,8 @@ const SHOT_TINT: Record<string, THREE.Color> = {
   serve: new THREE.Color('#ffffff'),
   rocket: new THREE.Color('#ff7a1a'),
 };
+
+const GOLD = new THREE.Color('#ffc21a');
 
 /** ?nobatch in the URL turns static batching off (for A/B checks) */
 const NO_BATCH = typeof location !== 'undefined' && new URLSearchParams(location.search).has('nobatch');
@@ -152,6 +155,16 @@ export abstract class World {
   private haloOn = 0;
   trail!: Trail;
   particles!: Particles;
+  /** the smash's shockwaves and craters, styled per world (set smashStyle in build()) */
+  smashFx!: SmashFx;
+  protected smashStyle: SmashStyle = FIRE_STYLE;
+  /** a smash is in flight: 1 (a CPU's, lighter), 2 (yours), 3 (yours, perfect) — the ball blazes */
+  private blaze = 0;
+  private blazeT = 0;
+  /** 0..1: a smash chance is on — the ball glows gold and its ring pulses (set by the app) */
+  smashGlow = 0;
+  /** the world's own flash colour (a smash flashes in its own) */
+  private baseFlash = new THREE.Color(1, 1, 1);
   crowd: Crowd | null = null;
   /** All the scenery: everything except players, ball and effects. For the far
    *  player's half of a split screen it is turned 180°, so they see the backdrop
@@ -241,6 +254,9 @@ export abstract class World {
     if (this.netMesh) this.scene.attach(this.netMesh);
     this.scene.add(this.particles.mesh);
     this.scene.add(this.trail.mesh);
+    this.baseFlash.copy(this.flashColor);
+    this.smashFx = new SmashFx(this.smashStyle);
+    this.scene.add(this.smashFx.group);
     // bake everything that never moves into a few big meshes (thousands of draw calls → dozens)
     const probeCam = new THREE.PerspectiveCamera();
     if (!NO_BATCH) this.batchStats = batchStatic(this.env, () => {
@@ -642,9 +658,23 @@ export abstract class World {
     // halo: on while the ball is in play and moving, in the colour of whoever hit it
     const flying = v.holder < 0 && v.ballSpeed > 2 && (v.state === 'play' || v.state === 'toss');
     this.haloOn += ((flying ? 1 : 0) - this.haloOn) * Math.min(1, v.realDt * (flying ? 14 : 5));
-    (this.ballHalo.material as THREE.ShaderMaterial).uniforms.uOpacity.value = this.haloOn * 0.85 * this.haloStrength * this.haloNear;
-    this.ballHalo.visible = v.ballVisible && this.haloOn > 0.01;
+    const hm = (this.ballHalo.material as THREE.ShaderMaterial).uniforms;
+    const glow = this.smashGlow;
+    hm.uOpacity.value = Math.max(this.haloOn * 0.85 * this.haloStrength * this.haloNear, glow * (0.75 + 0.25 * Math.sin(v.realT * 18)));
+    if (glow > 0.01) hm.uColor.value.copy(this.teamColors[0]).lerp(GOLD, Math.min(1, glow * 1.5));
+    this.ballHalo.visible = v.ballVisible && (this.haloOn > 0.01 || glow > 0.01);
     this.fitBall(v.cam);
+    if (glow > 0.01) this.ballHalo.scale.multiplyScalar(1 + glow * (0.9 + 0.25 * Math.sin(v.realT * 18)));
+    // a smash in flight blazes: flames stream off the ball
+    if (this.blaze && v.ballVisible) {
+      this.blazeT += v.realDt;
+      if (v.ballSpeed > 4 && v.dt > 0) {
+        const st = this.smashStyle;
+        const n = this.blaze === 3 ? 4 : this.blaze === 2 ? 3 : 2;
+        this.particles.burst({ x: b.position.x, y: b.position.y, z: b.position.z, count: n, speed: [0.2, 1.3], life: [0.16, this.blaze === 1 ? 0.28 : 0.4], size: [0.1, this.blaze === 1 ? 0.2 : 0.32], shrink: 0.15, colors: st.fire, shape: st.fireShape, drag: 2.5, gravity: -2.5, alpha: 0.95 });
+      }
+    }
+    this.smashFx.update(v.realDt, v.cam);
     this.trail.update(b.position, v.holder >= 0 ? 0 : v.ballSpeed, v.cam, v.realDt, v.realT);
     this.trail.mesh.visible = v.ballVisible;
     // tired players drip sweat
@@ -785,7 +815,51 @@ export abstract class World {
     }
     if (e.type === 'point') this.crowd?.cheerNow(e.rally > 4 ? 1 : 0.7);
     if (e.type === 'hit' && (e.perfect || e.kind === 'smash')) this.flash = e.kind === 'smash' ? 0.35 : 0.2;
+    this.smashEvent(e);
     this.fx(e);
+  }
+
+  /**
+   * The smash, in the world: a shockwave and a burst where it's struck, flames
+   * off the ball, and where it lands a ring over the court, a crater and dust.
+   * A CPU's smash (at you) gets a lighter version.
+   */
+  private smashEvent(e: MatchEvent) {
+    const st = this.smashStyle;
+    const P = this.particles;
+    if (e.type === 'hit') {
+      if (e.kind !== 'smash') {
+        this.blaze = 0;
+        this.trail.boost = 1;
+        this.flashColor.copy(this.baseFlash);
+        return;
+      }
+      this.blaze = !e.p.human ? 1 : e.perfect ? 3 : 2;
+      this.blazeT = 0;
+      const k = this.blaze === 1 ? 0.5 : this.blaze === 3 ? 1 : 0.8;
+      this.trail.boost = 1 + k * 1.1;
+      this.smashFx.shock(e.pos.x, e.pos.y, e.pos.z, k);
+      P.burst({ x: e.pos.x, y: e.pos.y, z: e.pos.z, count: Math.round(34 * k), speed: [3, 7 + 7 * k], life: [0.25, 0.6], size: [0.08, 0.2 + 0.14 * k], shrink: 0.2, colors: st.sparks, shape: st.sparkShape, drag: 2.6, gravity: 3 });
+      this.flash = Math.max(this.flash, 0.3 + 0.4 * k);
+      this.flashColor.copy(st.flash);
+      return;
+    }
+    if (e.type === 'bounce' && this.blaze) {
+      const k = this.blaze === 1 ? 0.5 : this.blaze === 3 ? 1 : 0.8;
+      this.blaze = 0;
+      this.trail.boost = 1.25;
+      if (!e.live && !e.first) return;
+      this.smashFx.impact(e.pos.x, e.pos.z, k);
+      P.burst({ x: e.pos.x, y: 0.1, z: e.pos.z, count: Math.round(26 * k), speed: [2, 5 + 6 * k], dir: [0, 1, 0], spread: 0.75, life: [0.3, 0.7], size: [0.07, 0.18 + 0.1 * k], shrink: 0.2, colors: st.sparks, shape: st.sparkShape, drag: 2.2, gravity: 9 });
+      P.burst({ x: e.pos.x, y: 0.08, z: e.pos.z, count: Math.round(16 * k), speed: [0.8, 2.8], dir: [0, 1, 0], spread: 0.95, life: [0.6, 1.3], size: [0.25, 0.6], shrink: 1.8, colors: st.dust, shape: st.dustShape, alpha: 0.55, drag: 3, gravity: -0.3 });
+      this.flash = Math.max(this.flash, 0.18 * k);
+      this.crowd?.cheerNow(1);
+      return;
+    }
+    if (e.type === 'point' || e.type === 'toss') {
+      this.blaze = 0;
+      this.trail.boost = 1;
+    }
   }
 
   /** Per-world particle effects. */
@@ -844,6 +918,7 @@ export abstract class World {
     this.final.dispose();
     this.trail.dispose();
     this.particles.dispose();
+    this.smashFx.dispose();
     this.post?.dispose();
     this.contact?.dispose();
     this.#env?.dispose();

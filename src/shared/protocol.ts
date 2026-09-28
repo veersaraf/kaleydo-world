@@ -105,7 +105,11 @@ export type PadFx =
   /** duel: your guard stopped an attack (a clank) */
   | 'block'
   /** duel: you took a hit */
-  | 'ouch';
+  | 'ouch'
+  /** tennis: a smash chance is floating your way (the phone lights up) */
+  | 'smash-chance'
+  /** tennis: you smashed it */
+  | 'smash';
 
 export type TVMsg =
   | { type: 'welcome'; slot: number; color: string; name: string }

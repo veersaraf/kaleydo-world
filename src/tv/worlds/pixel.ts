@@ -15,6 +15,9 @@
 // palette's own colours.
 
 import * as THREE from 'three';
+import { FIRE_STYLE } from '../render/smashfx';
+
+const cs = (a: string[]) => a.map((c) => new THREE.Color(c));
 import { World, type WorldDef, type FrameView } from './base';
 import type { MaterialKit, CharRole } from './types';
 import { flat, stringsMat } from './mats';
@@ -142,6 +145,8 @@ class PixelWorld extends World {
   }
 
   protected build() {
+    // a smash in 8-bit: a blocky fireball and a pixel crater
+    this.smashStyle = { ...FIRE_STYLE, fire: cs(['#ffec27', '#ffa300', '#ff004d']), fireShape: 'square', sparks: cs(['#ffec27', '#fff1e8', '#ffa300']), sparkShape: 'square', ring: new THREE.Color('#fff1e8'), hot: new THREE.Color('#ffa300'), scorch: new THREE.Color('#1d2b53'), scorchAlpha: 0.72, dust: cs(['#c2c3c7', '#fff1e8']), dustShape: 'square', flash: new THREE.Color('#fff1e8') };
     const s = this.scene;
     // the fields fade into the green of the hills (the sky's blue would draw a false river at their foot)
     s.fog = new THREE.Fog('#2fb85a', 90, 260);

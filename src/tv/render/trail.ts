@@ -29,6 +29,8 @@ export class Trail {
   private lastPush = new THREE.Vector3(1e9, 0, 0);
   private base1: THREE.Color;
   private base2: THREE.Color;
+  /** a blazing shot (a smash): the ribbon runs wider and at full strength (1 = normal) */
+  boost = 1;
 
   constructor(public style: TrailStyle) {
     this.base1 = style.color.clone();
@@ -115,7 +117,7 @@ export class Trail {
     this.pts.pop();
     this.pts.unshift(p.clone());
     this.lastPush.copy(p);
-    const want = THREE.MathUtils.clamp((speed - 7) / 14, 0, 1);
+    const want = Math.min(1, THREE.MathUtils.clamp((speed - 7) / 14, 0, 1) * this.boost);
     this.strength += (want - this.strength) * Math.min(1, dt * (want > this.strength ? 20 : 6));
     this.mat.uniforms.uStrength.value = this.strength;
     this.mat.uniforms.uTime.value = time;
@@ -131,7 +133,7 @@ export class Trail {
       const q = this.pts[i];
       // wider far away so the trail stays readable at the far baseline
       const far = 1 + Math.max(0, q.distanceTo(camPos) - 9) * 0.035;
-      const w = w0 * (1 - i / (n - 1)) * (0.6 + 0.4 * this.strength) * far;
+      const w = w0 * this.boost * (1 - i / (n - 1)) * (0.6 + 0.4 * this.strength) * far;
       this.pos.set([q.x - this.side.x * w, q.y - this.side.y * w, q.z - this.side.z * w, q.x + this.side.x * w, q.y + this.side.y * w, q.z + this.side.z * w], i * 6);
     }
     (this.geo.attributes.position as THREE.BufferAttribute).needsUpdate = true;

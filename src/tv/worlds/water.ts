@@ -17,6 +17,9 @@
 // frame pays one lookup for it (it used to be five noise stacks per pixel).
 
 import * as THREE from 'three';
+import { FIRE_STYLE } from '../render/smashfx';
+
+const cs = (a: string[]) => a.map((c) => new THREE.Color(c));
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { World, type WorldDef, type FrameView } from './base';
 import type { MaterialKit, CharRole } from './types';
@@ -290,6 +293,8 @@ class WaterWorld extends World {
   }
 
   protected build() {
+    // a smash in watercolour: pastel flame, a bloom of paint where it lands
+    this.smashStyle = { ...FIRE_STYLE, fire: cs(['#ffb38a', '#ffd66b', '#ff8fab', '#fff2b3']), fireShape: 'soft', sparks: cs(['#ff8fab', '#ffd66b', '#b28dff', '#8fd3ff']), sparkShape: 'petal', ring: new THREE.Color('#ff6f9a'), hot: new THREE.Color('#ff9a6b'), scorch: new THREE.Color('#4a5a8a'), scorchAlpha: 0.36, dust: cs(['#d6e6ff', '#ffd6e7']), dustShape: 'soft', flash: new THREE.Color('#fff0e6') };
     const s = this.scene;
     s.fog = new THREE.Fog('#f4f0ff', 130, 560);
     const sky = new THREE.Mesh(

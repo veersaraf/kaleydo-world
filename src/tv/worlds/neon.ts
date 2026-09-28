@@ -9,6 +9,7 @@
 // drops it for a painted-on sun streak.
 
 import * as THREE from 'three';
+import { FIRE_STYLE } from '../render/smashfx';
 import { World, type WorldDef, type FrameView } from './base';
 import type { MaterialKit, CharRole } from './types';
 import { stringsMat } from './mats';
@@ -61,6 +62,8 @@ class NeonWorld extends World {
   private railMat!: THREE.MeshBasicMaterial;
 
   protected build() {
+    // a smash in neon: a pink-and-gold comet, a ring of light racing over the grid
+    this.smashStyle = { ...FIRE_STYLE, fire: [hdr(PINK, 3), hdr(YELLOW, 3), hdr(new THREE.Color('#ff7a1a'), 3)], fireShape: 'soft', sparks: [hdr(CYAN, 3), hdr(PINK, 3), hdr(YELLOW, 3)], sparkShape: 'soft', ring: hdr(CYAN, 2.2), additive: true, hot: hdr(PINK, 2), scorch: new THREE.Color('#050010'), scorchAlpha: 0.7, dust: [hdr(PURPLE, 1.4)], dustShape: 'soft', flash: new THREE.Color('#ffb8ec') };
     const s = this.scene;
     s.fog = new THREE.Fog('#12031f', 60, 420);
     s.add(new THREE.HemisphereLight('#6a3cff', '#1a0630', 1.2));

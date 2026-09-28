@@ -34,6 +34,17 @@ export class Hud {
   private calloutQueue: { text: string; sub?: string; cls?: string; at: number }[] = [];
   private calloutUntil = 0;
   private time = 0;
+  // the smash: the world dims, a reticle closes on the ball, SMASH! pulses up top;
+  // at contact, speed lines and the speed of it, big
+  private smDim: HTMLElement;
+  private smRet: HTMLElement;
+  private smRetCue: HTMLElement;
+  private smTitle: HTMLElement;
+  private smHit: HTMLElement;
+  private smHitWord: HTMLElement;
+  private smHitKph: HTMLElement;
+  private smLines: HTMLElement;
+  private smOn = false;
 
   constructor(
     private teams: [TeamInfo, TeamInfo],
@@ -57,7 +68,33 @@ export class Hud {
     this.divider = h('div', { class: 'split-divider' });
     this.tags = [0, 1].map((i) => h('div', { class: `split-tag t${i}`, style: `--c:${teams[i].color}` }, teams[i].name));
     this.tagLayer = h('div', { class: 'layer ptags' });
-    this.el = h('div', { class: 'hud' }, this.divider, ...this.tags, this.tagLayer, this.bug, this.floats, this.callout, this.banner, this.hint, this.rally, this.speed);
+    this.smDim = h('div', { class: 'sm-dim' });
+    this.smRetCue = h('b', null, 'SWING!');
+    this.smRet = h('div', { class: 'sm-ret' }, h('i', { class: 'r1' }), h('i', { class: 'r2' }), h('i', { class: 'tk' }), this.smRetCue);
+    this.smTitle = h('div', { class: 'sm-title' }, h('b', null, 'SMASH!'), h('span', null, 'swing hard as the ring closes'));
+    this.smLines = h('div', { class: 'sm-lines' });
+    this.smHitWord = h('b', null, 'SMASH!');
+    this.smHitKph = h('span', null, '');
+    this.smHit = h('div', { class: 'sm-hit' }, this.smHitWord, this.smHitKph);
+    this.el = h(
+      'div',
+      { class: 'hud' },
+      this.smDim,
+      this.smLines,
+      this.divider,
+      ...this.tags,
+      this.tagLayer,
+      this.bug,
+      this.smRet,
+      this.floats,
+      this.callout,
+      this.banner,
+      this.hint,
+      this.rally,
+      this.speed,
+      this.smTitle,
+      this.smHit,
+    );
   }
 
   /**
@@ -171,6 +208,77 @@ export class Hud {
       this.floats.append(el);
       setTimeout(() => el.remove(), 1200);
     }
+  }
+
+  /** the view (whole screen, or a split-screen half) a team's player watches */
+  private viewOf(team: number) {
+    const views = this.views ?? [{ rig: this.rig, x: 0, w: 1, team: -1 }];
+    return views.find((v) => v.team === team) ?? views[0];
+  }
+
+  /**
+   * Every frame: a human's smash chance being staged (null when there's none).
+   * `tl` is the sim time to contact, `w` the build-up 0..1, `ball` where it is.
+   */
+  smashFrame(cue: { team: number; tl: number; w: number; ball: { x: number; y: number; z: number }; hint: string } | null) {
+    const on = !!cue && cue.w > 0.03;
+    if (on !== this.smOn) {
+      this.smOn = on;
+      this.el.classList.toggle('smashing', on);
+      if (on) {
+        replay(this.smTitle, 'show');
+        (this.smTitle.lastChild as HTMLElement).textContent = cue!.hint;
+      } else this.smTitle.classList.remove('show');
+    }
+    if (!cue || !on) {
+      this.smDim.style.opacity = '0';
+      this.smRet.style.display = 'none';
+      return;
+    }
+    const v = this.viewOf(cue.team);
+    this.smDim.style.left = `${v.x * 100}%`;
+    this.smDim.style.width = `${v.w * 100}%`;
+    this.smDim.style.opacity = (cue.w * 0.95).toFixed(3);
+    const p = v.rig.project(cue.ball);
+    if (p.behind || p.y < -0.2) {
+      this.smRet.style.display = 'none';
+      return;
+    }
+    this.smRet.style.display = '';
+    // the ring closes on the ball as contact comes: swing as it meets it
+    const close = Math.min(1, Math.max(0, cue.tl / 1.1));
+    const scale = 0.55 + close * 2.6;
+    const hot = cue.tl < 0.32;
+    this.smRet.style.left = `${((v.x + Math.min(0.98, Math.max(0.02, p.x)) * v.w) * 100).toFixed(2)}%`;
+    this.smRet.style.top = `${(Math.min(0.97, Math.max(0.03, p.y)) * 100).toFixed(2)}%`;
+    this.smRet.style.setProperty('--s', scale.toFixed(3));
+    this.smRet.style.setProperty('--spin', `${(this.time * 140) % 360}deg`);
+    this.smRet.style.opacity = Math.min(1, cue.w * 1.4).toFixed(3);
+    this.smRet.classList.toggle('hot', hot);
+    this.smRetCue.style.opacity = hot && cue.tl > -0.1 ? '1' : '0';
+  }
+
+  /** The smash lands on the racket: speed lines, a flash of the word, the speed. */
+  smashHit(kph: number, perfect: boolean, at: { x: number; y: number; z: number }, team: number, mine: boolean) {
+    const v = this.viewOf(team);
+    const p = v.rig.project(at);
+    const x = v.x + (p.behind ? 0.5 : Math.min(0.9, Math.max(0.1, p.x))) * v.w;
+    const y = p.behind ? 0.45 : Math.min(0.85, Math.max(0.15, p.y));
+    this.smLines.style.setProperty('--y', `${(y * 100).toFixed(1)}%`);
+    this.smLines.style.left = `${v.x * 100}%`;
+    this.smLines.style.width = `${v.w * 100}%`;
+    this.smLines.style.setProperty('--x', `${(((x - v.x) / v.w) * 100).toFixed(1)}%`);
+    this.smLines.classList.toggle('lite', !mine);
+    replay(this.smLines, 'show');
+    this.smHitWord.textContent = !mine ? 'SMASH' : perfect ? 'PERFECT SMASH!' : 'SMASH!';
+    this.smHitKph.textContent = `${Math.round(kph)} km/h`;
+    this.smHit.style.left = `${((v.x + v.w * 0.5) * 100).toFixed(2)}%`;
+    this.smHit.classList.toggle('lite', !mine);
+    this.smHit.classList.toggle('perfect', perfect && mine);
+    replay(this.smHit, 'show');
+    this.el.classList.remove('smash-kick');
+    void this.el.offsetWidth;
+    if (mine) this.el.classList.add('smash-kick');
   }
 
   private labEl: HTMLElement | null = null;

@@ -12,6 +12,9 @@
 // shots.
 
 import * as THREE from 'three';
+import { FIRE_STYLE } from '../render/smashfx';
+
+const cs = (a: string[]) => a.map((c) => new THREE.Color(c));
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { World, type WorldDef, type FrameView } from './base';
 import type { MaterialKit, CharRole } from './types';
@@ -287,6 +290,8 @@ class ClayWorld extends World {
   private optional: [THREE.InstancedMesh, number][] = [];
 
   protected build() {
+    // a smash on clay: it gouges the court and throws up a cloud of brick dust
+    this.smashStyle = { ...FIRE_STYLE, ring: new THREE.Color('#fff4dc'), scorch: new THREE.Color('#5a2410'), scorchAlpha: 0.58, dust: cs(['#d4683c', '#e28a5a', '#c65a30']), dustShape: 'soft' };
     const s = this.scene;
     s.background = new THREE.Color('#9fd4f0');
     s.fog = new THREE.Fog('#bfe3f3', 80, 520);

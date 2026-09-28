@@ -2133,3 +2133,105 @@ section {
     animation: none;
   }
 }
+
+/* ------------------------------------------------------------ tennis: the smash */
+
+/* a smash chance: the pearl body blushes red and gold, the gauge becomes a
+   burning target shouting SMASH!, the whole panel throbs */
+.panel.play.smash {
+  --pc: #ff3d2e;
+  background:
+    radial-gradient(90% 55% at 50% 45%, rgba(255, 196, 40, 0.42), transparent 70%),
+    radial-gradient(130% 70% at 50% 110%, rgba(255, 61, 46, 0.35), transparent 70%);
+}
+
+.panel.play.smash .gauge {
+  animation: smash-throb 0.42s ease-in-out infinite alternate;
+}
+
+.smash-badge {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.smash-badge b {
+  font-size: min(15cqw, 60px);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  background: linear-gradient(180deg, #fff3a6, #ffc21a 45%, #ff6a1f 75%, #e0201a);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 3px 0 #6a0d05) drop-shadow(0 0 14px rgba(255, 120, 20, 0.7));
+  transform: rotate(-4deg);
+}
+
+.smash-badge span {
+  margin-top: 8px;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8a1208;
+}
+
+.panel.play.smash .gtext {
+  display: none;
+}
+
+.panel.play.smash .smash-badge {
+  display: flex;
+  animation: pop 0.4s var(--spring);
+}
+
+.panel.play.smash .ring {
+  background:
+    radial-gradient(closest-side, #fff7e0 74%, transparent 75%),
+    conic-gradient(from var(--smash-a), #ffc21a, #ff3d2e, #ffc21a, #ff6a1f, #ffc21a);
+  box-shadow:
+    0 0 0 6px rgba(255, 194, 26, 0.35),
+    0 0 40px 10px rgba(255, 90, 30, 0.55);
+  animation: smash-ring 0.9s linear infinite;
+}
+
+.panel.play.smash .live {
+  opacity: 0.7;
+  background: radial-gradient(circle, #ffe27a, transparent 70%);
+}
+
+.panel.play.smash .ptitle {
+  color: #c21a0e;
+}
+
+/* just smashed: the gauge flares gold for a moment */
+.panel.play.smashed .ring {
+  box-shadow:
+    0 0 0 10px rgba(255, 194, 26, 0.45),
+    0 0 60px 18px rgba(255, 150, 30, 0.7);
+  transition: box-shadow 1.2s ease-out;
+}
+
+@property --smash-a {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes smash-ring {
+  to {
+    --smash-a: 360deg;
+  }
+}
+
+@keyframes smash-throb {
+  to {
+    transform: scale(1.05);
+  }
+}
+
+.flash.gold {
+  background: radial-gradient(circle at 50% 45%, #fffbe0, #ffc21a 45%, #ff3d2e 85%);
+}

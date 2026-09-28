@@ -60,6 +60,62 @@ export class Sfx {
     }
   }
 
+  // ---------------------------------------------------------------- the smash
+
+  /** A smash chance: a rising whoosh under the slow motion (dur in seconds). */
+  smashRiser(dur = 1.4) {
+    const e = this.e;
+    const t = e.now + 0.01;
+    const bus = e.sfx;
+    e.noise(t, dur, { type: 'bandpass', f0: 300, f1: 3200, q: 1.4, gain: 0.22, bus, attack: dur * 0.8, rev: 0.4 });
+    e.tone(t, 110, dur, { type: this.timbre === 'chip' ? 'square' : 'sawtooth', gain: 0.07, to: 440, bus, attack: dur * 0.7, rev: 0.3 });
+    e.tone(t + dur * 0.3, 55, dur * 0.8, { gain: 0.28, to: 70, bus, attack: dur * 0.5 });
+  }
+
+  /** The smash itself: a whip-crack off the strings and a sub boom (a perfect one: bigger, with a ring). */
+  smashCrack(perfect: boolean, pan: number, lite = false) {
+    const e = this.e;
+    const t = e.now + 0.002;
+    const bus = e.sfx;
+    const g = lite ? 0.55 : 1;
+    if (this.timbre === 'chip') {
+      e.tone(t, 1760, 0.12, { type: 'square', gain: 0.22 * g, to: 220, bus, pan });
+      e.noise(t, 0.35, { type: 'lowpass', f0: 3000, f1: 200, gain: 0.5 * g, bus, pan });
+      e.tone(t, 110, 0.4, { type: 'square', gain: 0.25 * g, to: 40, bus, pan });
+      return;
+    }
+    // the crack: a very short, very bright burst
+    e.noise(t, 0.025, { type: 'highpass', f0: 2500, gain: 1.1 * g, bus, pan });
+    e.noise(t + 0.004, 0.09, { type: 'bandpass', f0: 4200, f1: 1400, q: 1.1, gain: 0.8 * g, bus, pan, rev: 0.3 });
+    // the boom
+    e.tone(t, 150, 0.55, { gain: 0.85 * g, to: 38, bus, pan });
+    e.noise(t, 0.6, { type: 'lowpass', f0: 1800, f1: 120, gain: 0.55 * g, bus, pan, rev: 0.5 });
+    // the ball tearing away
+    e.noise(t + 0.03, 0.45, { type: 'bandpass', f0: 3400, f1: 600, q: 1.6, gain: 0.35 * g, bus, pan, attack: 0.02 });
+    if (perfect && !lite) {
+      e.tone(t + 0.01, 1175, 0.9, { gain: 0.12, bus, pan, rev: 0.7 });
+      e.tone(t + 0.04, 1760, 1.0, { gain: 0.1, bus, pan, rev: 0.7 });
+      e.tone(t + 0.08, 2637, 1.1, { gain: 0.07, bus, pan, rev: 0.7 });
+    }
+  }
+
+  /** A smash landing: a thump through the court. */
+  smashBoom(pan: number, strength = 1) {
+    const e = this.e;
+    const t = e.now + 0.002;
+    const bus = e.sfx;
+    e.tone(t, 95, 0.45, { gain: 0.7 * strength, to: 35, bus, pan });
+    e.noise(t, 0.35, { type: 'lowpass', f0: 900, f1: 150, gain: 0.5 * strength, bus, pan, rev: 0.45 });
+    e.noise(t + 0.02, 0.5, { type: 'bandpass', f0: 1600, f1: 500, q: 0.8, gain: 0.18 * strength, bus, pan, attack: 0.03, rev: 0.4 });
+  }
+
+  /** the crowd erupting */
+  roar(intensity = 1) {
+    this.voices(intensity, 2.6, 'ah');
+    this.voices(intensity * 0.8, 2.2, 'ey');
+    this.applause(intensity, 3.4);
+  }
+
   swish(power: number, pan: number) {
     const p = Math.max(0.1, Math.min(1, power));
     this.e.noise(this.e.now + 0.002, 0.18 + p * 0.06, { type: 'bandpass', f0: 450, f1: 2200 + p * 1600, q: 1.2, gain: 0.12 + p * 0.18, bus: this.e.sfx, pan, attack: 0.03 });

@@ -191,6 +191,27 @@ export class PadAudio {
     this.tone(t + 0.03, 1760, 0.2, 0.08, 'sine');
   }
 
+  /** a smash chance: a quick rising whoosh */
+  smashRiser() {
+    if (!this.ok) return;
+    const t = this.ctx!.currentTime + 0.001;
+    this.noiseBurst(t, 0.7, 'bandpass', 300, 2600, 1.5, 0.22);
+    this.tone(t, 220, 0.7, 0.1, 'sawtooth', 660);
+  }
+
+  /** the smash: a crack and a thump (a perfect one rings) */
+  smash(perfect = false) {
+    if (!this.ok) return;
+    const t = this.ctx!.currentTime + 0.001;
+    this.noiseBurst(t, 0.05, 'highpass', 2600, 2600, 0.7, 0.9);
+    this.noiseBurst(t, 0.3, 'lowpass', 1800, 150, 0.7, 0.55);
+    this.tone(t, 160, 0.35, 0.7, 'sine', 45);
+    if (perfect) {
+      this.tone(t + 0.02, 1175, 0.45, 0.12, 'sine');
+      this.tone(t + 0.07, 1760, 0.5, 0.1, 'sine');
+    }
+  }
+
   toss() {
     if (!this.ok) return;
     const t = this.ctx!.currentTime + 0.001;

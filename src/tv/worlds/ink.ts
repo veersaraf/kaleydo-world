@@ -13,6 +13,7 @@
 // creases and silhouettes. (Normals would need the scene drawn a second time.)
 
 import * as THREE from 'three';
+import { FIRE_STYLE } from '../render/smashfx';
 import { World, type WorldDef, type FrameView } from './base';
 import type { MaterialKit, CharRole } from './types';
 import { flat, stringsMat, canvasTex } from './mats';
@@ -174,6 +175,8 @@ class InkWorld extends World {
   }
 
   protected build() {
+    // a smash in ink: a black-and-vermilion streak, a splash of ink where it lands
+    this.smashStyle = { ...FIRE_STYLE, fire: [INK.clone(), INK.clone(), RED.clone()], fireShape: 'ink', sparks: [INK.clone(), RED.clone()], sparkShape: 'ink', ring: INK.clone(), hot: RED.clone(), scorch: INK.clone(), scorchAlpha: 0.78, dust: [INK.clone()], dustShape: 'ink', flash: new THREE.Color('#fffaf0') };
     const s = this.scene;
     s.background = PAPER.clone();
     s.fog = new THREE.Fog(PAPER.clone(), 28, 200);

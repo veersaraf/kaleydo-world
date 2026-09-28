@@ -230,6 +230,8 @@ const menuPanel = h('div', { class: 'panel menu' }, h('div', { class: 'mhead' },
 const gaugeRing = h('div', { class: 'ring' });
 const gaugeLive = h('div', { class: 'live' });
 const gaugeText = h('div', { class: 'gtext' }, h('b', {}, 'SWING'), h('span', {}, ''));
+// a smash chance: the pad goes red and gold and shouts
+const smashBadge = h('div', { class: 'smash-badge' }, h('b', {}, 'SMASH!'), h('span', {}, 'swing hard!'));
 const shotLine = h('div', { class: 'shotline' }, '');
 const tvLine = h('div', { class: 'tvline' }, '');
 const playTitle = h('div', { class: 'ptitle' }, '');
@@ -239,7 +241,7 @@ const playPanel = h(
   'div',
   { class: 'panel play' },
   panelTop(pauseBtn(), playTitle, playHint),
-  h('div', { class: 'sstage' }, tvLine, h('div', { class: 'gauge' }, gaugeLive, gaugeRing, gaugeText), shotLine),
+  h('div', { class: 'sstage' }, tvLine, h('div', { class: 'gauge' }, gaugeLive, gaugeRing, gaugeText, smashBadge), shotLine),
   swipeZone,
 );
 
@@ -641,9 +643,9 @@ function showToast(text: string, ms = 1400) {
   toastTimer = window.setTimeout(() => toast.classList.remove('show'), ms);
 }
 
-/** a white flash in the player's colour; 'red' when you're hit, 'steel' when your guard holds */
-function doFlash(strong = false, tint: '' | 'red' | 'steel' = '') {
-  flash.classList.remove('go', 'strong', 'red', 'steel');
+/** a white flash in the player's colour; 'red' when you're hit, 'steel' when your guard holds, 'gold' for a smash */
+function doFlash(strong = false, tint: '' | 'red' | 'steel' | 'gold' = '') {
+  flash.classList.remove('go', 'strong', 'red', 'steel', 'gold');
   shell.classList.remove('rumble', 'big');
   void flash.offsetWidth;
   flash.classList.add('go');
@@ -669,8 +671,19 @@ function fitTitles() {
     el.classList.toggle('xlong', n > 19);
   }
 }
+let smashTimer = 0;
+/** the smash chance state on the tennis panel: on (red/gold, pulsing), 'hit' (the flare after), or off */
+function smashState(on: boolean | 'hit') {
+  window.clearTimeout(smashTimer);
+  playPanel.classList.toggle('smash', on === true);
+  playPanel.classList.toggle('smashed', on === 'hit');
+  if (on === true) smashTimer = window.setTimeout(() => smashState(false), 4000);
+  else if (on === 'hit') smashTimer = window.setTimeout(() => smashState(false), 1300);
+}
+
 function setMode(m: PadMode, title?: string, hint?: string, lock = false) {
   const prev = mode;
+  if (m !== 'play') smashState(false);
   // a new mode, or new words on it: the heading pops (the panel slides in when it changes)
   const sig = `${m === 'watch' ? 'wait' : m === 'bat' ? 'play' : m}|${title ?? ''}|${hint ?? ''}`;
   if (sig !== modeSig && panels[m].classList.contains('on')) {
@@ -834,7 +847,20 @@ function onMessage(m: ServerToPad) {
         // on 'watch' while the ball rolls (the arrow flies) the panel isn't showing: say it anyway
         if ((mode !== 'bowl' && mode !== 'bow') || m.fx === 'perfect') showToast(m.label || line, 1800);
       }
+      if (m.fx !== 'smash-chance' && m.fx !== 'smash') smashState(false);
       switch (m.fx) {
+        case 'smash-chance':
+          smashState(true);
+          audio.smashRiser();
+          doFlash(false, 'gold');
+          break;
+        case 'smash':
+          smashState('hit');
+          audio.smash(/PERFECT/.test(m.label ?? ''));
+          doFlash(true, 'gold');
+          showToast(m.label || 'SMASH!', 1800);
+          tvLine.textContent = line;
+          break;
         case 'hit':
           audio.hit(m.power ?? 0.6);
           doFlash();

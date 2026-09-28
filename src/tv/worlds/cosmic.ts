@@ -6,6 +6,7 @@
 // rallies float.
 
 import * as THREE from 'three';
+import { FIRE_STYLE } from '../render/smashfx';
 import { World, type WorldDef, type FrameView } from './base';
 import type { MaterialKit, CharRole } from './types';
 import { flat, stringsMat, toon } from './mats';
@@ -47,6 +48,8 @@ class CosmicWorld extends World {
   private belt!: Belt;
 
   protected build() {
+    // a smash in space: a violet comet, a starburst ring, a dark crater
+    this.smashStyle = { ...FIRE_STYLE, fire: [hdr(VIOLET, 3), hdr(CYAN, 3), hdr(new THREE.Color('#ffffff'), 2.5)], fireShape: 'soft', sparks: [hdr(CYAN, 3), hdr(PINK, 3), hdr(new THREE.Color('#ffe38d'), 3)], sparkShape: 'star', ring: hdr(CYAN, 2), additive: true, hot: hdr(PINK, 2), scorch: new THREE.Color('#07031a'), scorchAlpha: 0.72, dust: [hdr(VIOLET, 1.2)], dustShape: 'soft', flash: new THREE.Color('#d8f6ff') };
     const s = this.scene;
     this.#nebula = bakeNebula(this.renderer);
     const sky = spaceDome(this.u, this.#nebula.texture, STAR);

@@ -47,7 +47,8 @@ import { TVLink } from './core/link';
 import { Input, type SwingEv } from './core/input';
 import { AI_LEVELS } from './tennis/ai';
 import { randomLook, playerLook, type Look } from './chars/look';
-import { Rng, clamp } from './core/math';
+import { Rng, clamp, damp, lerp, smooth } from './core/math';
+import type { TPlayer, HitPlan } from './tennis/player';
 import type { FrameView } from './worlds/base';
 import type { Pose } from './chars/pose';
 import type { MatchState } from './tennis/match';
@@ -148,7 +149,28 @@ export class App {
   /** recycled replay frames (recording allocates nothing in steady state) */
   private recPool: RecFrame[] = [];
   private pendingEvents: MatchEvent[] = [];
-  replay: { frames: RecFrame[]; i: number; time: number; end: number; side: number } | null = null;
+  replay: {
+    frames: RecFrame[];
+    i: number;
+    time: number;
+    end: number;
+    side: number;
+    /** a smash in the window: slow right down on the contact, from low beside the smasher */
+    smash: { t: number; x: number; y: number; z: number; fwd: number } | null;
+  } | null = null;
+
+  // ---- the smash: bullet time, the camera swinging low, the ball glowing
+  /** how fast the sim runs relative to real time (bullet time eases it down) */
+  timeScale = 1;
+  /**
+   * The human smash chance being staged right now (the HUD reads it): who, how
+   * long (sim s) until contact, how far the build-up has come (0..1). `hit` is
+   * set for a moment after the smash lands on the racket.
+   */
+  smashCue: { p: TPlayer; plan: HitPlan; tl: number; w: number } | null = null;
+  private smashW = 0;
+  /** real time until the camera lets go after a smash was struck */
+  private smashAfter = 0;
   onReplayEvent: (e: MatchEvent) => void = () => {};
   onReplayEnd: () => void = () => {};
 
@@ -322,7 +344,11 @@ export class App {
     const m = this.match;
     if (!m || this.paused || this.attract) return;
     if (e.source === 'mouse' && !this.input.mouseSwings) return;
-    m.humanSwing(e.slot, { power: e.power, spin: e.spin, side: e.side, path: e.path }, m.t - clamp(e.age, 0, 0.16));
+    // a key has no swing speed: on a smash chance it's a full-blooded one
+    const chance = this.smashCue && this.smashCue.p.slot === e.slot;
+    const power = e.source === 'key' && chance && e.power > 0.3 ? Math.max(e.power, 0.92) : e.power;
+    // (a swing's age is real time; in bullet time the sim has moved on less)
+    m.humanSwing(e.slot, { power, spin: e.spin, side: e.side, path: e.path }, m.t - clamp(e.age, 0, 0.16) * this.timeScale);
   }
 
   private event(e: MatchEvent) {
@@ -333,10 +359,16 @@ export class App {
         this.hitstop = m.hitstop;
         m.hitstop = 0;
       }
-      const k = e.kind === 'smash' ? 0.8 : e.rocket ? 0.65 : e.power > 0.85 || e.perfect ? 0.35 : 0.06;
+      const k = e.kind === 'smash' ? (e.p.human ? (e.perfect ? 1.2 : 1) : 0.6) : e.rocket ? 0.65 : e.power > 0.85 || e.perfect ? 0.35 : 0.06;
+      if (e.kind === 'smash' && e.p.human) {
+        // out of bullet time with a bang (the hit-stop holds the frame first)
+        this.timeScale = 1;
+        this.smashAfter = 0.7;
+      }
       this.rig.kick(k);
       this.rig2.kick(k);
     }
+    if (e.type === 'smash-chance') m.excitement = Math.max(m.excitement, 0.85);
     if (e.type === 'net' && !e.over) {
       this.rig.kick(0.15);
       this.rig2.kick(0.15);
@@ -390,7 +422,12 @@ export class App {
     const frames = this.rec.filter((f) => f.t >= from && f.t <= to);
     if (frames.length < 40) return false;
     const last = frames[frames.length - 1];
-    this.replay = { frames, i: 0, time: frames[0].t, end: last.t, side: last.ball.x >= 0 ? 1 : -1 };
+    // a human's smash in the window: the replay dwells on it
+    let smash: NonNullable<App['replay']>['smash'] = null;
+    for (const f of frames)
+      for (const e of f.events)
+        if (e.type === 'hit' && e.kind === 'smash' && e.p.human) smash = { t: f.t, x: e.pos.x, y: e.pos.y, z: e.pos.z, fwd: e.p.fwd };
+    this.replay = { frames, i: 0, time: frames[0].t, end: last.t, side: smash ? (smash.x >= 0 ? 1 : -1) : last.ball.x >= 0 ? 1 : -1, smash };
     this.rig.replayStart();
     return true;
   }
@@ -413,14 +450,22 @@ export class App {
     }
     // ease in and out of slow motion
     const u = (r.time - r.frames[0].t) / Math.max(0.1, r.end - r.frames[0].t);
-    const speed = u < 0.12 || u > 0.92 ? 0.7 : 0.42;
+    let speed = u < 0.12 || u > 0.92 ? 0.7 : 0.42;
+    // a smash: slow almost to a stop through the contact, then let it fly
+    let focus: { x: number; y: number; z: number; w: number; fwd: number } | undefined;
+    if (r.smash) {
+      const d = r.time - r.smash.t;
+      const near = clamp(1 - Math.abs(d + 0.05) / 0.45);
+      speed = lerp(speed, 0.12, smooth(near));
+      focus = { ...r.smash, w: d < 0 ? clamp((d + 1.1) / 0.5) : clamp(1 - (d - 0.3) / 0.5) };
+    }
     r.time += realDt * speed;
     while (r.i < r.frames.length - 1 && r.frames[r.i + 1].t <= r.time) {
       r.i++;
       for (const e of r.frames[r.i].events) this.onReplayEvent(e);
     }
     const f = r.frames[r.i];
-    this.rig.replayUpdate(f.ball, realDt, r.side);
+    this.rig.replayUpdate(f.ball, realDt, r.side, focus);
     // the replay is a cinematic: the ball in focus, the stands soft behind it
     const c = this.rig.cam.position;
     this.setDof(Math.hypot(c.x - f.ball.x, c.y - f.ball.y, c.z - f.ball.z), 1.1);
@@ -1175,8 +1220,43 @@ export class App {
   }
   private tmpBall = new THREE.Vector3();
 
+  /**
+   * Stage a human's smash chance: as the floater comes down to them, time eases
+   * into slow motion, the camera swings low behind them and the ball glows.
+   */
+  private stageSmash(m: Match, realDt: number) {
+    let cue: { p: TPlayer; plan: HitPlan } | null = null;
+    if (!this.attract && !this.paused)
+      for (const p of m.players) {
+        const plan = p.human ? m.smashChance(p) : null;
+        if (plan) {
+          cue = { p, plan };
+          break;
+        }
+      }
+    let want = 1;
+    if (cue) {
+      const tl = cue.plan.t - m.t;
+      // the last second or so before contact runs at a bit over a third of real speed
+      want = lerp(0.36, 1, smooth(clamp((tl - 0.3) / 0.95)));
+    }
+    this.timeScale = damp(this.timeScale, want, want < this.timeScale ? 7 : 12, realDt);
+    this.smashW = damp(this.smashW, cue ? 1 : 0, cue ? 3 : 5, realDt);
+    this.smashCue = cue ? { p: cue.p, plan: cue.plan, tl: cue.plan.t - m.t, w: this.smashW } : null;
+    this.smashAfter = Math.max(0, this.smashAfter - realDt);
+    const cam = cue
+      ? { team: cue.p.team, x: cue.plan.sx, z: cue.plan.sz, fh: cue.p.fhSign, cx: cue.plan.bx, cy: cue.plan.by, cz: cue.plan.bz, after: 0 }
+      : this.smashAfter > 0 && this.rig.smash
+        ? { ...this.rig.smash, after: 1 }
+        : null;
+    this.rig.smash = cam;
+    this.rig2.smash = cam;
+    for (const w of [this.stage.current, this.stage.next]) if (w) w.smashGlow = cue ? this.smashW : 0;
+  }
+
   private playFrame(m: Match, realDt: number) {
-    let simDt = this.paused ? 0 : realDt;
+    this.stageSmash(m, realDt);
+    let simDt = this.paused ? 0 : realDt * this.timeScale;
     if (this.hitstop > 0) {
       this.hitstop -= realDt;
       simDt = 0;

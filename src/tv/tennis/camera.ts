@@ -40,8 +40,16 @@ export class CameraRig {
   aspect = 16 / 9;
   /** 0..1 blend towards a point-winner close-up */
   private winnerBlend = 0;
+  private lastSmash: CameraRig['smash'] = null;
   /** true while this rig draws one half of a split screen */
   split = false;
+  /**
+   * A smash chance being staged (set by the app every frame, null when none):
+   * the camera swings low behind the smasher and looks up at the ball against
+   * the sky, then lets the ball rocket away from it.
+   */
+  smash: { team: number; x: number; z: number; fh: number; cx: number; cy: number; cz: number; after: number } | null = null;
+  private smashW = 0;
 
   /** `side` = the team whose end this camera sits behind (1 = the far end, looking back) */
   constructor(public side: 0 | 1 = 0) {
@@ -143,6 +151,24 @@ export class CameraRig {
           fov = lerp(fov, 30, k);
         }
       }
+      // a smash chance on this side: low behind the player, looking up at the ball
+      const sm = this.smash && this.smash.team === this.side && !this.split ? this.smash : null;
+      this.smashW = damp(this.smashW, sm ? 1 : 0, sm ? 3.2 : 2.2, dt);
+      if (sm) this.lastSmash = sm;
+      const ls = this.lastSmash;
+      if (m && ls && this.smashW > 0.002) {
+        const s = this.side === 1 ? -1 : 1;
+        const b = m.ballView(m.t, { x: 0, y: 0, z: 0 });
+        const k = smooth(this.smashW);
+        // behind the player, off their racket side's shoulder, looking up the path of the ball
+        const sp = new THREE.Vector3(ls.x - ls.fh * 1.25, 0.95, ls.z + s * 3.4);
+        const aimB = ls.after > 0 ? 0.25 : 0.55;
+        const sl = new THREE.Vector3(lerp(ls.cx, b.x, aimB), lerp(ls.cy, Math.min(b.y, 9), aimB) + 0.4, lerp(ls.cz, b.z, aimB));
+        tp.lerp(sp, k);
+        tl.lerp(sl, k);
+        fov = lerp(fov, 54, k);
+        lambda = Math.max(lambda, 4.5);
+      }
       if (this.mode === 'intro') {
         this.introT += dt;
         const u = easeInOutCubic(clamp(this.introT / 3.0));
@@ -208,10 +234,16 @@ export class CameraRig {
     this.rpInit = false;
   }
 
-  replayUpdate(ball: { x: number; y: number; z: number }, dt: number, side: number) {
+  replayUpdate(ball: { x: number; y: number; z: number }, dt: number, side: number, focus?: { x: number; y: number; z: number; w: number; fwd: number }) {
     // courtside, inside the fence (clear of every world's stands)
     const tp = new THREE.Vector3(side * 8.1, 2.7 + ball.y * 0.2, ball.z * 0.6 + 2);
     const tl = new THREE.Vector3(ball.x * 0.5, 0.8 + ball.y * 0.5, ball.z * 0.9);
+    if (focus && focus.w > 0) {
+      // a smash: low and close beside the smasher, looking up at the contact
+      const k = smooth(focus.w);
+      tp.lerp(new THREE.Vector3(focus.x + side * 3.4, 0.7, focus.z - focus.fwd * 2.2), k);
+      tl.lerp(new THREE.Vector3(lerp(focus.x, ball.x, 0.35), lerp(focus.y, ball.y, 0.35), lerp(focus.z, ball.z, 0.35)), k);
+    }
     if (!this.rpInit) {
       this.rp.copy(tp);
       this.rl.copy(tl);
@@ -225,7 +257,7 @@ export class CameraRig {
     this.rl.z = damp(this.rl.z, tl.z, 5, dt);
     this.cam.position.copy(this.rp);
     this.cam.lookAt(this.rl);
-    this.cam.fov = this.fitFov(40);
+    this.cam.fov = this.fitFov(focus && focus.w > 0 ? lerp(40, 50, smooth(focus.w)) : 40);
     this.cam.aspect = this.aspect;
     this.cam.updateProjectionMatrix();
   }
