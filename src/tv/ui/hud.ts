@@ -244,10 +244,10 @@ export class Hud {
       this.smRet.style.display = 'none';
       return;
     }
-    this.smRet.style.display = '';
+    this.smRet.style.display = 'block';
     // the ring closes on the ball as contact comes: swing as it meets it
     const close = Math.min(1, Math.max(0, cue.tl / 1.1));
-    const scale = 0.55 + close * 2.6;
+    const scale = 0.7 + close * 2.4;
     const hot = cue.tl < 0.32;
     this.smRet.style.left = `${((v.x + Math.min(0.98, Math.max(0.02, p.x)) * v.w) * 100).toFixed(2)}%`;
     this.smRet.style.top = `${(Math.min(0.97, Math.max(0.03, p.y)) * 100).toFixed(2)}%`;

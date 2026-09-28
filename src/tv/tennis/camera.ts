@@ -48,8 +48,10 @@ export class CameraRig {
    * the camera swings low behind the smasher and looks up at the ball against
    * the sky, then lets the ball rocket away from it.
    */
-  smash: { team: number; x: number; z: number; fh: number; cx: number; cy: number; cz: number; after: number } | null = null;
+  smash: { team: number; x: number; z: number; fh: number; cx: number; cy: number; cz: number; after: number; lx?: number; lz?: number } | null = null;
   private smashW = 0;
+  /** 0 → 1 once the smash is struck: the camera rises to watch it land */
+  private afterW = 0;
 
   /** `side` = the team whose end this camera sits behind (1 = the far end, looking back) */
   constructor(public side: 0 | 1 = 0) {
@@ -160,14 +162,21 @@ export class CameraRig {
         const s = this.side === 1 ? -1 : 1;
         const b = m.ballView(m.t, { x: 0, y: 0, z: 0 });
         const k = smooth(this.smashW);
-        // behind the player, off their racket side's shoulder, looking up the path of the ball
-        const sp = new THREE.Vector3(ls.x - ls.fh * 1.25, 0.95, ls.z + s * 3.4);
-        const aimB = ls.after > 0 ? 0.25 : 0.55;
-        const sl = new THREE.Vector3(lerp(ls.cx, b.x, aimB), lerp(ls.cy, Math.min(b.y, 9), aimB) + 0.4, lerp(ls.cz, b.z, aimB));
+        this.afterW = damp(this.afterW, ls.after > 0 ? 1 : 0, ls.after > 0 ? 5 : 30, dt);
+        const a = smooth(this.afterW);
+        // the build-up: low behind the player, off the shoulder away from the racket,
+        // looking up the path of the falling ball (the player in the bottom of the frame)
+        const sp = new THREE.Vector3(ls.x - ls.fh * 1.5, 1.45, ls.z + s * 4.6);
+        const sl = new THREE.Vector3(lerp(ls.cx, b.x, 0.42), lerp(ls.cy + 0.2, Math.min(b.y, 9), 0.42), lerp(ls.cz, b.z, 0.42));
+        // struck: up over the shoulder to watch it land
+        if (a > 0.001 && ls.lx !== undefined && ls.lz !== undefined) {
+          sp.lerp(new THREE.Vector3(ls.x - ls.fh * 2.4, 3.6, ls.z + s * 6.2), a);
+          sl.lerp(new THREE.Vector3(lerp(ls.lx, b.x, 0.3), 0.6, lerp(ls.lz, b.z, 0.3)), a);
+        }
         tp.lerp(sp, k);
         tl.lerp(sl, k);
-        fov = lerp(fov, 54, k);
-        lambda = Math.max(lambda, 4.5);
+        fov = lerp(fov, lerp(58, 38, a), k);
+        lambda = Math.max(lambda, lerp(4.5, 6, a));
       }
       if (this.mode === 'intro') {
         this.introT += dt;

@@ -176,10 +176,10 @@ export class SmashFx {
       p.mesh.position.set(x, 0.02 + i * 0.002, z);
       p.t = -i * 0.09;
       p.life = 0.55 + i * 0.15;
-      p.size = (3.2 + strength * 2.6) * (i ? 1.45 : 1);
-      p.strength = strength * (i ? 0.55 : 1);
-      p.mat.uniforms.uThick.value = i ? 0.08 : 0.16;
-      p.mat.uniforms.uGlow.value = i ? 0 : 0.3;
+      p.size = (4.5 + strength * 3.5) * (i ? 1.5 : 1);
+      p.strength = strength * (i ? 0.6 : 1);
+      p.mat.uniforms.uThick.value = i ? 0.12 : 0.26;
+      p.mat.uniforms.uGlow.value = i ? 0 : 0.4;
       p.mesh.visible = true;
     }
     const s = this.take(this.scorches, 'scorch');
@@ -187,7 +187,7 @@ export class SmashFx {
     s.mesh.rotation.z = Math.random() * Math.PI * 2;
     s.t = 0;
     s.life = 5.5;
-    s.size = 1.3 + strength * 0.9;
+    s.size = 2 + strength * 1.4;
     s.strength = strength;
     s.mat.uniforms.uSeed.value = Math.random() * 50;
     s.mesh.scale.setScalar(s.size);

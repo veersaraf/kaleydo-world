@@ -41,7 +41,7 @@ import { newPose, copyPose } from './chars/pose';
 import { WORLDS } from './worlds';
 import { CameraRig } from './tennis/camera';
 import { Match, type MatchConfig, type MatchEvent, type PlayerSpec } from './tennis/match';
-import { segVel } from './tennis/ball';
+import { segVel, segPos } from './tennis/ball';
 import { Animator } from './chars/anim';
 import { TVLink } from './core/link';
 import { Input, type SwingEv } from './core/input';
@@ -171,6 +171,7 @@ export class App {
   private smashW = 0;
   /** real time until the camera lets go after a smash was struck */
   private smashAfter = 0;
+  private smashLand = { x: 0, y: 0, z: 0 };
   onReplayEvent: (e: MatchEvent) => void = () => {};
   onReplayEnd: () => void = () => {};
 
@@ -293,7 +294,13 @@ export class App {
     this.stopDuel();
     this.stopArchery();
     this.stopBaseball();
+    // (a match can start while a replay runs — its depth of field goes with it)
+    if (this.replay) this.setDof(null);
     this.replay = null;
+    this.timeScale = 1;
+    this.smashCue = null;
+    this.smashAfter = 0;
+    this.rig.smash = this.rig2.smash = null;
     for (const f of this.rec) this.recPool.push(f);
     this.rec.length = 0;
     this.pendingEvents = [];
@@ -363,7 +370,11 @@ export class App {
       if (e.kind === 'smash' && e.p.human) {
         // out of bullet time with a bang (the hit-stop holds the frame first)
         this.timeScale = 1;
-        this.smashAfter = 0.7;
+        this.smashAfter = 1.1;
+        // where it will land (the camera rises to watch)
+        const tb = m.ball.nextBounce;
+        if (tb !== null) segPos(m.ball.seg, tb, this.smashLand);
+        else this.smashLand = { x: e.pos.x, y: 0, z: -e.pos.z * 0.6 };
       }
       this.rig.kick(k);
       this.rig2.kick(k);
@@ -1247,7 +1258,7 @@ export class App {
     const cam = cue
       ? { team: cue.p.team, x: cue.plan.sx, z: cue.plan.sz, fh: cue.p.fhSign, cx: cue.plan.bx, cy: cue.plan.by, cz: cue.plan.bz, after: 0 }
       : this.smashAfter > 0 && this.rig.smash
-        ? { ...this.rig.smash, after: 1 }
+        ? { ...this.rig.smash, after: 1, lx: this.smashLand.x, lz: this.smashLand.z }
         : null;
     this.rig.smash = cam;
     this.rig2.smash = cam;

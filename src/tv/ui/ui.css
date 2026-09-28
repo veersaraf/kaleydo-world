@@ -2846,8 +2846,8 @@ kbd {
   --s: 1;
   --spin: 0deg;
   position: absolute;
-  width: calc(var(--u) * 9);
-  height: calc(var(--u) * 9);
+  width: calc(var(--u) * 11);
+  height: calc(var(--u) * 11);
   transform: translate(-50%, -50%);
   display: none;
 }
@@ -2980,7 +2980,7 @@ kbd {
   left: 0;
   width: 100%;
   opacity: 0;
-  background: repeating-conic-gradient(from 0deg at var(--x) var(--y), rgba(255, 255, 255, 0) 0deg 3.1deg, rgba(255, 250, 225, 0.9) 3.4deg 3.9deg, rgba(255, 255, 255, 0) 4.3deg 7.2deg);
+  background: repeating-conic-gradient(from 0deg at var(--x) var(--y), rgba(255, 255, 255, 0) 0deg 3.1deg, rgba(255, 250, 225, 0.55) 3.4deg 3.9deg, rgba(255, 255, 255, 0) 4.3deg 7.2deg);
   -webkit-mask: radial-gradient(circle at var(--x) var(--y), transparent 16%, rgba(0, 0, 0, 0.6) 34%, #000 60%);
   mask: radial-gradient(circle at var(--x) var(--y), transparent 16%, rgba(0, 0, 0, 0.6) 34%, #000 60%);
   mix-blend-mode: screen;
@@ -3021,7 +3021,7 @@ kbd {
 .sm-hit {
   position: absolute;
   left: 50%;
-  top: 30%;
+  top: 22%;
   transform: translate(-50%, -50%);
   display: flex;
   flex-direction: column;
@@ -3061,7 +3061,7 @@ kbd {
 }
 
 .sm-hit.show {
-  animation: sm-hit 1.7s cubic-bezier(0.2, 1.4, 0.3, 1) both;
+  animation: sm-hit 1.35s cubic-bezier(0.2, 1.4, 0.3, 1) both;
 }
 
 .sm-hit.lite b {

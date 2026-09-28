@@ -670,8 +670,11 @@ export abstract class World {
       this.blazeT += v.realDt;
       if (v.ballSpeed > 4 && v.dt > 0) {
         const st = this.smashStyle;
-        const n = this.blaze === 3 ? 4 : this.blaze === 2 ? 3 : 2;
-        this.particles.burst({ x: b.position.x, y: b.position.y, z: b.position.z, count: n, speed: [0.2, 1.3], life: [0.16, this.blaze === 1 ? 0.28 : 0.4], size: [0.1, this.blaze === 1 ? 0.2 : 0.32], shrink: 0.15, colors: st.fire, shape: st.fireShape, drag: 2.5, gravity: -2.5, alpha: 0.95 });
+        const big = this.blaze > 1;
+        const n = this.blaze === 3 ? 6 : this.blaze === 2 ? 4 : 2;
+        this.particles.burst({ x: b.position.x, y: b.position.y, z: b.position.z, count: n, speed: [0.3, 1.6], life: [0.2, big ? 0.55 : 0.3], size: [0.14, big ? 0.5 : 0.24], shrink: 0.1, colors: st.fire, shape: st.fireShape, drag: 2.5, gravity: -2.5, alpha: 0.95 });
+        // a hot core hugging the ball
+        if (big) this.particles.burst({ x: b.position.x, y: b.position.y, z: b.position.z, count: 1, speed: [0, 0], life: [0.07, 0.07], size: [0.55, 0.7], shrink: 0.6, colors: st.fire, shape: 'soft', alpha: 0.8 });
       }
     }
     this.smashFx.update(v.realDt, v.cam);
@@ -837,10 +840,10 @@ export abstract class World {
       this.blaze = !e.p.human ? 1 : e.perfect ? 3 : 2;
       this.blazeT = 0;
       const k = this.blaze === 1 ? 0.5 : this.blaze === 3 ? 1 : 0.8;
-      this.trail.boost = 1 + k * 1.1;
+      this.trail.boost = 1 + k * 1.6;
       this.smashFx.shock(e.pos.x, e.pos.y, e.pos.z, k);
       P.burst({ x: e.pos.x, y: e.pos.y, z: e.pos.z, count: Math.round(34 * k), speed: [3, 7 + 7 * k], life: [0.25, 0.6], size: [0.08, 0.2 + 0.14 * k], shrink: 0.2, colors: st.sparks, shape: st.sparkShape, drag: 2.6, gravity: 3 });
-      this.flash = Math.max(this.flash, 0.3 + 0.4 * k);
+      this.flash = Math.max(this.flash, 0.16 + 0.24 * k);
       this.flashColor.copy(st.flash);
       return;
     }
