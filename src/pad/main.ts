@@ -1,3 +1,4 @@
+import { LiftDetector } from './lift';
 import '@fontsource/fredoka/latin-400.css';
 import '@fontsource/fredoka/latin-600.css';
 import '@fontsource/fredoka/latin-700.css';
@@ -1058,23 +1059,16 @@ tossBtn.addEventListener('pointerdown', (e) => {
   doToss();
 });
 
-// Lift to toss (Switch Sports-style): while it's your serve, raising the phone
-// sharply tosses the ball. It has to start from a still phone, so waving it
-// around while you wait doesn't toss; the lift itself is never a swing.
-let liftV = 0;
-let lastStill = 0;
-let lastLift = 0;
+// Lift to toss (Switch Sports-style; lift.ts): while it's your serve, raising the
+// phone tosses the ball — on the way up, never as it comes back down.
+const lift = new LiftDetector();
 let noSwingUntil = 0;
 function liftCheck(now: number, aUp: number, w: number, dt: number) {
   if (mode !== 'serve' || !joined || tossBtn.classList.contains('tossed')) {
-    liftV = 0;
+    lift.reset();
     return;
   }
-  if (w < 1.5 && Math.abs(aUp) < 1.5) lastStill = now;
-  liftV = Math.max(0, liftV * Math.exp(-dt / 0.25) + aUp * dt);
-  if (liftV > 0.55 && now - lastStill < 700 && now - lastLift > 1200) {
-    lastLift = now;
-    liftV = 0;
+  if (lift.push(now, aUp, w, dt)) {
     noSwingUntil = now + 320;
     doToss();
   }
