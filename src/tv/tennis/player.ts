@@ -210,7 +210,7 @@ export class TPlayer {
    * Choose where and when to meet the ball along a predicted path.
    * `mustBounce` for serve returns; `allowVolley` for players near the net.
    */
-  planFrom(path: PathSample[], now: number, react: number, opts: { mustBounce: boolean; doubles: boolean; prefer?: Stroke }): HitPlan | null {
+  planFrom(path: PathSample[], now: number, react: number, opts: { mustBounce: boolean; doubles: boolean; prefer?: Stroke; smash?: boolean }): HitPlan | null {
     const fwd = this.fwd;
     const myHalf = (z: number) => (this.team === 0 ? z > 0.4 : z < -0.4);
     let best: HitPlan | null = null;
@@ -243,11 +243,11 @@ export class TPlayer {
         let cost = 1.7 * Math.abs(s.y - hIdeal);
         cost += 0.45 * clamp(need / Math.max(0.05, avail), 0, 2);
         cost += opts.prefer ? (stroke === opts.prefer ? -0.8 : 0.8) : stroke === 'bh' ? 0.14 : 0;
-        cost += overhead ? -0.15 : 0;
+        cost += overhead ? (opts.smash ? -1.4 : -0.15) : 0;
         // don't retreat miles behind the baseline
         cost += 0.5 * Math.max(0, Math.abs(s.z) - (COURT.halfL + 2.2));
         if (volley && !overhead) cost += nearNet ? -0.25 : 0.9;
-        if (volley && overhead) cost += nearNet ? -0.4 : 0.3;
+        if (volley && overhead) cost += nearNet || opts.smash ? -0.4 : 0.3;
         // prefer taking it earlier (on the rise) rather than drifting back
         cost += 0.22 * (s.t - now);
         const speed = i > 0 ? Math.hypot(s.x - path[i - 1].x, s.z - path[i - 1].z) / (s.t - path[i - 1].t) : 15;

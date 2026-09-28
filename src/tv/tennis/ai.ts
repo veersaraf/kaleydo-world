@@ -55,6 +55,14 @@ export interface AIContext {
   rally: number;
   /** 0 fresh … 1 exhausted */
   tired: number;
+  /** the incoming shot was struck perfectly (a human's PERFECT) */
+  incomingPerfect?: boolean;
+  /** the incoming shot was a smash (perfect: a rocket) */
+  incomingSmash?: 0 | 1 | 2;
+  /** the incoming ball is a floater from the other side (a smash chance) */
+  incomingPop?: boolean;
+  /** a person hit the incoming ball (CPUs go easier on smashing people) */
+  fromHuman?: boolean;
 }
 
 export interface AIShot {
@@ -93,13 +101,24 @@ export function aiShot(p: AIProfile, c: AIContext, rng: Rng): AIShot {
   // a sitter: slow, comfortable ball inside the court — go for the kill
   const sitter = c.stretch < 0.3 && (c.incomingSpeed < 15.5 || c.contact.y > 1.25) && Math.abs(c.contact.z) < COURT.halfL + 0.8;
 
-  if (c.stroke === 'oh' && c.contact.y > 1.9) {
+  // an overhead: a CPU smashes some of them (not every one — against a person
+  // that would feel unfair); the rest are placed firmly
+  const overhead = c.stroke === 'oh' && c.contact.y > 1.9;
+  if (overhead && (!c.fromHuman || rng.chance(clamp(0.22 + 0.5 * p.aggression + (c.incomingPop ? 0.08 : 0))))) {
     kind = 'smash';
-    power = clamp(0.75 + p.power * 0.25 + rng.gauss() * 0.08);
-    speed = lerp(24, 35, power);
-    depth = lerp(5, 9, rng.next());
-    clear = 0.05;
+    power = clamp(0.72 + p.power * 0.25 + rng.gauss() * 0.08);
+    speed = lerp(24, 34, power);
+    depth = lerp(5.5, 9, rng.next());
+    clear = 0.06;
     spin = 0.1;
+  } else if (overhead) {
+    kind = 'volley';
+    power = clamp(0.5 + p.power * 0.3);
+    speed = lerp(17, 24, power);
+    depth = rng.range(6.5, 9.8);
+    clear = 0.22;
+    spin = 0;
+    tx = (openCourt ? -Math.sign(c.oppX) : side) * lerp(1.2, hw - 0.4, rng.next());
   } else if (oppAtNet && rng.chance(p.lob * (c.doubles ? 0.8 : 2.8))) {
     kind = 'lob';
     speed = rng.range(8.5, 10.5);
@@ -135,10 +154,50 @@ export function aiShot(p: AIProfile, c: AIContext, rng: Rng): AIShot {
     tx = side * lerp(1.5, hw - 0.3, rng.next());
   }
 
+  // under pressure — after a hard, perfect or wide shot, or stretched — a CPU
+  // floats a high defensive ball, or mistimes it off the frame so it sits up
+  // mid-court; now and then it rolls a moonball. Either is a smash chance.
+  let pop = false;
+  if (kind !== 'smash' && kind !== 'lob' && kind !== 'drop' && !c.volley && c.contact.y < 1.8 && !c.incomingSmash) {
+    const wide = clamp((Math.abs(c.contact.x) - (COURT.singlesHalfW - 1.2)) / 1.8);
+    const hard = clamp((c.incomingSpeed - 17) / 9);
+    const press = clamp(0.6 * c.stretch + 0.45 * hard + (c.incomingPerfect ? 0.3 : 0) + 0.35 * wide + 0.3 * c.tired);
+    const popP = (0.01 + 0.12 * press + 0.003 * Math.min(c.rally, 16)) * (1.3 - 0.6 * p.aggression) * (c.doubles ? 0.8 : 1);
+    if (rng.chance(popP)) {
+      pop = true;
+      if (c.stretch > 0.5 || rng.chance(0.45)) {
+        // off the frame: it loops up and sits in the middle of the court
+        kind = 'wobbly';
+        speed = rng.range(8.5, 10.5);
+        clear = rng.range(2.5, 3.3);
+        depth = rng.range(5, 7.8);
+        spin = 0.1;
+        tx = rng.range(-hw * 0.5, hw * 0.5);
+      } else {
+        // a high defensive float: buys time, but it comes down short of the baseline
+        kind = 'lob';
+        speed = rng.range(9, 11);
+        clear = rng.range(3.8, 4.8);
+        depth = rng.range(7.8, 10);
+        spin = 0.3;
+        tx = rng.range(-hw * 0.6, hw * 0.6);
+      }
+    } else if (!oppAtNet && Math.abs(c.contact.z) > COURT.halfL - 1.5 && rng.chance(p.lob * 0.3)) {
+      // a moonball from the back of the court
+      pop = true;
+      kind = 'lob';
+      speed = rng.range(9.5, 11.5);
+      clear = rng.range(3.4, 4.2);
+      depth = rng.range(9, 10.6);
+      spin = 0.5;
+      tx = side * rng.range(0.5, hw - 0.8);
+    }
+  }
+
   // exhausted, or at full stretch in a dive: all you can do is float it back —
   // a wobbly sitter the other side can smash (Switch Sports-style)
   const wob = clamp(c.tired * 0.85 + (c.stretch > 0.85 ? 0.3 : 0));
-  if (kind !== 'smash' && !c.volley && rng.chance(wob * 0.8)) {
+  if (!pop && kind !== 'smash' && !c.volley && rng.chance(wob * 0.8)) {
     kind = 'wobbly';
     speed = rng.range(9, 11.5);
     clear = 2.2 + rng.next() * 0.8;
@@ -149,13 +208,17 @@ export function aiShot(p: AIProfile, c: AIContext, rng: Rng): AIShot {
 
   // errors: base rate, more when stretched or under pressure or facing pace
   const errP = clamp(
-    p.errors *
+    // (a CPU under pressure floats more balls up now: it nets and sprays fewer)
+    p.errors * 0.88 *
       (1 + c.stretch * 2.5 + c.pressure * 0.5 + Math.max(0, c.incomingSpeed - 17) * 0.06) *
       (1 + c.rally * 0.08) *
-      (kind === 'drive' && power > 0.84 ? 1.5 : 1),
+      (kind === 'drive' && power > 0.84 ? 1.5 : 1) *
+      (pop ? 0.35 : 1),
     0,
     0.6,
-  );
+  ) +
+    // a smash coming at you: hard to get back at all (a perfect one: a rocket)
+    (c.incomingSmash === 2 ? 0.3 : c.incomingSmash === 1 ? 0.14 : 0);
   let netted = false;
   if (rng.chance(errP)) {
     kind = 'error';
@@ -175,7 +238,7 @@ export function aiShot(p: AIProfile, c: AIContext, rng: Rng): AIShot {
   }
 
   return {
-    spec: { tx, tz: fwd * depth, speed, spin, clear, netted, maxApex: kind === 'lob' ? 9 : 6 },
+    spec: { tx, tz: fwd * depth, speed, spin, clear, netted, maxApex: kind === 'lob' ? 9 : kind === 'wobbly' ? 7 : 6 },
     power,
     kind,
   };

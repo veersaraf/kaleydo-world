@@ -78,7 +78,16 @@ export interface SwingInput {
   dtMs?: number;
   /** 0..1: hit at full stretch (a lunge ~0.5, a dive 1) — weaker, loftier, less accurate */
   stretch?: number;
+  /** a smash chance: any decent swing puts it away (timing sets how well) */
+  smash?: boolean;
+  /** the opponents' mean x (a perfect smash finds the open court) */
+  oppX?: number;
 }
+
+/** how fast a swing must be to smash a smash chance (slower: a push back) */
+export const SMASH_MIN_POWER = 0.3;
+/** |tau| under this, a smash is perfect (a rocket) */
+export const SMASH_PERFECT = 0.18;
 
 export interface ShotResult {
   spec: ShotSpec;
@@ -103,7 +112,8 @@ export function humanShot(
   const fwd = fwdOf(team);
   const hw = (doubles ? COURT.doublesHalfW : COURT.singlesHalfW) - 0.45;
   const tau = clamp(sw.tau, -1.2, 1.2);
-  const perfect = Math.abs(tau) < 0.16;
+  const smashing = sw.smash ? sw.power >= SMASH_MIN_POWER : stroke === 'oh' && contact.y > 1.9;
+  const perfect = Math.abs(tau) < (smashing ? SMASH_PERFECT : 0.16);
   let power = clamp(sw.power) * (sw.crossed ? 0.85 : 1);
   const spin = clamp(sw.spin, -1, 1);
 
@@ -123,12 +133,18 @@ export function humanShot(
   let clear = 0.3 + (1 - power) * 0.5;
   let s = spin;
 
-  if (stroke === 'oh' && contact.y > 1.9) {
+  if (smashing) {
+    // perfect: a rocket, steep, into the open court. Late: it sits up and slows;
+    // early: it's pulled wide and a bit softer. Pace always comes from the swing.
     kind = 'smash';
-    speed = lerp(22, 36, power) * (perfect ? 1.08 : 1);
-    depth = lerp(5.5, 9.5, rng.next());
-    clear = 0.04;
+    const late = Math.max(0, tau - SMASH_PERFECT);
+    const early = Math.max(0, -tau - SMASH_PERFECT);
+    power = Math.max(power, 0.35);
+    speed = lerp(25, 40, power) * (perfect ? 1.2 : 1 - 0.34 * Math.min(1, late) - 0.2 * Math.min(1, early));
+    depth = perfect ? lerp(6.2, 8.8, rng.next()) : lerp(5.5, 9.5, rng.next()) - 1.5 * late;
+    clear = perfect ? 0.04 : 0.06 + 0.5 * late;
     s = 0.15;
+    if (perfect && sw.aim === undefined && sw.oppX !== undefined) tx = (Math.abs(sw.oppX) > 0.4 ? -Math.sign(sw.oppX) : Math.sign(tx) || 1) * (hw - 0.55);
   } else if (power < 0.28 && spin > 0.35) {
     kind = 'lob';
     speed = lerp(8.5, 11, power / 0.28);
@@ -174,7 +190,10 @@ export function humanShot(
   }
   sx *= 1 + 1.2 * st;
   sz *= 1 + 0.6 * st;
-  if (err > 0.95 && rng.chance(0.35)) {
+  if (kind === 'smash') {
+    sx *= perfect ? 1 : 0.8;
+    sz *= perfect ? 1 : 0.7;
+  } else if (err > 0.95 && rng.chance(0.35)) {
     kind = 'shank';
     power *= 0.4;
     speed = lerp(8, 14, rng.next());

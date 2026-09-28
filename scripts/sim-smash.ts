@@ -5,6 +5,7 @@ import { Match, type MatchEvent } from '../src/tv/tennis/match';
 import { AI_LEVELS } from '../src/tv/tennis/ai';
 import { Rng } from '../src/tv/core/math';
 
+const sources: Record<string, number> = {};
 function run(level: string, timingSigma: number, seed: number, doubles = false, games = 3) {
   const r = new Rng(seed);
   const players: any[] = [{ team: 0, name: 'Human', look: {}, handed: 1, ctrl: { kind: 'human', slot: 0, ai: AI_LEVELS.auto } }];
@@ -23,9 +24,12 @@ function run(level: string, timingSigma: number, seed: number, doubles = false, 
   let lastSmashBy: 'h' | 'c' | null = null;
   const cpuKinds: Record<string, number> = {};
   let chanceOpen = false;
+  let lastKind = '';
   m.onEvent = (e: MatchEvent) => {
     if (e.type === 'smash-chance') {
       chances++;
+      const src = (m.ball.pop ? 'pop:' : 'high:') + (m.ball.lastHitter?.human ? 'self' : lastKind) + (e.p.plan?.volley ? '/air' : '/bounce');
+      sources[src] = (sources[src] || 0) + 1;
       chanceOpen = true;
     }
     if (e.type === 'hit') {
@@ -35,10 +39,12 @@ function run(level: string, timingSigma: number, seed: number, doubles = false, 
         if (e.kind === 'smash') {
           smashes++;
           lastSmashBy = 'h';
-        } else lastSmashBy = null;
+        } else if (e.kind !== 'error' && e.kind !== 'shank') lastSmashBy = null;
       } else {
+        lastKind = e.kind;
         if (e.p.team === 1) cpuKinds[e.kind] = (cpuKinds[e.kind] || 0) + 1;
-        if (e.p.team === 1) lastSmashBy = e.kind === 'smash' ? 'c' : null;
+        // a smash forces an error: still the smash's point
+        if (e.p.team === 1 && e.kind !== 'error') lastSmashBy = e.kind === 'smash' ? 'c' : null;
         if (e.kind === 'smash' && e.p.team === 1) cpuSmash++;
       }
     }
@@ -106,8 +112,12 @@ for (const [lvl, sig, dbl] of cases) {
   }
   console.log(
     `${lvl.padEnd(6)} σ=${sig}${dbl ? ' dbl' : '    '}  pts ${String(a.n).padStart(3)}  human won ${((a.humanPts / a.n) * 100).toFixed(0)}%  rally ${(a.rallySum / a.n).toFixed(1)}  ` +
-      `chances/pt ${(a.chances / a.n).toFixed(2)}  smashed ${a.smashes}/${a.chances} (missed ${a.missed})  won ${a.smashWon}/${a.smashes}  ` +
+      `chances/pt ${(a.chances / a.n).toFixed(2)}  smashed ${a.smashes}/${a.chances} (missed ${a.missed})  won ${a.smashWon}/${a.smashes} (${((a.smashWon / Math.max(1, a.smashes)) * 100).toFixed(0)}%)  ` +
       `| cpu smash ${a.cpuSmash} (won ${a.cpuSmashWon})`,
   );
   if (process.env.KINDS) console.log('        cpu kinds', a.kinds);
+  if (process.env.SOURCES) {
+    console.log('        chance sources', { ...sources });
+    for (const k in sources) delete sources[k];
+  }
 }

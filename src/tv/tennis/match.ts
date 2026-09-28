@@ -1,7 +1,7 @@
 // The rules engine and point flow for a tennis match.
 
 import { COURT, netHeightAt, sideOf, inCourt, serviceBox, inBox, serveSideSign, fwdOf } from './court';
-import { type Seg, segPos, segVel, segTimeDown, segTimeAtZ, bounceSeg, predictPath, type PathSample } from './ball';
+import { type Seg, segPos, segVel, segTimeDown, segTimeAtZ, bounceSeg, predictPath, segApexY, type PathSample } from './ball';
 import { buildShot, humanShot, serveShot, type Stroke, type SwingInput } from './shot';
 import { TPlayer, type Ctrl, type HitPlan, type AthleticMove } from './player';
 import { aiShot, recoveryPos, AI_LEVELS } from './ai';
@@ -111,12 +111,19 @@ export interface BallInfo {
   nextBounce: number | null;
   netCrossT: number | null;
   visible: boolean;
+  /** this flight is a floater: whoever meets it can smash it */
+  pop: boolean;
+  /** this flight is a smash (2: a perfect one) */
+  smash: 0 | 1 | 2;
 }
 
 const WIN_EARLY = 0.2;
 const WIN_LATE = 0.15;
 const SERVE_WIN = 0.26;
 const TOSS_IDEAL = 0.78;
+/** a smash chance's swing window: forgiving (a floater is slow to come down) */
+const SMASH_EARLY = 0.3;
+const SMASH_LATE = 0.24;
 
 export class Match {
   cfg: MatchConfig;
@@ -138,6 +145,8 @@ export class Match {
   /** server for the current point */
   server!: TPlayer;
   lastShotTx = 0;
+  /** the last shot was a human's perfect one (the CPU is under pressure) */
+  private lastPerfect = false;
   pointWinner: 0 | 1 = 0;
   lastReason: PointReason = 'winner';
   /** swing time for CPUs, per plan */
@@ -180,6 +189,8 @@ export class Match {
       nextBounce: null,
       netCrossT: null,
       visible: false,
+      pop: false,
+      smash: 0,
     };
     this.setupPoint();
     this.setState(cfg.attract ? 'serve' : 'intro');
@@ -260,6 +271,8 @@ export class Match {
     this.ball.lastHitter = null;
     this.ball.netted = false;
     this.ball.letPending = false;
+    this.ball.pop = false;
+    this.ball.smash = 0;
     this.pendingHit = null;
     this.aiSwingAt.clear();
     this.rally = 0;
@@ -319,7 +332,8 @@ export class Match {
     }
     const dt = tEvent - plan.t;
     const k = this.cfg.timingScale ?? 1;
-    const tau = dt < 0 ? dt / (WIN_EARLY * k) : dt / (WIN_LATE * k);
+    const smash = this.isSmashPlan(plan);
+    const tau = dt < 0 ? dt / ((smash ? SMASH_EARLY : WIN_EARLY) * k) : dt / ((smash ? SMASH_LATE : WIN_LATE) * k);
     if (tau < -1 || tau > 1) {
       // a big early swing on the other side is usually a backswing: set up for the real stroke
       if (tau < -1 && inp.side && inp.side !== 'oh') this.humanPrep(slot, inp.side === 'fh' ? 'bh' : 'fh');
@@ -327,7 +341,19 @@ export class Match {
       return;
     }
     const aim = this.aimFor(p, chosen, inp.path);
-    this.scheduleHit(p, { ...plan, stroke: chosen }, { power: inp.power, spin: inp.spin, tau, aim, crossed: chosen !== plan.stroke, dtMs: Math.round(dt * 1000) }, tEvent);
+    this.scheduleHit(p, { ...plan, stroke: chosen }, { power: inp.power, spin: inp.spin, tau, aim, crossed: chosen !== plan.stroke, dtMs: Math.round(dt * 1000), smash }, tEvent);
+  }
+
+  /** an overhead on a ball high enough to put away: a smash chance */
+  isSmashPlan(plan: HitPlan | null): boolean {
+    return !!plan && plan.stroke === 'oh' && plan.by > 1.9 && plan.reachable;
+  }
+
+  /** The smash chance this player has right now (their plan), or null. */
+  smashChance(p: TPlayer): HitPlan | null {
+    if (this.state !== 'play' || !this.ball.live || !p.plan || p.smashCalled !== p.plan) return null;
+    if (p.swing && p.swing.resolved) return null;
+    return p.plan;
   }
 
   /**
@@ -517,10 +543,13 @@ export class Match {
     let best: TPlayer | null = null;
     let bestPlan: HitPlan | null = null;
     for (const p of recv) {
-      p.reactUntil = this.t + (p.human ? 0.05 : p.ctrl.ai.react);
-      const plan = p.planFrom(this.path, this.t, p.human ? 0.05 : p.ctrl.ai.react, {
+      // a smash coming at you: a moment to take it in (a perfect one, longer)
+      const react = p.human ? 0.05 : p.ctrl.ai.react + (this.ball.smash === 2 ? 0.16 : this.ball.smash ? 0.08 : 0);
+      p.reactUntil = this.t + react;
+      const plan = p.planFrom(this.path, this.t, react, {
         mustBounce: this.ball.serve,
         doubles: this.doubles,
+        smash: this.ball.pop,
       });
       if (!plan) continue;
       const score = plan.cost + (plan.reachable ? 0 : 5);
@@ -827,7 +856,7 @@ export class Match {
       }
       if (p.stamina > 0.8) p.tiredShown = false;
       // a floater coming a human's way: tell them to smash it
-      if (p.human && p.plan && p.plan !== p.smashCalled && p.plan.stroke === 'oh' && p.plan.by > 2 && this.state === 'play') {
+      if (p.human && p.plan && p.plan !== p.smashCalled && this.isSmashPlan(p.plan) && this.state === 'play' && this.ball.live) {
         p.smashCalled = p.plan;
         this.onEvent({ type: 'smash-chance', p });
       }
@@ -914,6 +943,7 @@ export class Match {
       if (p.human) {
         // at full stretch or out of breath, all you can do is float it back
         sw.input.stretch = Math.max(this.stretchOf(p), p.tired * 0.8);
+        sw.input.oppX = oppX;
         const res = humanShot(p.team, p.fhSign, sw.stroke, contact, volley, sw.input, this.rng, this.doubles);
         seg = buildShot(contact, res.spec, tc);
         shotSpin = res.spec.spin;
@@ -938,6 +968,10 @@ export class Match {
             pressure,
             rally: this.rally,
             tired: p.tired,
+            incomingPerfect: this.lastPerfect,
+            incomingSmash: this.ball.smash,
+            incomingPop: this.ball.pop,
+            fromHuman: !!this.ball.lastHitter?.human,
           },
           this.rng,
         );
@@ -953,6 +987,11 @@ export class Match {
     }
 
     if (kind === 'wobbly') seg.wob = 0.14;
+    // a floater: whoever meets it can smash it
+    const apexY = seg.vy > 0 ? segApexY(seg) : seg.py;
+    this.ball.pop = !sw.serve && kind !== 'smash' && kind !== 'error' && (kind === 'lob' || kind === 'wobbly' || (apexY > 3.6 && Math.hypot(seg.vx, seg.vz) < 15));
+    this.ball.smash = kind === 'smash' ? (perfect ? 2 : 1) : 0;
+    this.lastPerfect = perfect && p.human;
     this.ball.live = true;
     this.ball.lastHitTeam = p.team;
     this.ball.lastHitter = p;
@@ -967,7 +1006,7 @@ export class Match {
     const big = power > 0.82 || kind === 'smash' || perfect;
     // a freeze-frame is punctuation: only for smashes and a player's perfect shot
     // (on every strong hit it read as stutter)
-    this.hitstop = kind === 'smash' || rocket ? 0.07 : perfect && p.human ? 0.045 : 0;
+    this.hitstop = kind === 'smash' ? (p.human ? (perfect ? 0.2 : 0.13) : 0.08) : rocket ? 0.07 : perfect && p.human ? 0.045 : 0;
     this.excitement = Math.min(1, this.excitement + 0.04 + this.rally * 0.01 + (big ? 0.08 : 0));
     this.onEvent({
       type: 'hit',
