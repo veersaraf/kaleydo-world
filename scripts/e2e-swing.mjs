@@ -65,6 +65,12 @@ await tv.mouse.click(700, 450);
 await tv.waitForTimeout(700);
 await tv.evaluate(() => [...document.querySelectorAll('.item')].find((e) => e.textContent.includes('Swing Lab'))?.click());
 await tv.waitForTimeout(2500);
+// (the menu now opens on the sport picker: if the lab isn't up, open it directly)
+await tv.evaluate(() => {
+  const m = window.kaleido.match;
+  if (!m || !m.cfg.practice || window.kaleido.attract) window.flow.beginSwingLab();
+});
+await tv.waitForTimeout(2500);
 const results = [];
 await tv.evaluate(() => {
   window.__log = [];

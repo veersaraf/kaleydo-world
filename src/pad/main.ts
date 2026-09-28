@@ -850,11 +850,13 @@ function onMessage(m: ServerToPad) {
       if (m.fx !== 'smash-chance' && m.fx !== 'smash') smashState(false);
       switch (m.fx) {
         case 'smash-chance':
+          (smashBadge.lastChild as HTMLElement).textContent = 'swing hard!';
           smashState(true);
           audio.smashRiser();
           doFlash(false, 'gold');
           break;
         case 'smash':
+          (smashBadge.lastChild as HTMLElement).textContent = m.detail || '';
           smashState('hit');
           audio.smash(/PERFECT/.test(m.label ?? ''));
           doFlash(true, 'gold');

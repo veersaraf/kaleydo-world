@@ -2178,11 +2178,13 @@ section {
   color: #8a1208;
 }
 
-.panel.play.smash .gtext {
+.panel.play.smash .gtext,
+.panel.play.smashed .gtext {
   display: none;
 }
 
-.panel.play.smash .smash-badge {
+.panel.play.smash .smash-badge,
+.panel.play.smashed .smash-badge {
   display: flex;
   animation: pop 0.4s var(--spring);
 }
