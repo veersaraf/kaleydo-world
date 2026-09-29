@@ -5,9 +5,9 @@
 // up a room code, shows it with a QR code, and its phones join that room. Which one
 // the page was served from says which (/api/info).
 
-import type { GuestInfo, GuestToHost, HostToGuest, ServerToTV, TVMsg } from '../../shared/protocol';
+import type { GuestInfo, GuestToHost, HostToGuest, PadInfo, ServerToTV, TVMsg } from '../../shared/protocol';
 
-const ROOM_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+export const ROOM_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 export class TVLink {
   ws: WebSocket | null = null;
@@ -28,6 +28,14 @@ export class TVLink {
   role: 'local' | 'host' | 'guest' = 'local';
   /** host: the guest TVs in the room */
   guests: GuestInfo[] = [];
+  /** the host's room roster as this guest last heard it (null until it has, and after the host goes) */
+  roster: (HostToGuest & { type: 'room' }) | null = null;
+  /** guest: whether the host is there right now (false from 'host-gone' until its next message) */
+  hostHere = false;
+  /** host: how a phone's seat looks on this TV (its player colour and slot), for the roster the guests are shown; the flow sets it */
+  seatOf: (pid: string) => { color: string; slot: number; name: string } | null | undefined = () => null;
+  /** host: the name guests are greeted with (defaults to the first phone that joined while no guest was here) */
+  hostName = '';
   /** guest: the host's messages, and its binary snapshot frames */
   onHostMessage: (m: HostToGuest | ArrayBuffer) => void = () => {};
   onMessage: (m: ServerToTV) => void = () => {};
@@ -36,6 +44,10 @@ export class TVLink {
   private stopped = false;
   private key = '';
   private mode: Promise<void> | null = null;
+  /** host: the phones in this room */
+  private pads: PadInfo[] = [];
+  private rosterSig = '';
+  private reopenTimer = 0;
   private pingTimers: number[] = [];
   private clock: { rtt: number; off: number }[] = [];
 
@@ -53,12 +65,18 @@ export class TVLink {
       this.cloud = false;
     }
     if (!this.cloud) return;
-    // a reload keeps its room (the phones stay joined)
+    this.role = 'host';
+    this.restoreHome();
+  }
+
+  /** this TV's own room (a reload keeps it: the phones stay joined) */
+  private restoreHome() {
     try {
       this.room = sessionStorage.getItem('kaleido.room');
       this.key = sessionStorage.getItem('kaleido.roomKey') || '';
     } catch {}
     if (!this.room || !this.key) this.newRoom();
+    this.joinUrl = this.padUrl = `${location.origin}/c?room=${this.room}`;
   }
 
   private newRoom() {
@@ -72,17 +90,28 @@ export class TVLink {
   }
 
   private open() {
+    window.clearTimeout(this.reopenTimer);
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const q = this.cloud ? `&room=${this.room}&key=${this.key}` : '';
-    const ws = new WebSocket(`${proto}//${location.host}/ws?role=tv${q}`);
+    let q = 'role=tv';
+    if (this.role === 'guest') q = `role=guest&room=${this.room}&gid=${this.guestId()}&name=${encodeURIComponent(this.guestName)}`;
+    else if (this.cloud) q = `role=tv&room=${this.room}&key=${this.key}`;
+    const ws = new WebSocket(`${proto}//${location.host}/ws?${q}`);
+    ws.binaryType = 'arraybuffer';
     this.ws = ws;
     ws.onopen = () => {
+      if (this.ws !== ws) return;
       this.online = true;
       this.retry = 0;
       this.startPings(ws);
       this.onStatus(true);
     };
     ws.onmessage = (ev) => {
+      if (this.ws !== ws) return;
+      // the host's match snapshot (a guest only)
+      if (typeof ev.data !== 'string') {
+        if (this.role === 'guest') this.onHostMessage(ev.data as ArrayBuffer);
+        return;
+      }
       let m: ServerToTV;
       try {
         m = JSON.parse(ev.data);
@@ -94,24 +123,166 @@ export class TVLink {
         this.clockSample(m.t, m.st);
         return;
       }
+      if (this.role === 'guest') {
+        this.guestMessage(m);
+        return;
+      }
       if (m.type === 'hello' || m.type === 'net') {
         this.joinUrl = m.joinUrl;
         this.padUrl = m.padUrl ?? null;
         this.caUrl = m.caUrl;
       }
+      if (m.type === 'hello') this.pads = m.pads.map((p) => ({ ...p }));
       if (m.type === 'replaced') this.stopped = true;
       // someone else's room: make up another
       if (m.type === 'room-taken') this.newRoom();
       this.onMessage(m);
+      // (after the game has seated the phone: the roster carries its seat)
+      if (this.role === 'host') this.hostMessage(m);
     };
     ws.onclose = () => {
+      if (this.ws !== ws) return;
       this.stopPings();
       this.online = false;
       this.onStatus(false);
       if (this.stopped) return;
       this.retry = Math.min(this.retry + 1, 6);
-      setTimeout(() => this.open(), 400 * this.retry);
+      this.reopenTimer = window.setTimeout(() => this.open(), 400 * this.retry);
     };
+  }
+
+  // ---------------------------------------------------------------- online rooms
+
+  /** this TV's id as a guest (kept for the session, so a reload rejoins as the same guest) */
+  guestId() {
+    let g = '';
+    try {
+      g = sessionStorage.getItem('kaleido.gid') || '';
+    } catch {}
+    if (!g) {
+      g = Array.from(crypto.getRandomValues(new Uint8Array(10)), (v) => (v % 36).toString(36)).join('');
+      try {
+        sessionStorage.setItem('kaleido.gid', g);
+      } catch {}
+    }
+    return g;
+  }
+
+  /** what this TV is called to the room it joins */
+  get guestName() {
+    let n = '';
+    try {
+      n = localStorage.getItem('kaleido.tvName') || '';
+    } catch {}
+    return n || `TV ${this.guestId().slice(0, 3).toUpperCase()}`;
+  }
+
+  /** host: the messages that change the roster */
+  private hostMessage(m: ServerToTV) {
+    if (m.type === 'hello') {
+      this.pushRoster();
+    } else if (m.type === 'pad-join') {
+      this.pads = this.pads.filter((p) => p.pid !== m.pid);
+      this.pads.push({ pid: m.pid, name: m.name, transport: m.transport });
+      if (!this.hostName && !this.guests.length) this.hostName = m.name;
+      this.pushRoster();
+    } else if (m.type === 'pad-leave') {
+      this.pads = this.pads.filter((p) => p.pid !== m.pid);
+      this.pushRoster();
+    } else if (m.type === 'guest-join') {
+      if (!this.guests.some((g) => g.gid === m.gid)) this.guests.push({ gid: m.gid, name: m.name });
+      else this.guests = this.guests.map((g) => (g.gid === m.gid ? { gid: m.gid, name: m.name } : g));
+      // (the newcomer needs it even if nothing else changed)
+      this.pushRoster(true);
+    } else if (m.type === 'guest-leave') {
+      this.guests = this.guests.filter((g) => g.gid !== m.gid);
+      this.pushRoster();
+    } else if (m.type === 'guest' && m.msg?.type === 'hello') {
+      const name = String(m.msg.name || '').slice(0, 12);
+      if (name) {
+        this.guests = this.guests.map((g) => (g.gid === m.gid ? { ...g, name } : g));
+        this.pushRoster();
+      }
+    } else if (m.type === 'pad' && (m.msg.type === 'hello' || m.msg.type === 'prefs')) {
+      // (a phone's name can change)
+      this.pushRoster();
+    }
+  }
+
+  /** host: send the guests the room's roster (phones with their seats, guests) if it changed (or `force`) */
+  pushRoster(force = false) {
+    if (this.role !== 'host') return;
+    const pads = this.pads.map((p) => {
+      const s = this.seatOf(p.pid);
+      return s ? { ...p, name: s.name, color: s.color, slot: s.slot } : p;
+    });
+    const msg: HostToGuest = { type: 'room', code: this.room ?? '', pads, guests: this.guests, host: this.hostName || undefined };
+    const sig = JSON.stringify(msg);
+    if (!force && sig === this.rosterSig) return;
+    this.rosterSig = sig;
+    if (this.guests.length) this.toGuests(msg);
+  }
+
+  /** guest: what the relay says */
+  private guestMessage(m: ServerToTV) {
+    if (m.type === 'host') {
+      this.hostHere = true;
+      if (m.msg.type === 'room') this.roster = m.msg;
+      this.onHostMessage(m.msg);
+      return;
+    }
+    if (m.type === 'host-gone') {
+      this.hostHere = false;
+      this.roster = null;
+    }
+    if (m.type === 'no-room') {
+      // nobody's there: back to our own room
+      this.leaveRoom();
+    }
+    this.onMessage(m);
+  }
+
+  /** guest: leave whatever this TV is doing and join room `code` as a guest (its phones join that room too) */
+  joinRoom(code: string) {
+    if (!this.cloud) return;
+    code = code.toUpperCase();
+    if (this.role === 'host') {
+      // the phones that joined this TV's own room are left behind (they wait for it to come back)
+      for (const p of this.pads) this.onMessage({ type: 'pad-leave', pid: p.pid });
+      this.pads = [];
+      this.guests = [];
+      this.rosterSig = '';
+    }
+    this.role = 'guest';
+    this.room = code;
+    this.roster = null;
+    this.hostHere = false;
+    this.joinUrl = this.padUrl = `${location.origin}/c?room=${code}`;
+    this.reopen();
+  }
+
+  /** guest: back to hosting this TV's own room */
+  leaveRoom() {
+    if (this.role !== 'guest') return;
+    this.role = 'host';
+    this.roster = null;
+    this.hostHere = false;
+    this.restoreHome();
+    this.reopen();
+  }
+
+  private reopen() {
+    window.clearTimeout(this.reopenTimer);
+    this.stopPings();
+    const old = this.ws;
+    this.ws = null;
+    this.online = false;
+    this.retry = 0;
+    this.clock = [];
+    try {
+      old?.close();
+    } catch {}
+    this.open();
   }
 
   /** pings the server to learn its clock: a quick burst at connect (the first messages are timed against
@@ -146,25 +317,22 @@ export class TVLink {
   }
 
   toPad(pid: string, msg: TVMsg) {
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: 'to-pad', pid, msg }));
+    if (this.role !== 'guest' && this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: 'to-pad', pid, msg }));
   }
 
   toAll(msg: TVMsg) {
     this.toPad('*', msg);
   }
 
-  /** guest: leave whatever this TV is doing and join room `code` as a guest (its phones join that room too) */
-  joinRoom(code: string) {
-    void code; // (the room-join agent implements this)
-  }
-
   /** host: to every guest TV — a JSON message, or a binary snapshot frame sent as it is */
   toGuests(data: HostToGuest | ArrayBuffer) {
-    void data; // (the room-join agent implements this)
+    if (this.role !== 'host' || this.ws?.readyState !== WebSocket.OPEN) return;
+    if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) this.ws.send(data as ArrayBuffer);
+    else this.ws.send(JSON.stringify({ type: 'to-guests', msg: data }));
   }
 
   /** guest: to the host TV */
   toHost(msg: GuestToHost) {
-    void msg; // (the room-join agent implements this)
+    if (this.role === 'guest' && this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
   }
 }

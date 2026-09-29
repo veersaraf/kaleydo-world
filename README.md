@@ -191,6 +191,19 @@ Then point a domain at it in the Cloudflare dashboard (Workers → kaleido →
 Settings → Domains & Routes). The free plan is plenty for a hobby game.
 `node scripts/cloud-e2e.mjs` checks a running cloud copy end to end.
 
+### Play online with friends
+
+In the cloud version, **Play online** (on the home screen) lets a friend's TV
+join yours. **Host a room** is what every cloud TV already is: its room code
+(five letters) and QR code are on screen. A friend opens the game on their own
+computer, chooses **Play online → Join a room**, and types your code (keyboard,
+or the pad's ◀ ▶ ▲ ▼ and A). Their TV becomes a *guest*: its lobby shows the room,
+who's in it and a QR code — their phones scan that and join **your** game
+directly, as ordinary remotes; your TV stays the only place the game runs and
+streams the match to theirs. B / Esc leaves. `node scripts/room-e2e.mjs`
+(against `npx wrangler dev --port 8792`) checks all of it. The Mac's own server
+has no rooms.
+
 ## Development
 
 ```bash

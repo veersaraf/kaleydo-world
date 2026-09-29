@@ -124,6 +124,9 @@ export interface PadInfo {
   pid: string;
   name: string;
   transport: string;
+  /** (the host's roster for its guests only) the seat this phone holds on the host: its player colour and slot */
+  color?: string;
+  slot?: number;
 }
 
 /** another TV watching (and playing, with its own phones) in this room, online */
@@ -137,7 +140,10 @@ export type GuestToHost = { type: 'hello'; name: string };
 
 /** the host TV → its guest TVs (relayed as ServerToTV 'host'). The match stream's own messages
  *  (src/shared/net.ts) ride in 'net'; its per-frame snapshots go as binary WebSocket frames, forwarded as they are */
-export type HostToGuest = { type: 'room'; code: string; pads: PadInfo[]; guests: GuestInfo[] } | { type: 'net'; msg: unknown };
+export type HostToGuest =
+  /** the room's roster (sent by the host's link whenever a phone or guest comes or goes); host = the name to greet it by */
+  | { type: 'room'; code: string; pads: PadInfo[]; guests: GuestInfo[]; host?: string }
+  | { type: 'net'; msg: unknown };
 
 export type ServerToTV =
   /** joinUrl: what the QR code opens (the http join page, which forwards to padUrl, the remote); caUrl: the iOS profile */
@@ -161,6 +167,13 @@ export type ServerToTV =
   /** to a guest: the host left the room / there's no such room */
   | { type: 'host-gone' }
   | { type: 'no-room' };
+
+/** what a TV sends its room (the cloud's relay): to one phone or all, or to its guest TVs (JSON here; a snapshot goes as a binary frame,
+ *  forwarded to every guest as it is); a guest TV sends its host any JSON (≤ 4 KB) and pings the relay for its clock */
+export type TVToServer =
+  | { type: 'to-pad'; pid: string; msg: TVMsg }
+  | { type: 'to-guests'; msg: HostToGuest }
+  | { type: 'ping'; t: number };
 
 export type ServerToPad =
   | TVMsg

@@ -4,6 +4,7 @@ import { h, clear, replay, setVars } from './ui/dom';
 import { Nav } from './ui/menu';
 import { Hud, type TeamInfo } from './ui/hud';
 import { JoinPanel } from './ui/join';
+import { CodeEntry, GuestLobby } from './ui/room';
 import type { App } from './app';
 import type { Btn } from './core/input';
 import type { MatchConfig, MatchEvent, PlayerSpec } from './tennis/match';
@@ -111,6 +112,8 @@ export class Flow {
   audio: GameAudio | null = null;
   hud: Hud | null = null;
   join: JoinPanel;
+  /** online rooms: the lobby this TV sits in while it is a guest in another TV's room (null otherwise). The match stream calls hide() when the host's match takes the screen and show() when it ends. */
+  guestLobby: GuestLobby | null = null;
   private mode: 'quick' | 'kaleido' = 'quick';
   private tourIdx = -1;
   private lab = false;
@@ -195,9 +198,15 @@ export class Flow {
       prevSwing(e);
       this.audio?.sfx.swish(e.power, 0);
     };
+    // (online rooms: the roster the host sends its guests carries each phone's seat)
+    app.link.seatOf = (pid) => {
+      const s = app.input.seatOfPid(pid);
+      return s ? { color: s.color, slot: s.slot, name: s.name } : null;
+    };
     app.input.onSeatsChanged = () => {
       this.join.refresh();
       this.syncPads(true);
+      app.link.pushRoster();
     };
     const prevStatus = app.link.onStatus;
     app.link.onStatus = (on) => {
@@ -208,7 +217,8 @@ export class Flow {
     app.link.onMessage = (m) => {
       const before = app.input.padCount;
       prevMsg(m);
-      if (m.type === 'hello' || m.type === 'net') this.join.refresh();
+      if (m.type === 'hello' || m.type === 'net' || m.type === 'guest-join' || m.type === 'guest-leave') this.join.refresh();
+      this.guestLobby?.message(m);
       if (m.type === 'pad-join') {
         const seat = app.input.seatOfPid(m.pid);
         if (seat) this.toast(`P${seat.slot + 1} ${seat.name} joined`, seat.color);
@@ -522,6 +532,8 @@ export class Flow {
     const pill = (ico: string, label: string, sub: string) => h('div', { class: 'hpill' }, h('i', null, ico), h('span', null, label), h('small', null, sub));
     const tour = pill('🏆', 'World Tour', tb >= TOUR.length ? 'The Prism is whole' : `${Math.min(tb, 8)} of 8 shards`);
     const set = pill('⚙', 'Settings', 'Sound, controls');
+    // the cloud: play with friends on their own TVs
+    const online = this.app.link.cloud ? pill('🌐', 'Play online', this.app.link.guests.length ? `${this.app.link.guests.length} watching` : `Room ${this.app.link.room}`) : null;
     let lastCard = Math.max(0, sports.findIndex((sp) => sp.id === this.app.attractSport));
     const n = sports.length;
     const nav = new Nav(
@@ -529,6 +541,7 @@ export class Flow {
         ...sports.map((sp, i) => ({ el: cards[i], onSelect: () => open(sp.id), onDown: () => nav.focus(i < n / 2 ? n : n + 1) })),
         { el: tour, onSelect: () => this.go(this.tourScreen()), onUp: () => nav.focus(lastCard) },
         { el: set, onSelect: () => this.go(this.settingsScreen()), onUp: () => nav.focus(lastCard) },
+        ...(online ? [{ el: online, onSelect: () => this.go(this.onlineScreen()), onUp: () => nav.focus(lastCard) }] : []),
       ],
       true,
     );
@@ -550,11 +563,104 @@ export class Flow {
       'div',
       { class: 'screen home' },
       h('div', { class: 'mini-logo' }, h('span', null, 'KALEIDO')),
-      h('div', { class: 'hbottom' }, h('div', { class: 'hpills' }, tour, set), h('div', { class: 'scards' }, ...cards)),
+      h('div', { class: 'hbottom' }, h('div', { class: 'hpills' }, tour, set, online), h('div', { class: 'scards' }, ...cards)),
       this.join.el,
     );
     this.join.refresh();
     return this.navScreen('menu', el, nav, () => this.go(this.titleScreen()), { title: 'Pick a sport', hint: '◀ ▶ choose · A play' });
+  }
+
+  // ---------------------------------------------------------------- online rooms (the cloud)
+
+  /** "Play online": host a room (this TV's own — the QR code, the code, the friends watching) or join a friend's */
+  private onlineScreen(): Screen {
+    const link = this.app.link;
+    const code = h('div', { class: 'rcode big' }, ...(link.room ?? '').split('').map((c) => h('b', null, c)));
+    const friends = h('div', { class: 'ofriends' });
+    const host = h(
+      'div',
+      { class: 'ocard' },
+      h('h3', null, 'Host a room'),
+      h('p', null, 'Friends open KALEIDO on their own TV, choose Play online → Join a room, and type'),
+      code,
+      friends,
+      h('div', { class: 'ogo' }, 'A — pick a sport'),
+    );
+    const join = h('div', { class: 'ocard' }, h('h3', null, 'Join a room'), h('p', null, 'Got a friend’s code? Type it to play in their game, from your own screen and your own phones.'), h('div', { class: 'ogo' }, 'A — enter a code'));
+    const nav = new Nav(
+      [
+        {
+          el: host,
+          onSelect: () => {
+            this.toast(`Room ${link.room} is open — pick a sport`, '#35d49a');
+            this.go(this.mainMenu());
+          },
+        },
+        { el: join, onSelect: () => this.go(this.joinCodeScreen()) },
+      ],
+      true,
+    );
+    const el = h('div', { class: 'screen center online' }, h('div', { class: 'sheet panel' }, h('h2', null, 'Play online'), h('div', { class: 'ochoices' }, host, join)), this.join.el);
+    this.join.refresh();
+    const scr = this.navScreen('online', el, nav, () => this.go(this.mainMenu()), { title: 'Play online', hint: 'A choose · B back' });
+    scr.update = () => {
+      const n = link.guests.length;
+      friends.textContent = n ? `${n} ${n === 1 ? 'friend’s TV' : 'friends’ TVs'} watching` : 'Nobody has joined yet';
+      this.join.refresh();
+    };
+    return scr;
+  }
+
+  /** typing a friend's 5-letter room code */
+  private joinCodeScreen(): Screen {
+    const entry = new CodeEntry();
+    entry.onSound = (k) => this.sound(k);
+    entry.onBack = () => this.go(this.onlineScreen());
+    entry.onSubmit = (code) => this.joinRoom(code);
+    entry.attach();
+    return { name: 'joincode', el: entry.el, input: (_s, b) => entry.input(b), leave: () => entry.detach(), pad: { title: 'Join a room', hint: 'Type the code on the TV' } };
+  }
+
+  /** become a guest in the room `code`: this TV's own phones scan its screen and play at the host */
+  private joinRoom(code: string) {
+    const link = this.app.link;
+    link.joinRoom(code);
+    const lobby = (this.guestLobby = new GuestLobby(link, code));
+    const scr: Screen = {
+      name: 'guest-lobby',
+      el: lobby.el,
+      pad: { title: 'Playing online', hint: 'Watch the big screen' },
+      input: (_s, b) => lobby.input(b),
+      update: () => lobby.update(),
+    };
+    lobby.el.append(this.join.el);
+    lobby.onShow = () => {
+      if (this.guestLobby !== lobby) return;
+      lobby.el.append(this.join.el);
+      this.join.refresh();
+      this.go(scr);
+    };
+    lobby.onHide = () => {
+      if (this.screen === scr) this.go(null);
+    };
+    lobby.onLeave = () => {
+      this.sound('back');
+      this.leaveRoom();
+      this.go(this.onlineScreen());
+    };
+    lobby.onRetry = () => {
+      this.leaveRoom();
+      this.go(this.joinCodeScreen());
+    };
+    this.go(scr);
+    this.join.refresh();
+  }
+
+  /** guests: back to hosting this TV's own room */
+  private leaveRoom() {
+    this.guestLobby = null;
+    this.app.link.leaveRoom();
+    this.join.refresh();
   }
 
   // team presets from the humans present
