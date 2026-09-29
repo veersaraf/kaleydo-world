@@ -120,7 +120,10 @@ export type TVMsg =
    *  archery while your arrow flies — the last throw and the verdict stay in view) */
   | { type: 'mode'; mode: PadMode; title?: string; hint?: string; lock?: boolean }
   | { type: 'fx'; fx: PadFx; power?: number; label?: string; detail?: string }
-  | { type: 'score'; line: string };
+  | { type: 'score'; line: string }
+  /** online: reconnect to room `room` as a remote opened via guest TV `via` ('' = that room's own TV), keeping your seat name and id.
+   *  A TV that joins another's room (as a guest) sends it to its phones so they follow it; `host` = the name to greet with */
+  | { type: 'move'; room: string; via: string; host?: string };
 
 export interface PadInfo {
   pid: string;
@@ -140,7 +143,8 @@ export interface GuestInfo {
 }
 
 /** a guest TV → the host TV (relayed as ServerToTV 'guest') */
-export type GuestToHost = { type: 'hello'; name: string };
+/** (room = this guest TV's own room, so the host can send this TV's phones back there when the guest leaves) */
+export type GuestToHost = { type: 'hello'; name: string; room?: string };
 
 /** the host TV → its guest TVs (relayed as ServerToTV 'host'). The match stream's own messages
  *  (src/shared/net.ts) ride in 'net'; its per-frame snapshots go as binary WebSocket frames, forwarded as they are */

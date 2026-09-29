@@ -26,6 +26,8 @@ export class TVLink {
   // ---- online rooms (the cloud): this TV hosts its room, or is a guest in another TV's
   /** 'host': this TV's own room (the cloud's default; locally there are no rooms, 'local'); 'guest': joined another TV's room by its code */
   role: 'local' | 'host' | 'guest' = 'local';
+  /** this TV's own room code (kept while it is a guest in another's, so the host can send its phones back) */
+  homeRoom = '';
   /** host: the guest TVs in the room */
   guests: GuestInfo[] = [];
   /** the host's room roster as this guest last heard it (null until it has, and after the host goes) */
@@ -53,6 +55,13 @@ export class TVLink {
   private pingTimers: number[] = [];
   private clock: { rtt: number; off: number }[] = [];
   private mm: WebSocket | null = null;
+  /** phones sent a 'move' (pid -> when): their leaving the old room is expected, not a lost remote */
+  private movedPids = new Map<string, number>();
+  /** host: a guest's own room, from its hello (gid -> code) */
+  private guestRooms = new Map<string, string>();
+  private moveBack = new Map<string, number>();
+  /** a socket already replaced, waiting the few ms its last message needs to leave before it is closed */
+  private closing: WebSocket | null = null;
 
   connect() {
     this.mode ??= this.detect();
@@ -79,6 +88,7 @@ export class TVLink {
       this.key = sessionStorage.getItem('kaleido.roomKey') || '';
     } catch {}
     if (!this.room || !this.key) this.newRoom();
+    this.homeRoom = this.room ?? '';
     this.joinUrl = this.padUrl = `${location.origin}/c?room=${this.room}`;
   }
 
@@ -106,6 +116,8 @@ export class TVLink {
       this.online = true;
       this.retry = 0;
       this.startPings(ws);
+      // (a guest tells the host where its own phones go back to when it leaves)
+      if (this.role === 'guest') this.toHost({ type: 'hello', name: this.guestName, ...(this.homeRoom ? { room: this.homeRoom } : {}) });
       this.onStatus(true);
     };
     ws.onmessage = (ev) => {
@@ -195,12 +207,18 @@ export class TVLink {
     } else if (m.type === 'guest-join') {
       if (!this.guests.some((g) => g.gid === m.gid)) this.guests.push({ gid: m.gid, name: m.name });
       else this.guests = this.guests.map((g) => (g.gid === m.gid ? { gid: m.gid, name: m.name } : g));
+      // (it came back: its phones stay where they are)
+      window.clearTimeout(this.moveBack.get(m.gid));
+      this.moveBack.delete(m.gid);
       // (the newcomer needs it even if nothing else changed)
       this.pushRoster(true);
     } else if (m.type === 'guest-leave') {
       this.guests = this.guests.filter((g) => g.gid !== m.gid);
       this.pushRoster();
+      this.sendPadsHome(m.gid);
     } else if (m.type === 'guest' && m.msg?.type === 'hello') {
+      const room = String(m.msg.room || '').toUpperCase();
+      if (new RegExp(`^[${ROOM_CHARS}]{5}$`).test(room) && room !== this.room) this.guestRooms.set(m.gid, room);
       const name = String(m.msg.name || '').slice(0, 12);
       if (name) {
         this.guests = this.guests.map((g) => (g.gid === m.gid ? { ...g, name } : g));
@@ -210,6 +228,30 @@ export class TVLink {
       // (a phone's name can change)
       this.pushRoster();
     }
+  }
+
+  /** host: a guest TV left the room; a second later (unless it is back), the phones that came in through its QR code follow it to its own room */
+  private sendPadsHome(gid: string) {
+    const room = this.guestRooms.get(gid);
+    if (!room) return;
+    window.clearTimeout(this.moveBack.get(gid));
+    this.moveBack.set(
+      gid,
+      window.setTimeout(() => {
+        this.moveBack.delete(gid);
+        if (this.role !== 'host' || this.guests.some((g) => g.gid === gid)) return;
+        for (const p of this.pads.filter((q) => q.via === gid)) {
+          this.movedPids.set(p.pid, Date.now());
+          this.toPad(p.pid, { type: 'move', room, via: '' });
+        }
+      }, 1000),
+    );
+  }
+
+  /** whether the phone `pid` was just sent to another room (its leaving is expected) */
+  wasMoved(pid: string) {
+    const t = this.movedPids.get(pid);
+    return t !== undefined && Date.now() - t < 4000;
   }
 
   /** host: the guest TV a phone was opened from ('' = one of this TV's own phones, or not known) */
@@ -258,7 +300,7 @@ export class TVLink {
         if (m.role === 'host') this.onMatchmaking({ type: 'matched', role: 'host', peer });
         else if (m.role === 'guest' && typeof m.code === 'string' && new RegExp(`^[${ROOM_CHARS}]{5}$`).test(m.code)) {
           // (only this side ever goes anywhere: it joins the host's room, and its phones scan the new QR code)
-          this.joinRoom(m.code);
+          this.joinRoom(m.code, peer.name);
           this.onMatchmaking({ type: 'matched', role: 'guest', code: m.code, peer });
         }
       }
@@ -325,11 +367,24 @@ export class TVLink {
   }
 
   /** guest: leave whatever this TV is doing and join room `code` as a guest (its phones join that room too) */
-  joinRoom(code: string) {
+  joinRoom(code: string, host?: string) {
     if (!this.cloud) return;
     code = code.toUpperCase();
+    let delay = 0;
     if (this.role === 'host') {
-      // the phones that joined this TV's own room are left behind (they wait for it to come back)
+      // this TV's own phones follow it: each is told to reconnect to `code` as a phone opened from this TV (the message needs a moment
+      // to leave before the socket does; this.ws is dropped by reopen at once, so nothing else can be sent or heard meanwhile)
+      const ws = this.ws;
+      const own = this.pads.filter((p) => !p.via);
+      if (ws?.readyState === WebSocket.OPEN && own.length) {
+        const msg: TVMsg = { type: 'move', room: code, via: this.guestId(), ...(host ? { host } : {}) };
+        for (const p of own) {
+          this.movedPids.set(p.pid, Date.now());
+          ws.send(JSON.stringify({ type: 'to-pad', pid: p.pid, msg }));
+        }
+        delay = 50;
+      }
+      // (whoever is left behind waits for this TV to come back)
       for (const p of this.pads) this.onMessage({ type: 'pad-leave', pid: p.pid });
       this.pads = [];
       this.guests = [];
@@ -341,7 +396,7 @@ export class TVLink {
     this.hostHere = false;
     // (the phones opened from this screen say which TV they belong to: the relay echoes their swings back to it)
     this.joinUrl = this.padUrl = `${location.origin}/c?room=${code}&via=${this.guestId()}`;
-    this.reopen();
+    this.reopen(delay);
   }
 
   /** guest: back to hosting this TV's own room */
@@ -354,18 +409,30 @@ export class TVLink {
     this.reopen();
   }
 
-  private reopen() {
+  private reopen(delay = 0) {
     window.clearTimeout(this.reopenTimer);
     this.stopPings();
+    // (a switch still waiting on its last message: that socket goes now)
+    try {
+      this.closing?.close();
+    } catch {}
+    this.closing = null;
     const old = this.ws;
     this.ws = null;
     this.online = false;
     this.retry = 0;
     this.clock = [];
-    try {
-      old?.close();
-    } catch {}
-    this.open();
+    const go = () => {
+      this.closing = null;
+      try {
+        old?.close();
+      } catch {}
+      this.open();
+    };
+    if (delay > 0 && old) {
+      this.closing = old;
+      this.reopenTimer = window.setTimeout(go, delay);
+    } else go();
   }
 
   /** pings the server to learn its clock: a quick burst at connect (the first messages are timed against

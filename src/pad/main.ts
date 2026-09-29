@@ -915,6 +915,10 @@ function onMessage(m: ServerToPad) {
       }
       break;
     }
+    case 'move':
+      // (the link is already on its way to the new room; the screen carries on as it was)
+      if (m.host) showToast(`Joining ${m.host}’s game`, 1800);
+      break;
     case 'bye':
       if (m.reason === 'replaced') setMode('wait', 'Opened elsewhere', 'This remote is active in another tab');
       break;
@@ -1021,6 +1025,10 @@ function duelFx(m: Extract<ServerToPad, { type: 'fx' }>) {
 
 link.onMessage = onMessage;
 link.onStatus = setStatus;
+// (moved to another room by the TV: the new TV needs our name, hand and look again)
+link.onRejoin = () => {
+  if (joined) link.send({ type: 'hello', name: prefs.name || 'Player', handed: prefs.handed, ver: 1, motion: motionOK, ...(prefs.look ? { look: prefs.look } : {}) });
+};
 setInterval(() => {
   if (link.status === 'online') netMs.textContent = `${Math.round(link.lat * 2)} ms`;
 }, 1000);

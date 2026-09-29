@@ -210,8 +210,9 @@ Durable Object (`cloud/lobby.ts`, the `LOBBY` binding) and shows "Looking for an
 opponent… 0:07". On each arrival and every 5 s the lobby pairs the longest-waiting TV with
 the earliest-arrived other one on the same continent (as Cloudflare's edge reports it;
 after 20 s, with anyone), and the one that has waited longer **hosts**: its room already
-exists, so the other TV simply joins it as a guest. The guest's phone scans the QR code on
-its lobby (the phone it had is in its own room), and once it is seated (up to 15 s) the
+exists, so the other TV simply joins it as a guest. The guest's phone needs no rescan: a TV that
+joins another's room (this, or a code typed in) sends its phones a `move` message and they reconnect
+there by themselves (`&via=` its id; the host sends them back home when the guest leaves), and once it is seated (up to 15 s) the
 host starts a singles match by itself: its first phone against that one, in a random world
 (Kaleido and the game count as set). Afterwards the host offers **Play again** (A: another
 match, same two people) or **Leave** (B: both TVs go back to Play online). If the opponent's

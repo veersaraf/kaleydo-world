@@ -316,6 +316,70 @@ await guest.waitForSelector('.screen.lobby', { timeout: 5000 }).catch(() => null
 await guest.keyboard.press('Escape');
 check('Escape in a lobby leaves the room', (await screenIs(guest, 'online')) && (await guest.evaluate(() => window.kaleido.link.role)) === 'host');
 
+// ---- a phone that is already on TV B follows B into A's room (B joined by code) and back when B leaves
+{
+  const A = await tvPage('move-A');
+  const Bt = await tvPage('move-B');
+  const roomA = await A.evaluate(() => window.kaleido.link.room);
+  const roomB = await Bt.evaluate(() => window.kaleido.link.room);
+  const gidB = await Bt.evaluate(() => window.kaleido.link.guestId());
+  const ctx = await browser.newContext(mobile);
+  await ctx.addInitScript(phone);
+  const mp = await ctx.newPage();
+  mp.on('pageerror', (e) => logs.push('[move-pad] ' + e.message));
+  await mp.goto((await Bt.evaluate(() => window.kaleido.link.joinUrl)).replace(/^https?:\/\/[^/]+/, BASE) + '&auto');
+  check('a phone scans TV B’s own QR code and is seated on B', await Bt.waitForFunction(() => window.kaleido.input.padCount > 0, null, { timeout: 20000 }).then(() => true).catch(() => false));
+  await sleep(1000);
+  await Bt.evaluate(() => {
+    window.__toasts = [];
+    const el = document.querySelector('.toast');
+    new MutationObserver(() => window.__toasts.push(el.textContent)).observe(el, { childList: true, characterData: true, subtree: true });
+  });
+  await mp.evaluate(() => {
+    window.__seen = [];
+    window.__hellos = 0;
+    const bad = () => {
+      const net = document.querySelector('.net')?.className || '';
+      if (/connecting|offline/.test(net) || document.querySelector('.remote')?.classList.contains('lost')) window.__seen.push(net);
+    };
+    new MutationObserver(bad).observe(document.body, { attributes: true, attributeFilter: ['class'], subtree: true });
+    const l = window.__padLink;
+    const send = l.send.bind(l);
+    l.send = (m) => (m.type === 'hello' && window.__hellos++, send(m));
+  });
+  // B joins A by code
+  check('B reaches the code entry', await toCodeEntry(Bt));
+  await Bt.keyboard.type(roomA);
+  await Bt.keyboard.press('Enter');
+  check('B is a guest in A’s lobby', await screenIs(Bt, 'lobby'));
+  const onA = await A.waitForFunction((g) => window.kaleido.input.activeSeats.some((s) => !s.local && window.kaleido.link.padVia(s.pid) === g), gidB, { timeout: 15000 }).then(() => true).catch(() => false);
+  check('the phone shows up on A, seated with via = B’s gid — nobody rescanned', onA);
+  const st = await mp.evaluate(() => ({ room: window.__padLink.room, via: window.__padLink.via, url: location.search, seen: window.__seen, hellos: window.__hellos, status: window.__padLink.status }));
+  check('…its link is in A’s room via B, the address bar says so, and it said hello again', st.room === roomA && st.via === gidB && st.url.includes(`room=${roomA}`) && st.hellos >= 1 && st.status === 'online', JSON.stringify(st));
+  check('…and its screen never showed a reconnect', st.seen.length === 0, JSON.stringify(st.seen));
+  check('…B has no phones of its own now, and toasted no "disconnected"', (await Bt.evaluate(() => window.kaleido.input.activeSeats.filter((s) => !s.local).length)) === 0 && !(await Bt.evaluate(() => window.__toasts)).some((t) => /disconnected/i.test(t)), JSON.stringify(await Bt.evaluate(() => window.__toasts)));
+  await sleep(1500);
+  // B leaves: its phone goes home
+  await Bt.keyboard.press('Escape');
+  check('B leaves the lobby and is back at Play online, hosting its own room', (await screenIs(Bt, 'online')) && (await Bt.evaluate(() => window.kaleido.link.role === 'host')) && (await Bt.evaluate(() => window.kaleido.link.room)) === roomB);
+  const back = await Bt.waitForFunction(() => window.kaleido.input.activeSeats.some((s) => !s.local), null, { timeout: 15000 }).then(() => true).catch(() => false);
+  check('the phone is back on B (the host sent it home)', back);
+  const st2 = await mp.evaluate(() => ({ room: window.__padLink.room, via: window.__padLink.via, url: location.search }));
+  check('…its link is in B’s room again, with no via', st2.room === roomB && st2.via === '' && st2.url.includes(`room=${roomB}`) && !st2.url.includes('via='), JSON.stringify(st2));
+  check('…and A has no phones left', await A.waitForFunction(() => window.kaleido.input.activeSeats.every((s) => s.local || !s.pid), null, { timeout: 5000 }).then(() => true).catch(() => false));
+  // a wrong code: the phone follows, finds nobody, and comes back
+  await Bt.keyboard.press('ArrowRight');
+  await Bt.keyboard.press('Enter');
+  await Bt.keyboard.type('ZZZZZ');
+  await Bt.keyboard.press('Enter');
+  check('a wrong code: B is back to hosting…', await Bt.waitForFunction(() => /No room with that code/.test(document.querySelector('.lhead')?.textContent || '') && window.kaleido.link.role === 'host', null, { timeout: 10000 }).then(() => true).catch(() => false));
+  const stranded = await mp.waitForFunction((r) => window.__padLink.room === r, roomB, { timeout: 15000 }).then(() => true).catch(() => false);
+  check('…and its phone, sent to the dead room, comes back by itself', stranded && (await Bt.waitForFunction(() => window.kaleido.input.activeSeats.some((s) => !s.local), null, { timeout: 8000 }).then(() => true).catch(() => false)));
+  await ctx.close();
+  await A.context().close();
+  await Bt.context().close();
+}
+
 console.log(logs.length ? '\npage errors:\n' + logs.join('\n') : '\nno page errors');
 if (logs.length) fail++;
 console.log(fail ? `\n${fail} checks FAILED` : '\nAll room checks passed.');

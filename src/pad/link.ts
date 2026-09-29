@@ -19,6 +19,8 @@ export class PadLink {
   lat = 25;
   onMessage: (m: ServerToPad) => void = () => {};
   onStatus: (s: LinkStatus) => void = () => {};
+  /** the link came up again in a different room after a 'move' (the TV needs our hello afresh) */
+  onRejoin: () => void = () => {};
 
   private ws: WebSocket | null = null;
   private es: EventSource | null = null;
@@ -36,6 +38,9 @@ export class PadLink {
   /** the relay's clock minus ours, ms; null until 3 pongs have been heard */
   clockOffset: number | null = null;
   private burstTimers: number[] = [];
+  /** a 'move' was followed and nobody has answered yet; the timer brings us back to `from` if none does */
+  private moved: { from: { room: string; via: string }; timer: number } | null = null;
+  private rejoining = false;
 
   constructor(
     private pid: string,
@@ -61,6 +66,8 @@ export class PadLink {
     clearTimeout(this.retryTimer);
     this.burstTimers.forEach(clearTimeout);
     this.burstTimers = [];
+    if (this.moved) clearTimeout(this.moved.timer);
+    this.moved = null;
     this.ws?.close();
     this.es?.close();
     this.ws = null;
@@ -88,10 +95,10 @@ export class PadLink {
   }
 
   /** in the cloud: the TV's room (from the QR code's link) */
-  readonly room = (new URLSearchParams(location.search).get('room') || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  room = (new URLSearchParams(location.search).get('room') || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
   /** in the cloud: the guest TV whose QR code opened this remote (`&via=`): the relay echoes this phone's swings to it at once */
-  readonly via = (new URLSearchParams(location.search).get('via') || '').replace(/[^a-zA-Z0-9-]/g, '').slice(0, 40);
+  via = (new URLSearchParams(location.search).get('via') || '').replace(/[^a-zA-Z0-9-]/g, '').slice(0, 40);
 
   private qs() {
     const r = this.room ? `&room=${this.room}` : '';
@@ -123,13 +130,16 @@ export class PadLink {
       }
     }, 1600);
     ws.onopen = () => {
+      if (this.ws !== ws) return;
       opened = true;
       clearTimeout(giveUp);
       this.transport = 'ws';
       this.setStatus('online');
       this.pingBurst();
+      this.rejoined();
     };
     ws.onmessage = (ev) => {
+      if (this.ws !== ws) return;
       try {
         this.handle(JSON.parse(ev.data));
       } catch {}
@@ -166,17 +176,21 @@ export class PadLink {
     const es = new EventSource(`/api/pad/events?${this.qs()}`);
     this.es = es;
     es.onopen = () => {
+      if (this.es !== es) return;
       this.setStatus('online');
       this.flush();
       this.pingBurst();
+      this.rejoined();
     };
     es.onmessage = (ev) => {
+      if (this.es !== es) return;
       try {
         this.handle(JSON.parse(ev.data));
       } catch {}
     };
     es.onerror = () => {
       // EventSource reconnects by itself; reflect the state meanwhile.
+      if (this.es !== es) return;
       if (es.readyState !== EventSource.OPEN) this.setStatus('connecting');
     };
   }
@@ -250,6 +264,53 @@ export class PadLink {
     this.lat = Math.max(1, Math.min(250, median / 2));
   }
 
+  private rejoined() {
+    if (!this.rejoining) return;
+    this.rejoining = false;
+    this.onRejoin();
+  }
+
+  /** The TV says: come to room `room` (as a phone opened via guest `via`; '' = that room's own TV). Same id, same name; the screen
+   *  never shows a disconnect (the status stays 'online' while the new socket opens). If nobody there answers within 8 s (a
+   *  mistyped code, a host that left), go back to where we were. */
+  private moveTo(room: string, via: string, fallback: boolean) {
+    room = room.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    via = via.replace(/[^a-zA-Z0-9-]/g, '').slice(0, 40);
+    if (this.closed || !room || (room === this.room && via === this.via)) return;
+    const from = { room: this.room, via: this.via };
+    this.room = room;
+    this.via = via;
+    // (a reload keeps the new room)
+    try {
+      const u = new URL(location.href);
+      u.searchParams.set('room', room);
+      if (via) u.searchParams.set('via', via);
+      else u.searchParams.delete('via');
+      history.replaceState(history.state, '', u.toString());
+    } catch {}
+    if (this.moved) clearTimeout(this.moved.timer);
+    this.moved = fallback ? { from, timer: window.setTimeout(() => this.moveBack(), 8000) } : null;
+    clearTimeout(this.retryTimer);
+    const ws = this.ws;
+    const es = this.es;
+    this.ws = null;
+    this.es = null;
+    try {
+      ws?.close();
+      es?.close();
+    } catch {}
+    this.queue = [];
+    this.rejoining = true;
+    if (this.transport === 'http' || this.wsFailed) this.startHTTP();
+    else this.tryWS();
+  }
+
+  private moveBack() {
+    const m = this.moved;
+    this.moved = null;
+    if (m) this.moveTo(m.from.room, m.from.via, false);
+  }
+
   private handle(m: ServerToPad) {
     if (m.type === 'pong') {
       const rtt = performance.now() - m.t;
@@ -260,6 +321,17 @@ export class PadLink {
         if (typeof m.st === 'number') this.clockSample(wall, m.st, rtt);
       }
       return;
+    }
+    if (m.type === 'move') {
+      // (the move itself doesn't count as an answer from the new room)
+      this.moveTo(m.room, m.via, true);
+      this.onMessage(m);
+      return;
+    }
+    // any word from the TV we moved to (the relay's own 'link' greeting aside): it has us
+    if (this.moved && m.type !== 'link') {
+      clearTimeout(this.moved.timer);
+      this.moved = null;
     }
     if (m.type === 'bye' && m.reason === 'replaced') {
       // another tab of ours took over; stop quietly

@@ -261,7 +261,8 @@ export class Flow {
       if (m.type === 'pad-leave') {
         const seat = app.input.seatOfPid(m.pid);
         if (seat) {
-          this.toast(`P${seat.slot + 1}'s remote disconnected`, seat.color);
+          // (a phone that was sent to another room isn't lost: it's on its way)
+          if (!app.link.wasMoved(m.pid)) this.toast(`P${seat.slot + 1}'s remote disconnected`, seat.color);
           if (!this.screen && this.app.match && !this.app.attract && this.app.match.players.some((p) => p.slot === seat.slot)) this.pause();
           this.padLost(seat.slot);
         }
