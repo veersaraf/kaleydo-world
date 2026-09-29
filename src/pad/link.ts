@@ -9,6 +9,9 @@ import type { PadMsg, ServerToPad } from '../shared/protocol';
 
 export type LinkStatus = 'connecting' | 'online' | 'offline';
 
+/** the messages the TV corrects for their age: they get a `ts` */
+const TIMED = new Set<string>(['swing', 'slash', 'bowl', 'grip', 'guard', 'draw', 'toss', 'prep']);
+
 export class PadLink {
   status: LinkStatus = 'connecting';
   transport: 'ws' | 'http' | 'none' = 'none';
@@ -26,12 +29,21 @@ export class PadLink {
   private closed = false;
   private retryTimer = 0;
   private rtts: number[] = [];
+  /** our wall clock at each outstanding ping's send (keyed by its performance.now() `t`) */
+  private pingWall = new Map<number, number>();
+  /** clock samples from the pongs: round trip and (relay clock − ours) */
+  private clock: { rtt: number; off: number }[] = [];
+  /** the relay's clock minus ours, ms; null until 3 pongs have been heard */
+  clockOffset: number | null = null;
   private burstTimers: number[] = [];
 
   constructor(
     private pid: string,
     private getName: () => string,
-  ) {}
+  ) {
+    // (for the end-to-end tests, which send timed messages through the real link)
+    (globalThis as { __padLink?: PadLink }).__padLink = this;
+  }
 
   connect() {
     this.closed = false;
@@ -56,6 +68,9 @@ export class PadLink {
   }
 
   send(msg: PadMsg | { type: 'ping'; t: number }) {
+    // a timed message carries the relay's clock at its send: the TV works out this message's own uplink time from it
+    // (its own median `lat` would credit a message that hit a spike only the usual)
+    if (this.clockOffset !== null && TIMED.has(msg.type) && (msg as { ts?: number }).ts === undefined) (msg as { ts?: number }).ts = Date.now() + this.clockOffset;
     if (this.transport === 'ws' && this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));
       return;
@@ -171,6 +186,7 @@ export class PadLink {
     const msgs = this.queue.splice(0, this.queue.length);
     this.inflight++;
     const t0 = performance.now();
+    const w0 = Date.now();
     try {
       const res = await fetch('/api/pad/send', {
         method: 'POST',
@@ -184,7 +200,11 @@ export class PadLink {
         this.startHTTP();
       } else if (res.ok) {
         const j = await res.json();
-        if (j.pong) this.recordRtt(performance.now() - t0);
+        if (j.pong) {
+          const rtt = performance.now() - t0;
+          this.recordRtt(rtt);
+          if (typeof j.pong.st === 'number') this.clockSample(w0, j.pong.st, rtt);
+        }
       }
     } catch {
       this.setStatus('connecting');
@@ -202,7 +222,24 @@ export class PadLink {
   }
 
   private ping() {
-    this.send({ type: 'ping', t: performance.now() });
+    const t = performance.now();
+    this.pingWall.set(t, Date.now());
+    if (this.pingWall.size > 16) this.pingWall.delete(this.pingWall.keys().next().value as number);
+    this.send({ type: 'ping', t });
+  }
+
+  /** one pong: the relay stamped `st` somewhere between our send (`wall`, on our Date.now()) and the answer, taken as the middle.
+   *  Of the last 8, the quarter with the shortest round trips (least queueing, so the truest middle) votes: the median offset.
+   *  (The TV's link takes the best half; here the pad's own uplink is busy with its orientation stream, whose queue makes the
+   *  up leg longer than the down one, so the offset is read only from the quietest samples.) */
+  private clockSample(wall: number, st: number, rtt: number) {
+    if (!(rtt >= 0) || !Number.isFinite(st)) return;
+    this.clock.push({ rtt, off: st - (wall + rtt / 2) });
+    if (this.clock.length > 8) this.clock.shift();
+    if (this.clock.length < 3) return;
+    const best = [...this.clock].sort((a, b) => a.rtt - b.rtt).slice(0, Math.max(1, Math.ceil(this.clock.length / 4)));
+    const offs = best.map((c) => c.off).sort((a, b) => a - b);
+    this.clockOffset = offs[Math.floor(offs.length / 2)];
   }
 
   private recordRtt(rtt: number) {
@@ -215,7 +252,13 @@ export class PadLink {
 
   private handle(m: ServerToPad) {
     if (m.type === 'pong') {
-      this.recordRtt(performance.now() - m.t);
+      const rtt = performance.now() - m.t;
+      this.recordRtt(rtt);
+      const wall = this.pingWall.get(m.t);
+      if (wall !== undefined) {
+        this.pingWall.delete(m.t);
+        if (typeof m.st === 'number') this.clockSample(wall, m.st, rtt);
+      }
       return;
     }
     if (m.type === 'bye' && m.reason === 'replaced') {

@@ -17,6 +17,8 @@ export interface SwingMsg {
   age: number;
   /** Pad's current estimate of one-way latency to the server, ms. */
   lat: number;
+  /** The relay's clock (ms, Date.now() there) when the pad sent this, as the pad has learned its offset; absent until it has (the TV then uses `lat`). */
+  ts?: number;
   /** True when produced by the on-screen swipe fallback rather than motion. */
   touch?: boolean;
   /** forehand / backhand / overhead, from the swing's rotation about the vertical axis */
@@ -45,12 +47,12 @@ export const HAIR_TONES = ['#2b1d16', '#4a2e1f', '#7a4a26', '#c98a3c', '#e8c16a'
 export type PadMsg =
   | { type: 'hello'; name: string; handed: Handed; ver: number; motion: boolean; look?: LookPrefs }
   | SwingMsg
-  | { type: 'toss'; lat: number }
+  | { type: 'toss'; lat: number; ts?: number }
   | { type: 'btn'; b: PadButton; down: boolean }
   | { type: 'prefs'; name: string; handed: Handed; look?: LookPrefs }
   | { type: 'wave'; power: number }
   /** a backswing: the player is setting up on this side */
-  | { type: 'prep'; side: 'fh' | 'bh'; lat: number }
+  | { type: 'prep'; side: 'fh' | 'bh'; lat: number; ts?: number }
   /** live racket orientation in the player's frame (x right, y towards screen, z up):
    *  s = shaft (phone top), n = face (screen normal); while bowling with the grip
    *  held, `arm` = the bowling arm's pendulum angle, radians, −2.2 … 2.2: 0 = hanging
@@ -61,16 +63,16 @@ export type PadMsg =
    *  the pose the guard toggle says (upright, or across the body) */
   | { type: 'ori'; s: [number, number, number]; n: [number, number, number]; arm?: number }
   /** bowling: the grip (hold the ball) went down / was let go */
-  | { type: 'grip'; down: boolean; lat: number }
+  | { type: 'grip'; down: boolean; lat: number; ts?: number }
   /** bowling: the ball was released — measured from the swing.
    *  speed m/s; spin −1..1 (+ hooks left); angle radians (+ right), ±0.2: the swing's line
    *  against the player's own backswing (a straight pendulum = 0, a push right / pull left
    *  across the body = ±), or against the calibrated screen when there was no real backswing */
-  | { type: 'bowl'; speed: number; angle: number; spin: number; lat: number; touch?: boolean; /** ms between the release and the message being sent */ age?: number }
+  | { type: 'bowl'; speed: number; angle: number; spin: number; lat: number; ts?: number; touch?: boolean; /** ms between the release and the message being sent */ age?: number }
   /** sword duel: the guard button went down / was let go. While it's held the
    *  sword guards at whatever angle the phone is held (from the 'ori' stream; one
    *  goes just before each 'guard' with the angle it went up / came down at) */
-  | { type: 'guard'; down: boolean; lat: number }
+  | { type: 'guard'; down: boolean; lat: number; ts?: number }
   /** sword duel: an attack, measured from the swing. slash: `dir` = which way the
    *  phone's top (the sword's tip) travelled across the player's view, radians:
    *  0 = right, π/2 = up, −π/2 = down (a chop), ±π = left. thrust: a push towards
@@ -78,11 +80,11 @@ export type PadMsg =
    *  swipe (a tap is a thrust). Sent ~35 ms after the swing's peak (a thrust: as the
    *  arm is half-way out), just after an 'ori' with the pose it struck in; never
    *  while the guard is held — let go of it to attack */
-  | { type: 'slash'; kind: 'slash' | 'thrust'; dir: number; power: number; lat: number; touch?: boolean; /** ms between the swing's peak and the message being sent */ age?: number }
+  | { type: 'slash'; kind: 'slash' | 'thrust'; dir: number; power: number; lat: number; ts?: number; touch?: boolean; /** ms between the swing's peak and the message being sent */ age?: number }
   /** archery: the DRAW pad went down (start pulling the string) / was let go (shoot).
    *  The aim is the 'ori' stream: the TV turns the phone's movement since the draw
    *  began into the aim, so drift doesn't matter. An 'ori' is sent just before each */
-  | { type: 'draw'; down: boolean; lat: number };
+  | { type: 'draw'; down: boolean; lat: number; ts?: number };
 
 /** bowl = your turn to bowl: the grip pad plus move (◀ ▶ = btn left/right) and
  *  aim (↺ ↻ = btn minus/plus) buttons. sword = a duel: swing to attack, hold the
