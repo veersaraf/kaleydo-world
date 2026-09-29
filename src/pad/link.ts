@@ -9,8 +9,10 @@ import type { PadMsg, ServerToPad } from '../shared/protocol';
 
 export type LinkStatus = 'connecting' | 'online' | 'offline';
 
-/** the messages the TV corrects for their age: they get a `ts` */
-const TIMED = new Set<string>(['swing', 'slash', 'bowl', 'grip', 'guard', 'draw', 'toss', 'prep']);
+/** the messages the TV corrects for their age: they get a `ts` (an 'ori' too: the TV draws each pose as old as it really is) */
+const TIMED = new Set<string>(['swing', 'slash', 'bowl', 'grip', 'guard', 'draw', 'toss', 'prep', 'ori']);
+/** the messages that go last in an HTTP batch, and only the newest of them (the pose stream) */
+const LATE = new Set<string>(['ori']);
 
 export class PadLink {
   status: LinkStatus = 'connecting';
@@ -77,7 +79,7 @@ export class PadLink {
   send(msg: PadMsg | { type: 'ping'; t: number }) {
     // a timed message carries the relay's clock at its send: the TV works out this message's own uplink time from it
     // (its own median `lat` would credit a message that hit a spike only the usual)
-    if (this.clockOffset !== null && TIMED.has(msg.type) && (msg as { ts?: number }).ts === undefined) (msg as { ts?: number }).ts = Date.now() + this.clockOffset;
+    if (this.clockOffset !== null && TIMED.has(msg.type) && (msg as { ts?: number }).ts === undefined) (msg as { ts?: number }).ts = Math.round(Date.now() + this.clockOffset);
     if (this.transport === 'ws' && this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));
       return;
@@ -197,7 +199,14 @@ export class PadLink {
 
   private async flush() {
     if (this.transport !== 'http' || this.inflight >= 2 || !this.queue.length) return;
-    const msgs = this.queue.splice(0, this.queue.length);
+    // After a stall the queue holds a run of stale poses ahead of whatever came late (a swing): only the newest pose is worth
+    // sending, and it goes last, so nothing timed ever waits behind it. Everything else keeps its order. (The server takes 64 a POST.)
+    const rest = this.queue.filter((m) => !LATE.has(m.type));
+    let newest: PadMsg | undefined;
+    for (let i = this.queue.length - 1; i >= 0 && !newest; i--) if (LATE.has(this.queue[i].type)) newest = this.queue[i];
+    const all = newest ? [...rest, newest] : rest;
+    const msgs = all.slice(0, 64);
+    this.queue = all.slice(64);
     this.inflight++;
     const t0 = performance.now();
     const w0 = Date.now();

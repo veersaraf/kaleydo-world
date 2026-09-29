@@ -56,6 +56,7 @@ export class Track {
   private static readonly CAP = 16;
   private t = new Float64Array(Track.CAP);
   private rt = new Float64Array(Track.CAP);
+  private ld = new Float64Array(Track.CAP);
   private v: Float64Array;
   private n = 0;
   private head = 0;
@@ -68,13 +69,15 @@ export class Track {
     return this.n ? this.t[this.idx(this.n - 1)] : -Infinity;
   }
 
-  /** `rt`: the relay's clock when it forwarded the message (0 = unknown), which keeps the spacing honest when several arrive together */
-  push(t: number, rt: number, vals: ArrayLike<number>) {
+  /** `t` is the sample's own time (its arrival, or, for a stamped one, arrival less its trip); `lead`: how far behind arrival that put it, ms (0 for an unstamped one).
+   *  `rt`: the relay's clock when it forwarded the message (0 = unknown), or the phone's stamp, which keeps the spacing honest when several arrive together */
+  push(t: number, rt: number, vals: ArrayLike<number>, lead = 0) {
     const k = (this.head + this.n) % Track.CAP;
     if (this.n < Track.CAP) this.n++;
     else this.head = (this.head + 1) % Track.CAP;
     this.t[k] = t;
     this.rt[k] = rt;
+    this.ld[k] = lead;
     for (let d = 0; d < this.dim; d++) this.v[k * this.dim + d] = vals[d];
   }
 
@@ -112,7 +115,10 @@ export class Track {
     const steps = Math.max(1, Math.min(2, this.n - 1));
     const span = this.gap(a, b);
     // (more than a step and a half beyond the newest is a guess too far, whatever maxEx says)
-    const ex = Math.min(Math.max(0, age), maxEx, (1.5 * span) / steps);
+    // (a sample that took `lead` ms to get here is carried on by that as well: its own 45 ms / step-and-a-half of guess comes on top,
+    // or the pose would stall at the cap and jump at the next sample, a sawtooth 30 ms wide)
+    const lead = Math.min(80, this.ld[b]);
+    const ex = Math.min(Math.max(0, age), maxEx + lead, (1.5 * span) / steps + lead);
     let mag = 0;
     for (let d = 0; d < D; d++) mag += (this.v[b * D + d] - this.v[a * D + d]) ** 2;
     if (Math.sqrt(mag) < dead) return true;
@@ -377,12 +383,25 @@ export class Input {
       case 'ori': {
         const now = performance.now();
         this.racket[seat.slot] = { s: m.s, n: m.n, t: now };
+        // the sample's own time in this clock: when the phone stamped it (`ts`), arrival less its trip (Track.now then carries it on
+        // by its true age); an unstamped one is taken as just arrived. The phone's send times also give the spacing.
+        const stamped = typeof m.ts === 'number' && Number.isFinite(m.ts);
+        let t = now;
+        let clock = rt;
+        if (stamped) {
+          const up = Math.min(400, Math.max(0, rt - (m.ts as number)));
+          const transit = Math.max(0, Date.now() + this.link.serverOffset - rt);
+          t = now - up - transit;
+          clock = m.ts as number;
+        }
         this.oriBuf.set(m.s, 0);
         this.oriBuf.set(m.n, 3);
-        this.oriTrack[seat.slot].push(now, rt, this.oriBuf);
+        const to = this.inOrder(this.oriTrack[seat.slot], t, now);
+        this.oriTrack[seat.slot].push(to, clock, this.oriBuf, now - to);
         if (m.arm !== undefined) {
           this.oriBuf[0] = m.arm;
-          this.armTrack[seat.slot].push(now, rt, this.oriBuf);
+          const ta = this.inOrder(this.armTrack[seat.slot], t, now);
+          this.armTrack[seat.slot].push(ta, clock, this.oriBuf, now - ta);
           this.onArm(seat.slot, m.arm);
         }
         break;
@@ -403,6 +422,11 @@ export class Input {
         this.onDraw(seat.slot, m.down, this.ageOf(rt, m.lat, 0, 0.25, m.ts));
         break;
     }
+  }
+
+  /** a sample time for the track: never before the newest sample's (a spike-delayed one can't reorder the stream), never after `now` (no pose from the future) */
+  private inOrder(tr: Track, t: number, now: number) {
+    return Math.min(now, Math.max(t, tr.last));
   }
 
   /**

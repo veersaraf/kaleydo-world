@@ -6,6 +6,10 @@
 // angle, the equivalent lag (the time shift that fits best), and how rough the drawn motion is
 // against the true one (jitter). Runs on older commits too (it uses oriNow/armNow when there are any).
 //   npx tsx scripts/mirror-lag-check.ts
+//   NET=40 npx tsx scripts/mirror-lag-check.ts     the network in it: every pose takes 40 ± 8 ms (ORI_JITTER; 60 % of it phone → relay, the rest
+//                                                  relay → TV) and is run twice, unstamped (the TV takes it as just arrived) and stamped
+//                                                  (`ts`, as the pad sends it): the drawn direction against the phone's pose NOW, so a
+//                                                  pose that took 40 ms shows as up to 40 ms of lag unless the TV knows its age
 
 import { Input } from '../src/tv/core/input';
 import { Animator } from '../src/tv/chars/anim';
@@ -16,6 +20,7 @@ import { aimFromPhone, type FighterState } from '../src/tv/duel/types';
 // ---- a browser-less Input, and a clock we drive
 let clock = 0;
 Object.defineProperty(globalThis, 'performance', { value: { now: () => clock }, configurable: true });
+Date.now = () => 1e12 + clock; // (the relay's clock is this clock plus 1e12; the TV's serverOffset is 0)
 (globalThis as any).window = { addEventListener() {}, innerWidth: 1280, innerHeight: 720 };
 const link: any = { toPad() {}, serverOffset: 0 };
 
@@ -57,6 +62,10 @@ let seed = 12345;
 const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32);
 const r2 = (v: V3): V3 => v.map((x) => Math.round(x * 100) / 100) as V3;
 
+/** the network between the phone and the TV: total one-way ms (0 = the older check: no `ts`, arrival jitter only) and whether the poses are stamped */
+const NET = Number(process.env.NET ?? 0);
+let stamp = false;
+
 interface Result {
   err: number[];
   lagMs: number;
@@ -74,9 +83,17 @@ function measure(m: Motion, hz: number, jitterMs: number, feed: (input: Input, t
   const dtF = 1 / 60;
   const T = 6;
   // samples: the phone samples at k/hz, they get here a few ms later
-  const arrivals: { at: number; t: number }[] = [];
-  for (let k = 0; k / hz < T + 1; k++) arrivals.push({ t: k / hz, at: (k / hz) * 1000 + rnd() * jitterMs });
+  const arrivals: { at: number; t: number; up: number }[] = [];
+  for (let k = 0; k / hz < T + 1; k++) {
+    if (!NET) arrivals.push({ t: k / hz, at: (k / hz) * 1000 + rnd() * jitterMs, up: 0 });
+    else {
+      const d = NET + (rnd() * 2 - 1) * jitterMs;
+      arrivals.push({ t: k / hz, at: (k / hz) * 1000 + d, up: d * 0.6 });
+    }
+  }
   arrivals.sort((a, b) => a.at - b.at);
+  // (a socket delivers in order)
+  for (let i = 1; i < arrivals.length; i++) arrivals[i].at = Math.max(arrivals[i].at, arrivals[i - 1].at);
   let ai = 0;
   const errs: number[] = [];
   const drawn: V3[] = [];
@@ -92,7 +109,11 @@ function measure(m: Motion, hz: number, jitterMs: number, feed: (input: Input, t
     while (ai < arrivals.length && arrivals[ai].at <= clock) {
       const p = m.pose(arrivals[ai].t);
       // (the relay's clock: when the message went through it, for the spacing)
-      input.padMsg('p0', 1e12 + arrivals[ai].at, { type: 'ori', s: r2(p.s), n: r2(p.n), arm: Math.round(p.arm * 100) / 100 } as any);
+      const A = arrivals[ai];
+      const msg: any = { type: 'ori', s: r2(p.s), n: r2(p.n), arm: Math.round(p.arm * 100) / 100 };
+      // (the phone's stamp: its send, on the relay's clock; the relay's `rt`: the send plus the uplink, or, with no network, the arrival)
+      if (NET && stamp) msg.ts = Math.round(1e12 + A.t * 1000);
+      input.padMsg('p0', NET ? 1e12 + A.t * 1000 + A.up : 1e12 + A.at, msg);
       ai++;
     }
     const d = draw(t, dtF);
@@ -150,9 +171,11 @@ const poseNow = (i: Input, now: number) => (anyInput(i).oriNow ? anyInput(i).ori
 
 const hz = Number(process.env.ORI_HZ ?? 30);
 const jitter = Number(process.env.ORI_JITTER ?? 8);
-console.log(`phone streams at ${hz} Hz, arrivals jittered by up to ${jitter} ms, drawn at 60 fps\n`);
+console.log(NET ? `phone streams at ${hz} Hz through a network of ${NET} ± ${jitter} ms one way, drawn at 60 fps\n` : `phone streams at ${hz} Hz, arrivals jittered by up to ${jitter} ms, drawn at 60 fps\n`);
 for (const m of motions) {
-  console.log(m.name);
+ for (const st of NET ? [false, true] : [false]) {
+  stamp = st;
+  console.log(m.name + (NET ? (st ? '   [stamped: ts]' : '   [unstamped]') : ''));
   // tennis racket
   const tennis = measure(m, hz, jitter, () => {}, (input) => {
     const p = new TPlayer(0, 0, { kind: 'human', slot: 0, ai: { speed: 6 } as any }, 'x', look, 1);
@@ -229,4 +252,5 @@ for (const m of motions) {
     };
   });
   console.log('  bowling arm     ', fmt(bowl));
+ }
 }
