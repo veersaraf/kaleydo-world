@@ -403,7 +403,7 @@ const med = errs[Math.floor(errs.length / 2)],
   p95 = errs[Math.floor(0.95 * (errs.length - 1))];
 const within = errs.filter((e) => e < Math.PI / 8).length / errs.length;
 console.log(`  direction error over ${errs.length} slashes: median ${(med * R2D).toFixed(1)}°, p95 ${(p95 * R2D).toFixed(1)}°, max ${(errs[errs.length - 1] * R2D).toFixed(1)}°; ${(within * 100).toFixed(1)}% within 22.5° (the right one of 8)`);
-console.log(`  detection delay after the true peak: median ${lags[Math.floor(lags.length / 2)].toFixed(0)} ms, p95 ${lags[Math.floor(0.95 * (lags.length - 1))].toFixed(0)} ms, max ${lags[lags.length - 1].toFixed(0)} ms`);
+console.log(`  detection delay after the true peak: p50 ${lags[Math.floor(lags.length / 2)].toFixed(0)} ms, p90 ${lags[Math.floor(0.9 * (lags.length - 1))].toFixed(0)} ms, p95 ${lags[Math.floor(0.95 * (lags.length - 1))].toFixed(0)} ms, max ${lags[lags.length - 1].toFixed(0)} ms`);
 check('every blow fires exactly one slash', wrongCount === 0, `${n} blows`);
 // some Androids sample slower or much faster
 for (const hz of [30, 200]) {
@@ -446,6 +446,11 @@ console.log('\n— where the blow starts');
   wu.rots.push({ kind: 'blow', axis: scale(wu.rots[0].axis, -1), tp: 0.25, peak: 4, rise: 0.12, fall: 0.1 });
   const f4 = simulate(wu, { ...su, seed: 14 });
   check('windup (sword raised at 4 rad/s) then a chop: one slash, down', f4.length === 1 && Math.abs(wrap(f4[0].dir - swingRead(-Math.PI / 2))) < 0.2, fmt(f4));
+  // a fast windup (a real hand's raised sword peaks ≤ 8.6 rad/s) is still a windup
+  const wu2 = blow(g, -Math.PI / 2, 14, 0.07, 0.05);
+  wu2.rots.push({ kind: 'blow', axis: scale(wu2.rots[0].axis, -1), tp: 0.3, peak: 8.6, rise: 0.09, fall: 0.07 });
+  const f4b = simulate(wu2, { ...su, seed: 14 });
+  check('windup (sword raised at 8.6 rad/s) then a chop: one slash, down', f4b.length === 1 && Math.abs(wrap(f4b[0].dir - swingRead(-Math.PI / 2))) < 0.2, fmt(f4b));
   // a curving stroke: starts across, ends down
   const cv = blow(GRIPS[2], -Math.PI / 4, 13, 0.07, 0.05);
   cv.rots.push({ kind: 'blow', axis: axisFor(GRIPS[2].blade, Math.PI * 0.05), tp: 0.55, peak: 5, rise: 0.05, fall: 0.03 });
@@ -546,6 +551,8 @@ console.log('\n— after a blow: recoil and return never fire, combos do');
     const rc = blow(GRIPS[0], Math.PI / 2, 12);
     const fr = simulate(rc, { screen: 0.6, calErr: 0, hz: 60, noise: 0.05, seed: 1050 });
     check('a rising cut on its own (12 rad/s): one slash, up', fr.length === 1 && Math.abs(wrap(fr[0].dir - Math.PI / 2)) < 0.4, fmt(fr));
+    // (a hard rising stroke is no windup: it is sent at once, not after the wait for a chop)
+    check('…and sent within 100 ms of its peak, not held for a chop', fr.length === 1 && (fr[0].at - 0.6) * 1000 < 100, fr.length ? `${((fr[0].at - 0.6) * 1000).toFixed(0)} ms` : 'nothing');
     rc.rots.push({ kind: 'blow', axis: scale(rc.rots[0].axis, -1), tp: 0.6 + 0.9, peak: 12, rise: 0.06, fall: 0.05 });
     rc.end = 2.2;
     const fr2 = simulate(rc, { screen: 0.6, calErr: 0, hz: 60, noise: 0.05, seed: 1051 });

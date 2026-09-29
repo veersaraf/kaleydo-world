@@ -183,6 +183,7 @@ const QUIET = 300; // …for this long (ms): nothing's coming
 const WOUND_MS = 700; // ms before the stroke began that a windup is looked for: motion the other way…
 const WOUND = 0.2; // …at least this fast, as a share of the blow's peak (and START)…
 const WOUND_K = 2; // …but the blow at least this much faster than it (else they're a pair of moves alike)
+const UP_FIRE = 11; // a rising stroke this hard (rad/s, ≈ 630°/s) is a rising cut, sent at once: a windup (the sword raised) peaks well below (a real hand's: ≤ 8.6)
 const UP_SURE = 0; // a rising stroke this hard (rad/s, ≈ 570°/s) is a rising cut; a gentler one may be the sword raised to chop…
 const RAISE_WAIT = 900; // …and waits this long (ms after its peak) for the chop
 const WINDUP_MAX = 700; // ms after its peak it waits at most (while a stroke is under way)
@@ -539,7 +540,7 @@ export class SwordDetector {
     }
     // going up (raising the sword), or not so hard: maybe the windup of a blow —
     // unless the sword had just been drawn back the other way (then this is the blow)
-    if (!wasWound && (up || peak < STRONG * base)) {
+    if (!wasWound && (up ? peak < UP_FIRE / k : peak < STRONG * base)) {
       this.pending = c;
       // the motion comes back down through the turnaround before the blow
       this.settled = false;

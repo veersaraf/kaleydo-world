@@ -74,7 +74,22 @@ export interface Replay {
   span: number;
   igSeen: number;
   igDown: number;
+  /** ms from each sword strike's peak to the sample that fired it, and the same for each tennis swing */
+  swordDelay: number[];
+  tennisDelay: number[];
 }
+
+/** p50 / p90 / max of a list of delays, ms (NaN when empty) */
+export function delayStats(a: number[]): { n: number; p50: number; p90: number; max: number } {
+  if (!a.length) return { n: 0, p50: NaN, p90: NaN, max: NaN };
+  const s = [...a].sort((x, y) => x - y);
+  const q = (f: number) => s[Math.min(s.length - 1, Math.floor(f * (s.length - 1) + 0.5))];
+  return { n: s.length, p50: q(0.5), p90: q(0.9), max: s[s.length - 1] };
+}
+export const fmtDelay = (a: number[]) => {
+  const d = delayStats(a);
+  return d.n ? `n=${d.n} p50 ${d.p50.toFixed(0)} ms, p90 ${d.p90.toFixed(0)} ms, max ${d.max.toFixed(0)} ms` : 'n=0';
+};
 
 const newSeg = (label: string, step: number, expect: unknown, t: number): Seg => ({
   label,
@@ -111,11 +126,21 @@ export function replay(lines: Line[], o: ReplayOpts = {}): Replay {
   const loose = newSeg('(outside any step)', -1, 'any', 0);
   loose.outcome = '';
   const cur = () => seg ?? loose;
-  sword.onStrike = (s) => cur().strikes.push(s);
+  const swordDelay: number[] = [];
+  const tennisDelay: number[] = [];
+  // (the time of the sample being pushed: a detector's answer is late by that much after the peak)
+  let clock = 0;
+  sword.onStrike = (s) => {
+    cur().strikes.push(s);
+    swordDelay.push(clock - s.t);
+  };
   sword.onNear = (n) => cur().near.push(n);
   sword.onGuarded = (s) => cur().guarded.push(s);
   sword.onJudge = (j) => cur().judged.push(j);
-  tennis.onSwing = (e) => cur().tennis.push(e);
+  tennis.onSwing = (e) => {
+    cur().tennis.push(e);
+    tennisDelay.push(clock - e.t);
+  };
 
   // "Hold the sword ready, facing the TV, still" (the capture's first step): half-way through
   // it is which way the TV is — the capture page centres there (as the game does whenever A is
@@ -172,6 +197,7 @@ export function replay(lines: Line[], o: ReplayOpts = {}): Replay {
       }
       if (!guarding) front.orient.autoCenter(m.dt);
       sword.heading = front.orient.heading;
+      clock = t;
       sword.push(swordSample(m));
       tennis.push(swingSample(m, front.orient));
       const w = Math.hypot(m.rx, m.ry, m.rz);
@@ -212,7 +238,7 @@ export function replay(lines: Line[], o: ReplayOpts = {}): Replay {
       } else if (ev === 'strike' || ev === 'near' || ev === 'guarded') cur().live.push(l);
     }
   }
-  return { meta, ios, segs, loose, front, nM, nO, dts, span: lastMT - t0, igSeen, igDown };
+  return { meta, ios, segs, loose, front, nM, nO, dts, span: lastMT - t0, igSeen, igDown, swordDelay, tennisDelay };
 }
 
 export const R2D = 180 / Math.PI;

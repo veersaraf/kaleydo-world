@@ -149,6 +149,15 @@ interface Result {
 
 const ARM_R = 0.65; // shoulder → phone
 
+/** how long release() took, ms (a bowl has no peak to wait for — the finger lifting is the release; this is all the phone adds) */
+const costs: number[] = [];
+const timedRelease = (det: BowlDetector, t: number) => {
+  const t0 = performance.now();
+  const r = det.release(t);
+  costs.push(performance.now() - t0);
+  return r;
+};
+
 function simulate(sw: Swing, su: Setup): Result {
   const R = rng(su.seed);
   const start = sw.start ?? 0;
@@ -223,7 +232,7 @@ function simulate(sw: Swing, su: Setup): Result {
       armGrip = det.arm;
       gripped = true;
     }
-    if (!released && t > tRel) released = det.release(tRel * 1000);
+    if (!released && t > tRel) released = timedRelease(det, tRel * 1000);
     const q = pose(t);
     // the OS's fused orientation, two samples late (as deviceorientation is)
     osLag.push(q);
@@ -259,7 +268,7 @@ function simulate(sw: Swing, su: Setup): Result {
     if (Number.isNaN(armTop) && t >= tf0) armTop = det.arm;
     if (det.gripping && t <= tBottom && tBottom - t < 0.025) armBottom = det.arm - theta(t);
   }
-  if (!released) released = det.release(tRel * 1000);
+  if (!released) released = timedRelease(det, tRel * 1000);
   // the plane's turn by the release: + a push to the right
   const line = -delta(tRel);
   return { thr: released, armGrip, armTop, armBottom, line };
@@ -477,6 +486,11 @@ for (const s of swipes) {
   check(s.name, s.want(r), fmt(r));
 }
 
+{
+  const a = costs.slice(3).sort((x, y) => x - y); // (the first few calls warm the JIT up)
+  const q = (f: number) => a[Math.min(a.length - 1, Math.floor(f * (a.length - 1) + 0.5))];
+  console.log(`\nrelease() compute time on this machine (${a.length} throws): p50 ${q(0.5).toFixed(2)} ms, p90 ${q(0.9).toFixed(2)} ms, max ${a[a.length - 1].toFixed(2)} ms`);
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 console.log(fail ? 'Some bowling checks FAILED.' : 'All bowling checks passed.');
 if (fail) process.exitCode = 1;
