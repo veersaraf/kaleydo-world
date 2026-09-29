@@ -37,6 +37,11 @@ const BLADE = SWORD.tip;
 /** the hand never goes below this (root units above the deck) */
 const FLOOR = 0.12;
 
+/** how fast the sword hand and blade follow the pose in ready / guard (1/s): the phone's live pose already
+ *  arrives carried on to now (Input.oriNow), so this only hides the last bit of stepping — at the old 16–18 the
+ *  blade trailed the phone by ~60 ms on top of the network's */
+const ARM_FOLLOW = 60;
+
 /** slash arc: where it starts from a windup, from a live swing, and how long it takes */
 const TH_WINDUP = -2.15;
 const TH_LIVE = -1.55;
@@ -195,6 +200,7 @@ export class DuelAnimator {
         this.stance(T, hs, t, 1);
         this.hold(T, hs, this.aD, this.aE, 0);
         this.restOff(T, hs, t);
+        T.armLam = ARM_FOLLOW;
         if (s.phase === 'recover') {
           // back from the follow-through, a little heavier than a free sword
           T.armLam = 9;
@@ -209,7 +215,7 @@ export class DuelAnimator {
         T.pitch = -0.12;
         this.hold(T, hs, this.aD, this.aE, 1);
         this.support(T, hs);
-        T.armLam = 18;
+        T.armLam = ARM_FOLLOW;
         T.brow = 0.85;
         break;
       }

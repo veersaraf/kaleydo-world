@@ -156,6 +156,22 @@ interface Side {
   fallSpeed: number;
   /** clean hits landed this round (a dead-even timeout's tie-break) */
   hits: number;
+  /** the last few phases and when each began (a strike judged `age` late asks what this fighter was doing then) */
+  hist: { t: number; phase: FighterPhase }[];
+}
+
+/** How far back a person's message can reach: the phone's age is clamped to this, s. */
+const MAX_AGE = 0.3;
+/** the phase log keeps this long, s */
+const HIST_KEEP = 0.6;
+
+/** Everything a clean hit changes, kept for the defender's guard to undo if it turns out to have been up in time. */
+interface HitUndo {
+  /** the attacker, and when the blow landed */
+  by: number;
+  at: number;
+  side: [Side, Side];
+  f: { z: number; phase: FighterPhase; t: number; push: number }[];
 }
 
 const newSide = (): Side => ({
@@ -179,7 +195,20 @@ const newSide = (): Side => ({
   fallZ0: 0,
   fallSpeed: 0,
   hits: 0,
+  hist: [],
 });
+
+/** copy b's fields into a (the nested attacks and the log copied by value, so a snapshot stays put) */
+function copySide(a: Side, b: Side) {
+  const { attack, queued, hist } = a;
+  Object.assign(a, b);
+  a.attack = Object.assign(attack, b.attack);
+  a.queued = Object.assign(queued, b.queued);
+  a.hist = hist;
+  a.hist.length = 0;
+  for (const h of b.hist) a.hist.push({ t: h.t, phase: h.phase });
+  return a;
+}
 
 /** copy an attack in, tidied: power 0..1, dir in (−π, π] */
 function setAttack(out: SlashInput, a: SlashInput) {
@@ -212,6 +241,8 @@ export class DuelGame {
   /** the strike's contact as a fraction of it (for drawing the swing) */
   readonly contactU = CONTACT_T / STRIKE_T;
   private sides: [Side, Side] = [newSide(), newSide()];
+  /** per fighter: the world before the last clean hit they took (a guard that turns out to have been up in time undoes it) */
+  private undo: [HitUndo | null, HitUndo | null] = [null, null];
   private cpus: [DuelCpu | null, DuelCpu | null];
   private drawsLeft = MAX_DRAWS;
   /** who went over the edge this round (−1 = nobody) */
@@ -254,31 +285,42 @@ export class DuelGame {
 
   // ------------------------------------------------------------ input (people, by input seat)
 
-  /** the guard button went down / up. While it's down the sword guards at whatever angle it's held. */
-  guard(slot: number, down: boolean) {
+  /**
+   * The guard button went down / up. While it's down the sword guards at whatever angle it's held.
+   * It happened `age` s ago (the phone's detector, the network): the guard counts from then, so
+   * a blow that landed in that window — while the phone was already up — is turned into a block.
+   */
+  guard(slot: number, down: boolean, age = 0) {
     const i = this.seat(slot);
-    if (i >= 0) this.setGuard(i, down);
+    if (i >= 0) this.setGuard(i, down, this.ageOf(age));
   }
 
   /**
-   * A swing measured by the phone (or a key). It has already happened, so there's
-   * no windup: the strike lands CONTACT_T from now. Only counts during the fight,
-   * from the ready stance (not while guarding, dazed, or reeling from a hit — the
-   * phone hears why); one that comes while recovering from the last, or bouncing
-   * off a clash, goes as soon as that's over.
+   * A swing measured by the phone (or a key). It has already happened — `age` s ago — so
+   * there's no windup: the strike started `age` ago (no earlier than the fighter was ready) and
+   * lands CONTACT_T after that, which may be now: it's judged against what the other fighter was
+   * doing then. Only counts during the fight, from the ready stance (not while guarding, dazed,
+   * or reeling from a hit — the phone hears why); one that comes while recovering from the last,
+   * or bouncing off a clash, goes as soon as that's over.
    */
-  slash(slot: number, input: SlashInput) {
+  slash(slot: number, input: SlashInput, age = 0) {
     const i = this.seat(slot);
     if (i < 0 || this.state !== 'fight') return;
     const f = this.fighters[i];
     const s = this.sides[i];
     if (f.phase === 'ready') {
       setAttack(s.attack, input);
-      this.strike(i, this.t);
+      this.strike(i, this.t - Math.min(this.ageOf(age), f.t));
+      // (a blow that's already due lands now, not a frame from now)
+      this.contacts();
     } else if (f.phase === 'recover' || f.phase === 'clash') {
       setAttack(s.queued, input);
       s.hasQueued = true;
     }
+  }
+
+  private ageOf(age: number) {
+    return Number.isFinite(age) ? clamp(age, 0, MAX_AGE) : 0;
   }
 
   /** the sword's pose, live from the phone (~20–50 Hz); until one comes it's held in the ready stance */
@@ -502,7 +544,8 @@ export class DuelGame {
     // the other blade landing at the same moment: they meet
     const other = def.phase === 'windup' ? sd.strikeAt + CONTACT_T : sd.contactAt;
     if (Math.abs(other - at) <= CLASH_WINDOW) return this.clash(at);
-    const p = def.phase;
+    // (what the defender was doing when it landed, which may be a moment ago)
+    const p = this.phaseAt(j, at);
     if (p === 'fall' || p === 'win' || p === 'lose' || p === 'idle') return;
     if (p === 'guard' && guardStops(def.aim, sa.attack, this.duelists[j].cpu === null)) this.block(i, at);
     else this.hit(i, at);
@@ -515,6 +558,7 @@ export class DuelGame {
     const sd = this.sides[j];
     const def = this.fighters[j];
     const a = sa.attack;
+    if (this.duelists[j].cpu === null) this.keepUndo(i, at);
     let dist = a.kind === 'thrust' ? THRUST_KNOCK + THRUST_KNOCK_K * sa.strength : KNOCK + KNOCK_K * sa.strength;
     if (def.phase === 'stunned') dist *= COUNTER_BONUS;
     dist *= this.lateBoost();
@@ -739,11 +783,76 @@ export class DuelGame {
     return -1;
   }
 
-  private setGuard(i: number, down: boolean) {
-    this.sides[i].guardHeld = down;
+  private setGuard(i: number, down: boolean, age = 0) {
+    const s = this.sides[i];
     const f = this.fighters[i];
-    if (down && f.phase === 'ready') this.setPhase(i, 'guard');
-    else if (!down && f.phase === 'guard') this.setPhase(i, 'ready');
+    s.guardHeld = down;
+    if (down && f.phase === 'ready') {
+      // (no earlier than the fighter was on their feet: a guard held through a recovery starts when it ends)
+      this.setPhase(i, 'guard', 0, this.t - Math.min(age, f.t));
+    } else if (down && f.phase === 'stagger' && age > 0) this.rescue(i, this.t - age);
+    else if (!down && f.phase === 'guard') this.setPhase(i, 'ready', 0, this.t - Math.min(age, f.t));
+  }
+
+  /** fighter j's guard went up at `at`, a moment ago: if a blow landed on them since — while it was
+   *  already up on the phone — and the guard stops it, it was a block */
+  private rescue(j: number, at: number) {
+    const u = this.undo[j];
+    this.undo[j] = null;
+    // (only if the blow found them on their feet, with the guard free to go up)
+    if (!u || this.state !== 'fight' || u.at < at - 1e-9 || u.f[j].phase !== 'ready') return;
+    at = Math.max(at, u.at - u.f[j].t);
+    const i = u.by;
+    const sa = this.sides[i];
+    const sd = this.sides[j];
+    const def = this.fighters[j];
+    if (!guardStops(def.aim, sa.attack, this.duelists[j].cpu === null)) return;
+    // the world as it was just before the blow (both fighters' bookkeeping), then the block instead
+    copySide(sa, u.side[0]);
+    copySide(sd, u.side[1]);
+    for (let k = 0; k < 2; k++) {
+      const f = this.fighters[k];
+      const v = u.f[k];
+      f.z = v.z;
+      f.phase = v.phase;
+      f.t = v.t + (this.t - u.at);
+      f.push = v.push;
+      f.attack = v.phase === 'windup' || v.phase === 'slash' || v.phase === 'thrust' ? this.sides[k].attack : null;
+    }
+    sd.guardHeld = true;
+    this.setPhase(j, 'guard', 0, at);
+    this.block(i, u.at);
+  }
+
+  /** the phase fighter i was in at time `at` (now, or a moment ago) */
+  private phaseAt(i: number, at: number): FighterPhase {
+    const f = this.fighters[i];
+    if (at >= this.t - 1e-9) return f.phase;
+    const h = this.sides[i].hist;
+    for (let k = h.length - 1; k >= 0; k--) if (h[k].t <= at + 1e-9) return h[k].phase;
+    return h.length ? h[0].phase : f.phase;
+  }
+
+  /** remember the world before i's blow lands on the other fighter (a guard that was up in time will undo it) */
+  private keepUndo(i: number, at: number) {
+    const j = 1 - i;
+    let u = this.undo[j];
+    if (!u) {
+      u = this.undo[j] = { by: i, at, side: [newSide(), newSide()], f: [{ z: 0, phase: 'idle', t: 0, push: 0 }, { z: 0, phase: 'idle', t: 0, push: 0 }] };
+    }
+    u.by = i;
+    u.at = at;
+    copySide(u.side[0], this.sides[i]);
+    copySide(u.side[1], this.sides[j]);
+    for (let k = 0; k < 2; k++) {
+      const f = this.fighters[k];
+      const v = u.f[k];
+      v.z = f.z;
+      v.phase = f.phase;
+      // (f.t is as of now; rescue() adds on the time since the blow, so back it up to `at`)
+      v.t = f.t - (this.t - at);
+      v.push = f.push;
+    }
   }
 
   /** back on their feet (as of `at`): guarding if the button's down */
@@ -758,6 +867,9 @@ export class DuelGame {
     f.phase = p;
     f.t = this.t - at;
     s.phaseEnd = at + dur;
+    const h = s.hist;
+    h.push({ t: at, phase: p });
+    while (h.length > 1 && h[1].t < this.t - HIST_KEEP) h.shift();
     f.attack = p === 'windup' || p === 'slash' || p === 'thrust' ? s.attack : null;
     if (!s.sliding && p !== 'fall') f.push = 0;
   }

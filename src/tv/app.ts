@@ -44,7 +44,7 @@ import { Match, type MatchConfig, type MatchEvent, type PlayerSpec } from './ten
 import { segVel, segPos } from './tennis/ball';
 import { Animator } from './chars/anim';
 import { TVLink } from './core/link';
-import { Input, type SwingEv } from './core/input';
+import { Input, SWING_AGE_MAX, type SwingEv } from './core/input';
 import { AI_LEVELS } from './tennis/ai';
 import { randomLook, playerLook, type Look } from './chars/look';
 import { Rng, clamp, damp, lerp, smooth } from './core/math';
@@ -355,7 +355,7 @@ export class App {
     const chance = this.smashCue && this.smashCue.p.slot === e.slot;
     const power = e.source === 'key' && chance && e.power > 0.3 ? Math.max(e.power, 0.92) : e.power;
     // (a swing's age is real time; in bullet time the sim has moved on less)
-    m.humanSwing(e.slot, { power, spin: e.spin, side: e.side, path: e.path }, m.t - clamp(e.age, 0, 0.16) * this.timeScale);
+    m.humanSwing(e.slot, { power, spin: e.spin, side: e.side, path: e.path }, m.t - clamp(e.age, 0, SWING_AGE_MAX) * this.timeScale);
   }
 
   private event(e: MatchEvent) {
@@ -851,18 +851,18 @@ export class App {
    * A phone's aim: when the draw begins the aim sits on the target; from then on
    * it turns as the phone turns (so compass drift doesn't matter, only the turn).
    */
-  private phoneAim(g: ArcheryGame, s: [number, number, number], n: [number, number, number]) {
+  private phoneAim(g: ArcheryGame, slot: number, s: [number, number, number], n: [number, number, number]) {
     // the phone's orientation in its player frame (x right, y towards the screen, z up)
-    const S = this.tmpV3.set(s[0], s[1], s[2]).normalize();
-    const N = new THREE.Vector3(n[0], n[1], n[2]);
-    N.addScaledVector(S, -N.dot(S)).normalize();
-    const X = new THREE.Vector3().crossVectors(S, N);
-    const q = this.tmpQ.setFromRotationMatrix(this.tmpM.makeBasis(S, N, X));
+    const q = this.oriQuat(s, n, this.tmpQ);
     const drawing = g.archer.phase === 'draw' || g.archer.phase === 'hold';
     if (!drawing || !this.aimFrom) {
       // the straight line to the middle of the main target
       const b = g.home;
-      if (drawing) this.aimFrom = { q: q.clone(), yaw: b.yaw, pitch: b.pitch };
+      if (drawing) {
+        // (the draw began a moment ago, by the time the message took: the turn counts from the pose of then)
+        const then = this.input.oriAt(slot, performance.now() - Math.max(0, g.t - g.drawT0) * 1000);
+        this.aimFrom = { q: then ? this.oriQuat(then.s, then.n, new THREE.Quaternion()) : q.clone(), yaw: b.yaw, pitch: b.pitch };
+      }
       return { yaw: b.yaw, pitch: b.pitch };
     }
     // the turn since the draw began, a little damped
@@ -874,6 +874,14 @@ export class App {
     const d = new THREE.Vector3(w0.x, -w0.z, w0.y).applyQuaternion(turn);
     const w = { x: d.x, y: d.z, z: -d.y };
     return { yaw: Math.atan2(-w.x, -w.z), pitch: Math.asin(Math.max(-1, Math.min(1, w.y))) };
+  }
+
+  private oriQuat(s: [number, number, number], n: [number, number, number], out: THREE.Quaternion) {
+    const S = this.tmpV3.set(s[0], s[1], s[2]).normalize();
+    const N = new THREE.Vector3(n[0], n[1], n[2]);
+    N.addScaledVector(S, -N.dot(S)).normalize();
+    const X = new THREE.Vector3().crossVectors(S, N);
+    return out.setFromRotationMatrix(this.tmpM.makeBasis(S, N, X));
   }
 
   /** A mouse/keyboard player's aim: through the cursor (on the target's plane), nudged by the arrows. */
@@ -904,7 +912,7 @@ export class App {
     if (who && who.cpu === null && g.state === 'aim') {
       const r = this.input.racket[who.slot];
       const seat = this.input.seats[who.slot];
-      const a = r && performance.now() - r.t < 400 && seat && !seat.local ? this.phoneAim(g, r.s, r.n) : this.mouseAim(g);
+      const a = r && performance.now() - r.t < 400 && seat && !seat.local ? this.phoneAim(g, who.slot, r.s, r.n) : this.mouseAim(g);
       g.aim(who.slot, a.yaw, a.pitch);
       aimOn = true;
     }
@@ -1056,9 +1064,10 @@ export class App {
     const wall = performance.now();
     for (const d of g.duelists) {
       if (d.cpu !== null) continue;
-      const r = this.input.racket[d.slot];
       const seat = this.input.seats[d.slot];
-      if (r && wall - r.t < 400 && seat && !seat.local) g.aim(d.slot, aimFromPhone(r.s, r.n));
+      // (the newest pose carried on to now: nothing eased behind it)
+      const r = seat && !seat.local ? this.input.oriNow(d.slot, wall) : null;
+      if (r) g.aim(d.slot, aimFromPhone(r.s, r.n));
       else g.aim(d.slot, this.localAim(g, d.slot));
     }
     const ks = this.keySlash;
@@ -1176,6 +1185,12 @@ export class App {
     if (this.bowlSlow >= 0) {
       const a = this.realT - this.bowlSlow;
       if (a < 1.1) gdt = dt * (a < 0.35 ? 0.3 : 0.3 + 0.7 * ((a - 0.35) / 0.75));
+    }
+    // the bowling arm follows the phone's swing: the newest angle carried on to now
+    const bw = g.bowler;
+    if (g.state === 'approach' && bw.cpu === null && !this.input.seats[bw.slot]?.local) {
+      const arm = this.input.armNow(bw.slot, performance.now());
+      if (arm !== null) g.setArm(bw.slot, arm);
     }
     if (gdt > 0) g.step(gdt);
     this.bowlCam.update(g, realDt, this.realT);
@@ -1301,8 +1316,7 @@ export class App {
     } else if (m.state === 'toss') speed = 0;
     const wall = performance.now();
     const poses = this.anims.map((a) => {
-      const r = a.p.human ? this.input.racket[a.p.slot] : null;
-      a.phone = r && wall - r.t < 400 ? r : null;
+      a.phone = a.p.human ? this.input.oriNow(a.p.slot, wall) : null;
       return a.update(m.t, simDt || 1e-4, ball, m.state);
     });
     const view: FrameView = {

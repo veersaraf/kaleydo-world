@@ -54,7 +54,7 @@ export const WINDOW = {
   foulBack: 0.105,
 };
 
-/** The oldest a swing message can be when it gets here (the input clamps its estimate to 0.16 s; a little slack). */
+/** The oldest a swing message is taken to be when it gets here (the input allows up to 0.25 s; over the cloud it is seldom more than 0.2). */
 export const AGE_MAX = 0.2;
 
 /** A swing can still meet the ball if it gets here up to this long after the pitch crosses the

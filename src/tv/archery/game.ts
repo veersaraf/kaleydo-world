@@ -74,6 +74,11 @@ const RESULT_T = 1.8;
 const RESULT_BIG_T = 2.6;
 const RESULT_MISS_T = 1.5;
 
+/** a phone's message is at most this old when it's played from then, s */
+const MAX_AGE = 0.3;
+/** the aim is logged this long, s (a release's aim is looked up in it) */
+const AIM_KEEP = 0.6;
+
 /** let go below this much draw and the string is put down (back to aiming) instead of shooting */
 export const MIN_DRAW = 0.25;
 /** a string that's let go (or put down) relaxes this many times faster than it's drawn */
@@ -155,6 +160,10 @@ export class ArcheryGame {
   private cpus: (ArcheryCpu | null)[];
   /** the aim this turn: a person's phone (or home), or the CPU's hands */
   private aimIn: Aim = { yaw: 0, pitch: 0 };
+  /** the archer's aim (shake and all) at the last moments' frames */
+  private aimLog: { t: number; yaw: number; pitch: number }[] = [];
+  /** game time the current draw began (a message that was `age` old began it that long before it came) */
+  drawT0 = 0;
   /** a long full draw's shake, radians, on top of the aim */
   private shakeYaw = 0;
   private shakePitch = 0;
@@ -266,12 +275,18 @@ export class ArcheryGame {
 
   // ------------------------------------------------------------ input (people, by input seat)
 
-  /** a person's DRAW went down (pull the string back) or up (let go: shoot — or, hardly drawn, put it down) */
-  draw(slot: number, down: boolean) {
+  /**
+   * A person's DRAW went down (pull the string back) or up (let go: shoot — or, hardly drawn, put it down).
+   * `age`: the message is that many seconds old (the phone, the network). A draw began that long ago;
+   * a release is shot with the aim and the draw the archer had then — the pose that was on screen
+   * when they let go, not the one the trigger finger jerked it to — and the arrow is already that far
+   * along its flight.
+   */
+  draw(slot: number, down: boolean, age = 0) {
     if (down) this.held.add(slot);
     else this.held.delete(slot);
     if (down && this.state === 'intro') return this.skip();
-    if (this.personUp(slot)) this.press(down);
+    if (this.personUp(slot)) this.press(down, Number.isFinite(age) ? clamp(age, 0, MAX_AGE) : 0);
   }
 
   /** where a person aims: the arrow's yaw and pitch, radians (see physics.ts); held until the next one */
@@ -344,21 +359,54 @@ export class ArcheryGame {
   }
 
   /** DRAW went down or up for the archer who's up */
-  private press(down: boolean) {
+  private press(down: boolean, age = 0) {
     this.pulling = down;
     if (this.state !== 'aim') return;
     const p = this.archer.phase;
     if (down) {
-      if (p === 'nock' && this.t >= this.nockAt) this.startDraw();
+      if (p === 'nock' && this.t >= this.nockAt) this.startDraw(age);
     } else if (p === 'draw' || p === 'hold') {
-      if (this.archer.draw < MIN_DRAW) this.putDown();
-      else this.shoot();
+      // (how far the string was back when they let go, `age` ago)
+      const drawn = this.drawnAgo(age);
+      if (drawn < MIN_DRAW) this.putDown();
+      else this.shoot(age, drawn);
     }
   }
 
-  private startDraw() {
+  /** the string's draw 0..1 as it was `age` s ago */
+  private drawnAgo(age: number) {
+    const a = this.archer;
+    if (a.phase === 'hold') return a.t >= age ? 1 : Math.max(0, 1 - (age - a.t) / RANGE.drawT);
+    return Math.max(0, a.draw - age / RANGE.drawT);
+  }
+
+  /** the draw began `age` s ago: it's that far along */
+  private startDraw(age = 0) {
     this.setPhase('draw');
+    this.drawT0 = this.t - age;
+    if (age > 0) {
+      const a = this.archer;
+      a.t = age;
+      a.draw = Math.min(1, age / RANGE.drawT);
+      if (a.draw >= 1) {
+        this.setPhase('hold');
+        a.t = age - RANGE.drawT;
+      }
+    }
     this.onEvent({ type: 'draw', who: this.current });
+  }
+
+  /** the aim the archer had at game time `at` (linear between the logged frames either side) */
+  private aimAt(at: number): Aim {
+    const h = this.aimLog;
+    let k = h.length - 1;
+    while (k > 0 && h[k - 1].t >= at) k--;
+    if (k < 0) return { yaw: this.archer.yaw, pitch: this.archer.pitch };
+    const b = h[k];
+    if (k === 0 || b.t <= at) return { yaw: b.yaw, pitch: b.pitch };
+    const a = h[k - 1];
+    const u = clamp((at - a.t) / Math.max(1e-6, b.t - a.t));
+    return { yaw: a.yaw + (b.yaw - a.yaw) * u, pitch: a.pitch + (b.pitch - a.pitch) * u };
   }
 
   /** the string goes back down; the arrow stays nocked (it can be drawn again at once) */
@@ -399,6 +447,14 @@ export class ArcheryGame {
     const a = this.archer;
     a.yaw = clamp(this.aimIn.yaw + this.shakeYaw, -AIM_LIMIT.yaw, AIM_LIMIT.yaw);
     a.pitch = clamp(this.aimIn.pitch + this.shakePitch, AIM_LIMIT.pitchMin, AIM_LIMIT.pitchMax);
+    // (kept for a moment: a release that's `age` old is shot with the aim of then)
+    const h = this.aimLog;
+    const last = h[h.length - 1];
+    if (last && last.t === this.t) {
+      last.yaw = a.yaw;
+      last.pitch = a.pitch;
+    } else h.push({ t: this.t, yaw: a.yaw, pitch: a.pitch });
+    while (h.length > 1 && h[1].t < this.t - AIM_KEEP) h.shift();
     const v = this.shot;
     if (!v || v.state !== 'nocked') return;
     const d = aimDir(a.yaw, a.pitch, this.dir);
@@ -411,11 +467,17 @@ export class ArcheryGame {
     v.dz = d.z;
   }
 
-  /** let go: the arrow leaves the bow at the draw's share of full speed, along the aim */
-  private shoot() {
+  /** let go: the arrow leaves the bow at the draw's share of full speed, along the aim.
+   *  `age`: that was this long ago — the aim and draw are those of then, and the arrow flies on by that much. */
+  private shoot(age = 0, drawn = this.archer.draw) {
     const a = this.archer;
     const who = this.current;
-    const speed = RANGE.fullSpeed * a.draw;
+    const speed = RANGE.fullSpeed * drawn;
+    if (age > 0) {
+      const then = this.aimAt(this.t - age);
+      a.yaw = then.yaw;
+      a.pitch = then.pitch;
+    }
     launch(this.fl, a.yaw, a.pitch, speed);
     this.shotSpeed = speed;
     this.poppedNow.length = 0;
@@ -427,21 +489,30 @@ export class ArcheryGame {
     this.setPhase('release');
     this.setState('flight');
     this.onEvent({ type: 'shot', who, speed });
+    if (age > 0) {
+      // (a follow-through that far along, and the arrow in the air for the time the message took)
+      a.t = age;
+      for (let done = 0; done < age - 1e-9 && this.state === 'flight'; ) {
+        const dt = Math.min(age - done, 0.05);
+        done += dt;
+        this.fly(dt, this.t - age + done);
+      }
+    }
   }
 
   /** the arrow flies on: sub-steps of at most FLIGHT.maxH, each swept for what it meets */
-  private fly(dt: number) {
+  private fly(dt: number, tEnd = this.t) {
     const f = this.fl;
     const n = Math.max(1, Math.ceil(dt / FLIGHT.maxH - 1e-9));
     const h = dt / n;
-    const t0 = this.t - dt;
+    const t0 = tEnd - dt;
     for (let k = 0; k < n; k++) {
       const x0 = f.x;
       const y0 = f.y;
       const z0 = f.z;
       advance(f, h, this.wind);
       if (this.sweep(x0, y0, z0, t0 + k * h, h)) return;
-      if (f.t >= FLIGHT.maxT) return this.land('lost', -1, f.x, f.y, f.z, this.t - this.endT0);
+      if (f.t >= FLIGHT.maxT) return this.land('lost', -1, f.x, f.y, f.z, tEnd - this.endT0);
     }
     this.arrowPose();
   }

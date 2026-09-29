@@ -630,5 +630,103 @@ function cpuMatch(a: number, b: number, seed: number, check?: (g: DuelGame) => v
   ok(looks > 200 && stops / looks > 0.75, 'after a few side cuts: it guards upright, against them', [stops, looks]);
 }
 
+
+// ---------------------------------------------------------------- latency: a message that's `age` s old
+
+{
+  // a strike delivered with age 0.12 lands as if it had been delivered 0.12 s earlier
+  const trial = (age: number) => {
+    const { g, ev } = fight();
+    const hitAt: number[] = [];
+    g.onEvent = (e) => {
+      ev.push(e);
+      if (e.type === 'hit') hitAt.push(g.t);
+    };
+    if (age === 0) {
+      g.slash(0, cut(0, 0.6));
+      run(g, 0.12);
+    } else {
+      run(g, age);
+      g.slash(0, cut(0, 0.6), age);
+    }
+    run(g, 0.5);
+    return { g, hitAt, ev };
+  };
+  const a = trial(0);
+  const b = trial(0.12);
+  ok(a.hitAt.length === 1 && b.hitAt.length === 1, 'both strikes land a clean hit', [a.hitAt, b.hitAt]);
+  // (the age-0 one lands on the first frame after 0.1 s; the aged one the moment it arrives)
+  ok(Math.abs(a.hitAt[0] - b.hitAt[0]) <= Math.max(DT, 1 / 60) + 1e-6, 'an aged strike lands within a frame of the one delivered earlier', [a.hitAt, b.hitAt]);
+  near(b.g.fighters[1].z, a.g.fighters[1].z, 1e-6, 'the knockback is the same from the same moment');
+  near(b.g.fighters[0].z, a.g.fighters[0].z, 1e-6, 'and so is the attacker following through');
+  ok(a.g.fighters[0].phase === b.g.fighters[0].phase && Math.abs(a.g.fighters[0].t - b.g.fighters[0].t) < 1e-6, 'the attacker is as far into the recovery', [a.g.fighters[0].phase, b.g.fighters[0].phase]);
+  // it starts that far into its strike
+  const { g } = fight();
+  g.slash(0, cut(0, 0.6), 0.06);
+  near(g.fighters[0].t, 0.06, 1e-9, 'the strike starts 0.06 s in');
+  ok(g.fighters[0].phase === 'slash', 'as a slash');
+  // (an absurd age is clamped)
+  const c = fight();
+  c.g.slash(0, cut(0, 0.6), 99);
+  ok(c.g.fighters[0].t <= 0.31, 'an absurd age is clamped', c.g.fighters[0].t);
+}
+{
+  // a strike is judged against what the other fighter was doing when it landed
+  const { g, ev } = fight();
+  g.aim(1, guardAim({ blade: [0, 0, 1], edge: [0, 1, 0] }, Math.PI / 2, 1));
+  g.guard(1, true);
+  run(g, 0.2);
+  // the swing landed 0.1 s into its age; the guard was let go a moment after that, but before the message got here
+  run(g, 0.14);
+  g.guard(1, false);
+  run(g, 0.01);
+  g.slash(0, cut(0, 0.5), 0.15);
+  run(g, 0.3);
+  const first = ev.find((e) => e.type === 'hit' || e.type === 'block');
+  ok(first?.type === 'block', 'the guard that was up when the blow landed stops it, though it has been let go since', first?.type);
+}
+{
+  // a guard raised `age` ago covers a blow that landed since
+  const guardTrial = (age: number, angle: number) => {
+    const { g, ev } = fight();
+    g.aim(0, guardAim({ blade: [0, 0, 1], edge: [0, 1, 0] }, angle, 1));
+    g.slash(1, cut(0, 0.6));
+    run(g, 0.12); // the blow lands at 0.1: a clean hit — the guard message is still on its way
+    const before = ev.filter((e) => e.type === 'hit').length;
+    g.guard(0, true, age);
+    run(g, 0.5);
+    return { g, ev, before };
+  };
+  const rescued = guardTrial(0.15, Math.PI / 2);
+  ok(rescued.before === 1, 'the blow first lands as a hit (the guard had not arrived)');
+  ok(rescued.ev.some((e) => e.type === 'block' && e.who === 0 && e.by === 1), 'then the guard raised 0.15 s ago turns it into a block', rescued.ev.map((e) => e.type));
+  ok(rescued.g.fighters[0].phase === 'guard', 'the defender stands guarding', rescued.g.fighters[0].phase);
+  ok(Math.abs(rescued.g.fighters[0].z - startZ(0)) < 0.2, 'and was not knocked back', rescued.g.fighters[0].z - startZ(0));
+  const late = guardTrial(0.015, Math.PI / 2);
+  ok(!late.ev.some((e) => e.type === 'block'), 'a guard that went up after the blow landed is too late', late.ev.map((e) => e.type));
+  const across = guardTrial(0.15, 0);
+  ok(!across.ev.some((e) => e.type === 'block'), "an early guard that doesn't lie across the cut doesn't stop it");
+  const plain = guardTrial(0, Math.PI / 2);
+  ok(!plain.ev.some((e) => e.type === 'block'), 'with no age the guard is just late (as before)');
+  // the block is the same one as a guard raised in time
+  const inTime = fight();
+  inTime.g.aim(0, guardAim({ blade: [0, 0, 1], edge: [0, 1, 0] }, Math.PI / 2, 1));
+  inTime.g.guard(0, true);
+  run(inTime.g, 0.02);
+  inTime.g.slash(1, cut(0, 0.6));
+  run(inTime.g, 0.62);
+  near(rescued.g.fighters[0].z, inTime.g.fighters[0].z, 1e-6, 'the rescued block gives the same ground as a guard raised in time');
+  ok(rescued.g.fighters[1].phase === inTime.g.fighters[1].phase, 'and stuns the attacker the same', [rescued.g.fighters[1].phase, inTime.g.fighters[1].phase]);
+}
+{
+  // a guard that's let go `age` ago stops guarding from then
+  const { g } = fight();
+  g.guard(0, true);
+  run(g, 0.3);
+  ok(g.fighters[0].phase === 'guard', 'guarding');
+  g.guard(0, false, 0.1);
+  ok(g.fighters[0].phase === 'ready' && Math.abs(g.fighters[0].t - 0.1) < 1e-9, 'let go 0.1 s ago: ready, 0.1 s in', [g.fighters[0].phase, g.fighters[0].t]);
+}
+
 console.log(fails ? `${fails} of ${checks} duel checks FAILED.` : `All ${checks} duel checks passed.`);
 if (fails) process.exit(1);
