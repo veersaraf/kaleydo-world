@@ -992,7 +992,7 @@ export class App {
       // a new round puts everyone back on their marks: cut rather than glide
       if (e.type === 'round') this.duelCam.snap();
       if (e.type === 'hit') this.duelCam.kick(0.25 + e.strength * 0.45);
-      else if (e.type === 'block' || e.type === 'clash') this.duelCam.kick(0.2);
+      else if ((e.type === 'block' && !e.rescued) || e.type === 'clash') this.duelCam.kick(0.2);
       else if (e.type === 'splash') this.duelCam.kick(0.35);
       this.onDuelEvent(e);
     };
