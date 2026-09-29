@@ -8,48 +8,34 @@
 export type Vec3 = [number, number, number];
 type Quat = [number, number, number, number]; // x y z w
 
-function qmul(a: Quat, b: Quat): Quat {
-  return [
-    a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
-    a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
-    a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
-    a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
-  ];
-}
-
-function qnorm(q: Quat): Quat {
-  const l = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
-  return [q[0] / l, q[1] / l, q[2] / l, q[3] / l];
-}
-
 /** rotate v by q */
 export function qrot(q: Quat, v: Vec3): Vec3 {
-  const [x, y, z, w] = q;
-  const ix = w * v[0] + y * v[2] - z * v[1];
-  const iy = w * v[1] + z * v[0] - x * v[2];
-  const iz = w * v[2] + x * v[1] - y * v[0];
-  const iw = -x * v[0] - y * v[1] - z * v[2];
-  return [ix * w + iw * -x + iy * -z - iz * -y, iy * w + iw * -y + iz * -x - ix * -z, iz * w + iw * -z + ix * -y - iy * -x];
+  return qrotInto([0, 0, 0], q[0], q[1], q[2], q[3], v[0], v[1], v[2]);
+}
+
+/** rotate (v0, v1, v2) by the quaternion (x, y, z, w) into out (no allocation) */
+function qrotInto(out: Vec3, x: number, y: number, z: number, w: number, v0: number, v1: number, v2: number): Vec3 {
+  const ix = w * v0 + y * v2 - z * v1;
+  const iy = w * v1 + z * v0 - x * v2;
+  const iz = w * v2 + x * v1 - y * v0;
+  const iw = -x * v0 - y * v1 - z * v2;
+  out[0] = ix * w + iw * -x + iy * -z - iz * -y;
+  out[1] = iy * w + iw * -y + iz * -x - ix * -z;
+  out[2] = iz * w + iw * -z + ix * -y - iy * -x;
+  return out;
 }
 
 function qconj(q: Quat): Quat {
   return [-q[0], -q[1], -q[2], q[3]];
 }
 
-function slerp(a: Quat, b: Quat, t: number): Quat {
-  let d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
-  const bb: Quat = d < 0 ? [-b[0], -b[1], -b[2], -b[3]] : b;
-  d = Math.abs(d);
-  if (d > 0.9995) return qnorm([a[0] + (bb[0] - a[0]) * t, a[1] + (bb[1] - a[1]) * t, a[2] + (bb[2] - a[2]) * t, a[3] + (bb[3] - a[3]) * t]);
-  const th = Math.acos(d);
-  const s = Math.sin(th);
-  const wa = Math.sin((1 - t) * th) / s,
-    wb = Math.sin(t * th) / s;
-  return [a[0] * wa + bb[0] * wb, a[1] * wa + bb[1] * wb, a[2] * wa + bb[2] * wb, a[3] * wa + bb[3] * wb];
-}
-
 /** W3C device orientation (intrinsic Z-X'-Y'') → quaternion (device → earth). */
 export function quatFromEuler(alphaDeg: number, betaDeg: number, gammaDeg: number): Quat {
+  return quatFromEulerInto([0, 0, 0, 1], alphaDeg, betaDeg, gammaDeg);
+}
+
+/** quatFromEuler into out (no allocation) */
+export function quatFromEulerInto(out: Quat, alphaDeg: number, betaDeg: number, gammaDeg: number): Quat {
   const d = Math.PI / 360;
   const cZ = Math.cos(alphaDeg * d),
     sZ = Math.sin(alphaDeg * d);
@@ -57,7 +43,11 @@ export function quatFromEuler(alphaDeg: number, betaDeg: number, gammaDeg: numbe
     sX = Math.sin(betaDeg * d);
   const cY = Math.cos(gammaDeg * d),
     sY = Math.sin(gammaDeg * d);
-  return [sX * cY * cZ - cX * sY * sZ, cX * sY * cZ + sX * cY * sZ, cX * cY * sZ + sX * sY * cZ, cX * cY * cZ - sX * sY * sZ];
+  out[0] = sX * cY * cZ - cX * sY * sZ;
+  out[1] = cX * sY * cZ + sX * cY * sZ;
+  out[2] = cX * cY * sZ + sX * sY * cZ;
+  out[3] = cX * cY * cZ - sX * sY * sZ;
+  return out;
 }
 
 export class Orientation {
@@ -69,15 +59,64 @@ export class Orientation {
   /** smoothed angular speed, rad/s */
   private spin = 0;
 
+  /** the OS reading, as a quaternion (scratch) */
+  private readonly meas: Quat = [0, 0, 0, 1];
+
   /** OS-fused orientation arrived. */
   measure(alpha: number | null, beta: number | null, gamma: number | null, t: number) {
     if (beta == null || gamma == null) return;
-    const m = quatFromEuler(alpha ?? 0, beta, gamma);
+    const m = quatFromEulerInto(this.meas, alpha ?? 0, beta, gamma);
     // The OS reading arrives a frame or two late. At rest that doesn't matter and
     // it cancels gyro drift; mid-swing (15+ rad/s) even 20 ms of lag is 20°+, so
     // during fast motion trust the gyro almost completely.
     const k = this.spin < 2 ? 0.2 : this.spin > 6 ? 0.01 : 0.2 - ((this.spin - 2) / 4) * 0.19;
-    this.q = this.have ? qnorm(slerp(this.q, m, k)) : m;
+    const q = this.q;
+    if (!this.have) {
+      q[0] = m[0];
+      q[1] = m[1];
+      q[2] = m[2];
+      q[3] = m[3];
+    } else {
+      // q = normalize(slerp(q, m, k)), in place
+      const a0 = q[0],
+        a1 = q[1],
+        a2 = q[2],
+        a3 = q[3];
+      let d = a0 * m[0] + a1 * m[1] + a2 * m[2] + a3 * m[3];
+      const f = d < 0 ? -1 : 1;
+      const b0 = f * m[0],
+        b1 = f * m[1],
+        b2 = f * m[2],
+        b3 = f * m[3];
+      d = Math.abs(d);
+      let x: number, y: number, z: number, w: number;
+      if (d > 0.9995) {
+        // (nearly the same: a straight blend, normalized — and again below, as it always was)
+        x = a0 + (b0 - a0) * k;
+        y = a1 + (b1 - a1) * k;
+        z = a2 + (b2 - a2) * k;
+        w = a3 + (b3 - a3) * k;
+        const l0 = Math.hypot(x, y, z, w) || 1;
+        x /= l0;
+        y /= l0;
+        z /= l0;
+        w /= l0;
+      } else {
+        const th = Math.acos(d);
+        const sn = Math.sin(th);
+        const wa = Math.sin((1 - k) * th) / sn,
+          wb = Math.sin(k * th) / sn;
+        x = a0 * wa + b0 * wb;
+        y = a1 * wa + b1 * wb;
+        z = a2 * wa + b2 * wb;
+        w = a3 * wa + b3 * wb;
+      }
+      const l = Math.hypot(x, y, z, w) || 1;
+      q[0] = x / l;
+      q[1] = y / l;
+      q[2] = z / l;
+      q[3] = w / l;
+    }
     this.have = true;
     this.lastEvent = t;
   }
@@ -92,12 +131,36 @@ export class Orientation {
     const a = w * dt;
     if (a < 1e-9) return;
     const s = Math.sin(a / 2) / w;
-    this.q = qnorm(qmul(this.q, [wx * s, wy * s, wz * s, Math.cos(a / 2)]));
+    // q = normalize(q ⊗ (w·s, cos(a/2))), in place
+    const q = this.q;
+    const a0 = q[0],
+      a1 = q[1],
+      a2 = q[2],
+      a3 = q[3];
+    const b0 = wx * s,
+      b1 = wy * s,
+      b2 = wz * s,
+      b3 = Math.cos(a / 2);
+    const x = a3 * b0 + a0 * b3 + a1 * b2 - a2 * b1;
+    const y = a3 * b1 - a0 * b2 + a1 * b3 + a2 * b0;
+    const z = a3 * b2 + a0 * b1 - a1 * b0 + a2 * b3;
+    const ww = a3 * b3 - a0 * b0 - a1 * b1 - a2 * b2;
+    const l = Math.hypot(x, y, z, ww) || 1;
+    q[0] = x / l;
+    q[1] = y / l;
+    q[2] = z / l;
+    q[3] = ww / l;
   }
 
   /** true up, expressed in device coordinates */
   upDevice(): Vec3 {
     return qrot(qconj(this.q), [0, 0, 1]);
+  }
+
+  /** upDevice into out (no allocation) */
+  upDeviceInto(out: Vec3): Vec3 {
+    const q = this.q;
+    return qrotInto(out, -q[0], -q[1], -q[2], q[3], 0, 0, 1);
   }
 
   toEarth(v: Vec3): Vec3 {
@@ -192,8 +255,12 @@ export class GyroAxes {
   private eo = 0; // Σ |OS rotation|²
   private eg = 0;
   private q0: Quat | null = null;
+  private readonly q0buf: Quat = [0, 0, 0, 1];
   private t0 = 0;
   private acc: Vec3 = [0, 0, 0];
+  private acc2: Vec3 = [0, 0, 0];
+  private readonly dq: Quat = [0, 0, 0, 1];
+  private readonly oq: Vec3 = [0, 0, 0];
 
   /** called when the evidence settles a mapping (to remember it for next time) */
   onSure: (saved: string) => void = () => {};
@@ -220,9 +287,18 @@ export class GyroAxes {
 
   /** raw rates (deg/s, as the event has them) → device-axis rad/s */
   map(alpha: number, beta: number, gamma: number): Vec3 {
-    const r = [alpha, beta, gamma];
+    return this.mapInto([0, 0, 0], alpha, beta, gamma);
+  }
+
+  /** map into out (no allocation) */
+  mapInto(out: Vec3, alpha: number, beta: number, gamma: number): Vec3 {
     const k = Math.PI / 180;
-    return [this.sign[0] * r[this.src[0]] * k, this.sign[1] * r[this.src[1]] * k, this.sign[2] * r[this.src[2]] * k];
+    const src = this.src,
+      sign = this.sign;
+    out[0] = sign[0] * (src[0] === 0 ? alpha : src[0] === 1 ? beta : gamma) * k;
+    out[1] = sign[1] * (src[1] === 0 ? alpha : src[1] === 1 ? beta : gamma) * k;
+    out[2] = sign[2] * (src[2] === 0 ? alpha : src[2] === 1 ? beta : gamma) * k;
+    return out;
   }
 
   /** a motion event's raw rates over dt s (what the gyro says the phone turned) */
@@ -240,9 +316,23 @@ export class GyroAxes {
       return;
     }
     if (t - this.t0 < 60) return;
-    // how the OS says the phone turned since the window began, in its own axes
-    let d = qmul(qconj(this.q0), q);
-    if (d[3] < 0) d = [-d[0], -d[1], -d[2], -d[3]];
+    // how the OS says the phone turned since the window began, in its own axes: conj(q0) ⊗ q
+    const c = this.q0;
+    const a0 = -c[0],
+      a1 = -c[1],
+      a2 = -c[2],
+      a3 = c[3];
+    const d = this.dq;
+    d[0] = a3 * q[0] + a0 * q[3] + a1 * q[2] - a2 * q[1];
+    d[1] = a3 * q[1] - a0 * q[2] + a1 * q[3] + a2 * q[0];
+    d[2] = a3 * q[2] + a0 * q[1] - a1 * q[0] + a2 * q[3];
+    d[3] = a3 * q[3] - a0 * q[0] - a1 * q[1] - a2 * q[2];
+    if (d[3] < 0) {
+      d[0] = -d[0];
+      d[1] = -d[1];
+      d[2] = -d[2];
+      d[3] = -d[3];
+    }
     const s = Math.hypot(d[0], d[1], d[2]);
     const ang = 2 * Math.atan2(s, d[3]);
     const g = this.acc;
@@ -250,7 +340,10 @@ export class GyroAxes {
     this.restart(q, t);
     // too little to tell apart from noise, or so much the OS's lag muddles it
     if (ang < 0.03 || ang > 1.5 || gl < 0.015) return;
-    const o: Vec3 = [(d[0] / s) * ang, (d[1] / s) * ang, (d[2] / s) * ang];
+    const o = this.oq;
+    o[0] = (d[0] / s) * ang;
+    o[1] = (d[1] / s) * ang;
+    o[2] = (d[2] / s) * ang;
     for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) this.M[i * 3 + j] += o[i] * g[j];
     this.eo += ang * ang;
     this.eg += gl * gl;
@@ -258,9 +351,19 @@ export class GyroAxes {
   }
 
   private restart(q: Quat, t: number) {
-    this.q0 = q;
+    // (a copy: the caller may reuse its array)
+    const b = this.q0buf;
+    b[0] = q[0];
+    b[1] = q[1];
+    b[2] = q[2];
+    b[3] = q[3];
+    this.q0 = b;
     this.t0 = t;
-    this.acc = [0, 0, 0];
+    // (a fresh sum: orient() is still reading the old one, so swap the two)
+    const old = this.acc;
+    this.acc = this.acc2;
+    this.acc2 = old;
+    this.acc[0] = this.acc[1] = this.acc[2] = 0;
   }
 
   /** the signed permutation that best turns the gyro's rotations into the OS's */
@@ -275,15 +378,17 @@ export class GyroAxes {
       // (only the 24 that are rotations: a mirror image can't be how a gyro is mounted)
       const odd = (p[0] === 0 ? p[1] !== 1 : p[0] === 1 ? p[1] !== 2 : p[1] !== 0) ? 1 : 0;
       for (let m = 0; m < 8; m++) {
-        const sg: [number, number, number] = [m & 1 ? -1 : 1, m & 2 ? -1 : 1, m & 4 ? -1 : 1];
+        const s0 = m & 1 ? -1 : 1,
+          s1 = m & 2 ? -1 : 1,
+          s2 = m & 4 ? -1 : 1;
         const flips = (m & 1 ? 1 : 0) + (m & 2 ? 1 : 0) + (m & 4 ? 1 : 0);
         if ((flips + odd) % 2) continue;
-        const sc = (sg[0] * this.M[p[0]] + sg[1] * this.M[3 + p[1]] + sg[2] * this.M[6 + p[2]]) / norm;
+        const sc = (s0 * this.M[p[0]] + s1 * this.M[3 + p[1]] + s2 * this.M[6 + p[2]]) / norm;
         if (sc > best) {
           second = best;
           best = sc;
           bs = p;
-          bg = sg;
+          bg = [s0, s1, s2];
         } else if (sc > second) second = sc;
       }
     }

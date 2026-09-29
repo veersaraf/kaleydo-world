@@ -179,6 +179,27 @@ export class BowlDetector {
   private foreW = 0;
   private pulls: { t: number; w: Vec3; a: Vec3 }[] = [];
 
+  /**
+   * Forget the motion so far: for when the detector has been left unfed (the phone was in another
+   * sport) and its ring holds old motion. A fresh detector, as it were.
+   */
+  reset() {
+    this.count = 0;
+    this.head = 0;
+    this.lastT = 0;
+    this.gyro = [0, 0, 0, 1];
+    this.prevR = [0, 0, 0];
+    this.prevWx = this.prevWh = 0;
+    this.live = 0;
+    this.lastQ = null;
+    this.held = false;
+    this.tGrip = 0;
+    this.armAngle = 0;
+    this.fore = [0, 0, 0];
+    this.foreW = 0;
+    this.pulls = [];
+  }
+
   /** the grip is down (the ball is in the hand) */
   get gripping() {
     return this.held;

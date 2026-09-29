@@ -6,11 +6,11 @@ import '@fontsource/fredoka/latin-700.css';
 import './pad.css';
 
 import { PadLink, type LinkStatus } from './link';
-import { SwingDetector, type SwingEvent } from './swing';
-import { BowlDetector, swipeThrow, MIN_SPEED, MAX_SPEED, type BowlThrow, type SwipePoint } from './bowl';
-import { SwordDetector, swipeStrike, guardLine, type GuardLine, type SwordStrike } from './sword';
+import { SwingDetector, type MotionSample, type SwingEvent } from './swing';
+import { BowlDetector, swipeThrow, MIN_SPEED, MAX_SPEED, type BowlSample, type BowlThrow, type SwipePoint } from './bowl';
+import { SwordDetector, swipeStrike, guardLine, type GuardLine, type SwordSample, type SwordStrike } from './sword';
 import { qrot, type Vec3 } from './orient';
-import { MotionFront, rawMotion, swordSample, swingSample } from './pipeline';
+import { MotionFront, bowlSample, rawMotion, swordSample, swingSample, type Motion, type RawMotion, type RawOrient } from './pipeline';
 import { Recorder, captureName } from './capture';
 import { PadAudio } from './audio';
 import { keepPortrait, toDevice } from './portrait';
@@ -1100,12 +1100,18 @@ tossBtn.addEventListener('pointerdown', (e) => {
 // phone tosses the ball — on the way up, never as it comes back down.
 const lift = new LiftDetector();
 let noSwingUntil = 0;
-function liftCheck(now: number, aUp: number, w: number, dt: number) {
+function liftCheck(now: number, m: Motion) {
   if (mode !== 'serve' || !joined || tossBtn.classList.contains('tossed')) {
     lift.reset();
     return;
   }
-  if (lift.push(now, aUp, w, dt)) {
+  // vertical acceleration (the sign quirks of iOS cancel in this product)
+  const gx0 = m.igx - m.ax,
+    gy0 = m.igy - m.ay,
+    gz0 = m.igz - m.az;
+  const gl = Math.hypot(gx0, gy0, gz0);
+  const aUp = gl > 1 ? (m.ax * gx0 + m.ay * gy0 + m.az * gz0) / gl : 0;
+  if (lift.push(now, aUp, Math.hypot(m.rx, m.ry, m.rz), m.dt)) {
     noSwingUntil = now + 320;
     doToss();
   }
@@ -1157,9 +1163,15 @@ function swingPath(sw: SwingEvent): number | null {
   return (Math.atan2(vx, vy) * 180) / Math.PI;
 }
 
+/**
+ * Whether a swing (or a wind-up) means anything now. Bowling: the arm swing is a throw, not a
+ * racket swing; the duel and the bow have their own. The swing detector is only fed while this
+ * holds (so it is exactly when emitSwing and onPrep would act on what it found).
+ */
+const swingWanted = () => mode !== 'bowl' && mode !== 'sword' && mode !== 'bow';
+
 function emitSwing(sw: SwingEvent, touch = false) {
-  // bowling: the arm swing is a throw, not a racket swing; the duel has its own
-  if (mode === 'bowl' || mode === 'sword' || mode === 'bow') return;
+  if (!swingWanted()) return;
   if (!touch && sw.t < noSwingUntil) return;
   const path = touch ? null : swingPath(sw);
   pathOk = path !== null;
@@ -1205,7 +1217,7 @@ function showSwing(sw: SwingEvent, path: number | null) {
 
 detector.onSwing = (s) => emitSwing(s);
 detector.onPrep = (side) => {
-  if (mode !== 'bowl' && mode !== 'sword' && mode !== 'bow') link.send({ type: 'prep', side, lat: Math.round(link.lat) });
+  if (swingWanted()) link.send({ type: 'prep', side, lat: Math.round(link.lat) });
 };
 
 // Live motion meter — reassures players that the sensor works. It only runs while something on the
@@ -1247,10 +1259,16 @@ function liveLoop() {
   liveRaf = requestAnimationFrame(liveLoop);
 }
 
+const orientBuf: RawOrient = { t: 0, alpha: null, beta: null, gamma: null };
 function onOrient(e: DeviceOrientationEvent) {
   const now = performance.now();
   rec?.orient(e, now);
-  front.orientEvent({ t: now, alpha: e.alpha, beta: e.beta, gamma: e.gamma });
+  const o = orientBuf;
+  o.t = now;
+  o.alpha = e.alpha;
+  o.beta = e.beta;
+  o.gamma = e.gamma;
+  front.orientEvent(o);
   if (orient.heading === null && joined) orient.calibrate();
 }
 
@@ -1321,39 +1339,51 @@ function startOriStream() {
   swordOriTimer = window.setInterval(() => timerOri(true), link.transport === 'http' ? 100 : 33);
 }
 
+// One object of each kind, refilled for every sample (a sensor delivers 60–100 a second: garbage
+// makes the collector pause the page, and a pause drops motion events). The detectors copy what they
+// need into their own rings and keep no reference to a sample.
+const rawBuf: RawMotion = { t: 0, ra: null, rb: null, rg: null };
+const bowlBuf: BowlSample = { t: 0, rx: 0, ry: 0, rz: 0 };
+const swordBuf: SwordSample = { t: 0, rx: 0, ry: 0, rz: 0 };
+const swingBuf: MotionSample = { t: 0, up: undefined, q: undefined, rx: 0, ry: 0, rz: 0, ax: 0, ay: 0, az: 0, gx: 0, gy: 0, gz: 0 };
+// Each detector only runs while its sport is up (the orientation and the pose stream always do).
+// When one starts being fed again its ring holds old motion: it starts afresh.
+let swingFed = false;
+let bowlFed = false;
+let swordFed = false;
+
 function onMotion(e: DeviceMotionEvent) {
   const now = performance.now();
   rec?.motion(e, now);
-  const m = front.motionEvent(rawMotion(e, now));
+  const m = front.motionEvent(rawMotion(e, now, rawBuf));
   if (!m) return;
   motionSeen = true;
-  const { rx, ry, rz, q, dt, ax, ay, az } = m;
-  {
-    // vertical acceleration (the sign quirks of iOS cancel in this product)
-    const gx0 = m.igx - ax,
-      gy0 = m.igy - ay,
-      gz0 = m.igz - az;
-    const gl = Math.hypot(gx0, gy0, gz0);
-    const aUp = gl > 1 ? (ax * gx0 + ay * gy0 + az * gz0) / gl : 0;
-    liftCheck(now, aUp, Math.hypot(rx, ry, rz), dt);
+  liftCheck(now, m);
+  const inBowl = mode === 'bowl';
+  if (inBowl) {
+    if (!bowlFed) bowl.reset();
+    bowl.heading = orient.heading;
+    // (the acceleration only if the phone reports it: some Androids don't)
+    bowl.push(bowlSample(m, bowlBuf));
   }
-  bowl.heading = orient.heading;
-  // (the acceleration only if the phone reports it: some Androids don't)
-  bowl.push({
-    t: now,
-    rx,
-    ry,
-    rz,
-    q,
-    ...(m.hasAcc && m.hasIg ? { ax, ay, az, gx: m.igx - ax, gy: m.igy - ay, gz: m.igz - az } : {}),
-  });
+  bowlFed = inBowl;
   // the duel: "towards the screen" keeps itself honest while the sword is held still facing it
-  if (mode === 'sword') orient.autoCenter(dt);
+  if (mode === 'sword') orient.autoCenter(m.dt);
   // (the pose goes out before the detectors think: nothing they do may hold it back)
-  motionOri(now, dt * 1000);
-  sword.heading = orient.heading;
-  sword.push(swordSample(m));
-  detector.push(swingSample(m, orient));
+  motionOri(now, m.dt * 1000);
+  const inDuel = mode === 'sword';
+  if (inDuel) {
+    if (!swordFed) sword.reset();
+    sword.heading = orient.heading;
+    sword.push(swordSample(m, swordBuf));
+  }
+  swordFed = inDuel;
+  const swinging = swingWanted();
+  if (swinging) {
+    if (!swingFed) detector.restart();
+    detector.push(swingSample(m, orient, swingBuf));
+  }
+  swingFed = swinging;
 }
 
 function requestMotion(): Promise<boolean> {

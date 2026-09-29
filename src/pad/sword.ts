@@ -323,6 +323,14 @@ export class SwordDetector {
     this.pushing = false;
     this.pushSettled = true;
     this.vel = [0, 0, 0];
+    // and the history: the detector is not fed outside the duel, so what is in its ring is old
+    // motion (and a near miss waiting to be told would be told now, late)
+    this.count = 0;
+    this.lastT = 0;
+    this.live = 0;
+    this.near = null;
+    this.backV = 0;
+    this.lastTurnAt = -1e9;
   }
 
   /** The guard pad went down / up at time t (ms). While it's held, swings only angle the guard. */
