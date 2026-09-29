@@ -5,6 +5,7 @@ import { Nav } from './ui/menu';
 import { Hud, type TeamInfo } from './ui/hud';
 import { JoinPanel } from './ui/join';
 import { CodeEntry, GuestLobby } from './ui/room';
+import { QuickPanel } from './ui/quick';
 import type { App } from './app';
 import type { Btn } from './core/input';
 import type { MatchConfig, MatchEvent, PlayerSpec } from './tennis/match';
@@ -30,7 +31,7 @@ import { RANGE } from './archery/range';
 const RANGE_FULL = RANGE.fullSpeed;
 import type { DuelEvent, Duelist } from './duel/types';
 import type { BowlEvent } from './bowling/game';
-import type { PadMode, PadMsg } from '../shared/protocol';
+import type { MatchmakingEvent, PadMode, PadMsg } from '../shared/protocol';
 import type { NetEnd, NetStart } from '../shared/net';
 
 type Level = 'rookie' | 'club' | 'pro' | 'ace';
@@ -103,6 +104,28 @@ interface Stats {
   longest: number;
 }
 
+/** how long the host waits for its opponent's phone (from the moment the opponent's TV is in the room) */
+const MM_PHONE_MS = 15000;
+/** …and how long the opponent's phone may be gone in a match before it counts as left */
+const MM_AWAY_MS = 8000;
+
+/** a quick-match pairing, as this TV lives it */
+interface MatchState {
+  role: 'host' | 'guest';
+  peer: { gid: string; name: string };
+  /** host: 'wait' = for the opponent's phone to be seated; 'play' = a match is running or its results are up */
+  phase: 'wait' | 'play';
+  /** when it was paired / this wait began, and when the opponent's TV showed up in the room (0 = not yet) */
+  at: number;
+  guestAt: number;
+  /** host: the phones seated when it was paired (the fallback opponent is a new one that isn't among them) */
+  own: Set<string>;
+  peerPid: string;
+  /** host: since when the opponent's phone has been missing mid-match (0 = there) */
+  away: number;
+  timer: number;
+}
+
 export class Flow {
   root: HTMLElement;
   private screenLayer: HTMLElement;
@@ -151,6 +174,9 @@ export class Flow {
   private guestBadge: HTMLElement | null = null;
   /** guest: the team this TV's own phones play for (whose end of the court the camera looks from); −1 = none of its phones is playing */
   private guestTeam = -1;
+  // ---- online: quick match (the lobby pairs this TV with another; the host of the pair plays the match)
+  private mm: MatchState | null = null;
+  private quick: QuickPanel | null = null;
 
   constructor(private app: App) {
     this.root = document.getElementById('ui')!;
@@ -275,11 +301,17 @@ export class Flow {
     app.link.onMessage = (m) => {
       roomMsg(m);
       if (m.type === 'pad-echo') this.padEcho(m.msg);
+      // quick match (host): the opponent's TV came into the room / went out of it
+      if (this.mm?.role === 'host' && (m.type === 'guest-join' || m.type === 'guest-leave') && m.gid === this.mm.peer.gid) {
+        if (m.type === 'guest-join') this.mm.guestAt ||= performance.now();
+        else if (this.mm.guestAt) this.mmOpponentLeft();
+      }
       if (this.guestRun && (m.type === 'host-gone' || m.type === 'no-room')) {
         this.toast('The host left the room');
         this.leaveGuestMatch();
       }
     };
+    app.link.onMatchmaking = (m) => this.mmEvent(m);
     app.input.mouseSwings = this.settings.mouse;
     app.splitPref = this.settings.split;
     app.onSplit = (on) => this.hud?.setSplit(on ? app.rig2 : null);
@@ -611,6 +643,8 @@ export class Flow {
       h('div', { class: 'ogo' }, 'A — pick a sport'),
     );
     const join = h('div', { class: 'ocard' }, h('h3', null, 'Join a room'), h('p', null, 'Got a friend’s code? Type it to play in their game, from your own screen and your own phones.'), h('div', { class: 'ogo' }, 'A — enter a code'));
+    const qnote = h('div', { class: 'onote' });
+    const quick = h('div', { class: 'ocard' }, h('h3', null, 'Quick match'), h('p', null, 'Get paired with someone else who’s looking, and play a singles match, right away.'), qnote, h('div', { class: 'ogo' }, 'A — find an opponent'));
     const nav = new Nav(
       [
         {
@@ -621,15 +655,29 @@ export class Flow {
           },
         },
         { el: join, onSelect: () => this.go(this.joinCodeScreen()) },
+        {
+          el: quick,
+          onSelect: () => {
+            if (!this.app.input.padCount) {
+              // (the match is played with a phone: show the QR code)
+              this.toast('Quick match needs a phone — scan the code first', '#ffc53d');
+              this.join.el.classList.add('nudge');
+              window.setTimeout(() => this.join.el.classList.remove('nudge'), 1800);
+              return;
+            }
+            this.startQuickMatch();
+          },
+        },
       ],
       true,
     );
-    const el = h('div', { class: 'screen center online' }, h('div', { class: 'sheet panel' }, h('h2', null, 'Play online'), h('div', { class: 'ochoices' }, host, join)), this.join.el);
+    const el = h('div', { class: 'screen center online' }, h('div', { class: 'sheet panel' }, h('h2', null, 'Play online'), h('div', { class: 'ochoices' }, host, join, quick)), this.join.el);
     this.join.refresh();
     const scr = this.navScreen('online', el, nav, () => this.go(this.mainMenu()), { title: 'Play online', hint: 'A choose · B back' });
     scr.update = () => {
       const n = link.guests.length;
       friends.textContent = n ? `${n} ${n === 1 ? 'friend’s TV' : 'friends’ TVs'} watching` : 'Nobody has joined yet';
+      qnote.textContent = this.app.input.padCount ? '' : 'Needs a phone: scan the code';
       this.join.refresh();
     };
     return scr;
@@ -647,8 +695,13 @@ export class Flow {
 
   /** become a guest in the room `code`: this TV's own phones scan its screen and play at the host */
   private joinRoom(code: string) {
+    this.app.link.joinRoom(code);
+    this.enterLobby(code);
+  }
+
+  /** (this TV's link is already in the room `code` as a guest) show the guest lobby */
+  private enterLobby(code: string) {
     const link = this.app.link;
-    link.joinRoom(code);
     const lobby = (this.guestLobby = new GuestLobby(link, code));
     const scr: Screen = {
       name: 'guest-lobby',
@@ -682,9 +735,225 @@ export class Flow {
 
   /** guests: back to hosting this TV's own room */
   private leaveRoom() {
+    if (this.mm?.role === 'guest') this.mm = null;
     this.guestLobby = null;
     this.app.link.leaveRoom();
     this.join.refresh();
+  }
+
+  // ---------------------------------------------------------------- online: quick match
+
+  /** "Quick match": wait in the lobby's queue (this TV keeps its own room); the lobby says when there's an opponent */
+  private startQuickMatch() {
+    const link = this.app.link;
+    this.mmDone(false);
+    link.cancelQuickMatch();
+    this.quickScreen({ kind: 'search', n: 1 }, 'Looking for an opponent');
+    link.quickMatch(this.app.input.padCount);
+  }
+
+  /** the waiting screen (B cancels) */
+  private quickScreen(state: import('./ui/quick').QuickState, hint: string) {
+    const panel = (this.quick = new QuickPanel(() => this.app.input.activeSeats.filter((s) => !s.local).map((s) => ({ name: s.name, color: s.color }))));
+    panel.set(state);
+    this.go({
+      name: 'quick',
+      el: panel.el,
+      pad: { title: 'Quick match', hint },
+      input: (_s, b) => {
+        if (b === 'b') {
+          this.sound('back');
+          this.quickCancel();
+        }
+      },
+      update: () => panel.update(),
+    });
+  }
+
+  /** B on the waiting screen */
+  private quickCancel() {
+    this.app.link.cancelQuickMatch();
+    if (this.mm) this.mmLeave();
+    else {
+      this.quick = null;
+      this.go(this.onlineScreen());
+    }
+  }
+
+  /** what the lobby (or, for a guest, the host) says about the pairing */
+  private mmEvent(m: MatchmakingEvent) {
+    switch (m.type) {
+      case 'waiting':
+        if (this.quick && !this.mm) this.quick.set({ kind: 'search', n: m.n });
+        break;
+      case 'matched':
+        if (m.role === 'host') {
+          this.mmDone(false);
+          const own = new Set(this.app.input.activeSeats.filter((s) => !s.local && s.pid).map((s) => s.pid as string));
+          const mm: MatchState = { role: 'host', peer: m.peer, phase: 'wait', at: performance.now(), guestAt: 0, own, peerPid: '', away: 0, timer: 0 };
+          mm.timer = window.setInterval(() => this.mmTick(), 250);
+          this.mm = mm;
+          this.audio?.sfx.ui('join');
+          this.quick?.set({ kind: 'found', name: m.peer.name });
+        } else {
+          this.mm = { role: 'guest', peer: m.peer, phase: 'wait', at: performance.now(), guestAt: 0, own: new Set(), peerPid: '', away: 0, timer: 0 };
+          this.quick = null;
+          this.enterLobby(m.code);
+          if (this.guestLobby) this.guestLobby.matchedWith = m.peer.name;
+          this.audio?.sfx.ui('join');
+        }
+        break;
+      case 'mm-error':
+        this.mmDone(false);
+        if (this.screen?.name === 'quick') {
+          this.toast(m.reason, '#d6304a');
+          this.quick = null;
+          this.go(this.onlineScreen());
+        }
+        break;
+      case 'peer-left':
+        this.mmGuestExit('Your opponent left');
+        break;
+      case 'note':
+        if (this.guestLobby) this.guestLobby.note = m.text;
+        break;
+    }
+  }
+
+  /** the pairing is over here (no more ticks); tell the guest it can go if `notify` */
+  private mmDone(notify: boolean) {
+    const mm = this.mm;
+    if (!mm || mm.role !== 'host') return;
+    window.clearInterval(mm.timer);
+    this.mm = null;
+    this.quick = null;
+    if (notify) this.app.link.toGuests({ type: 'mm-leave' });
+  }
+
+  /** host: leave the pairing (B on the waiting screen or the results, quitting the match): the guest is sent home, this TV goes back to Play online */
+  private mmLeave() {
+    const playing = this.mm?.phase === 'play';
+    this.mmDone(true);
+    if (playing) this.quitToMenu();
+    this.go(this.onlineScreen());
+  }
+
+  /** guest: the host has finished with us (or we're leaving): out of its room, back to Play online */
+  private mmGuestExit(text: string) {
+    const inRun = !!this.guestRun;
+    this.leaveRoom();
+    if (inRun) this.leaveGuestMatch();
+    if (text) this.toast(text, '#ffc53d');
+    this.go(this.onlineScreen());
+  }
+
+  /** host, every 250 ms while paired: start once the opponent's phone is seated; notice an opponent who left */
+  private mmTick() {
+    const mm = this.mm;
+    if (!mm || mm.role !== 'host') return;
+    const link = this.app.link;
+    const now = performance.now();
+    const here = link.guests.some((g) => g.gid === mm.peer.gid);
+    if (here && !mm.guestAt) mm.guestAt = now;
+    if (mm.phase === 'wait') {
+      // (the opponent's TV came and went before its phone did)
+      if (mm.guestAt && !here) {
+        this.mmOpponentLeft();
+        return;
+      }
+      const late = now > (mm.guestAt || mm.at) + MM_PHONE_MS;
+      const seats = this.mmSeats(late);
+      if (seats) this.mmStart(seats.mine, seats.theirs);
+      else if (late) this.mmNoPhone();
+      return;
+    }
+    if (mm.guestAt && !here) {
+      this.mmOpponentLeft();
+      return;
+    }
+    const s = mm.peerPid ? this.app.input.seatOfPid(mm.peerPid) : null;
+    if (mm.peerPid && (!s || !s.connected)) {
+      mm.away ||= now;
+      if (now - mm.away > MM_AWAY_MS) this.mmOpponentLeft();
+    } else mm.away = 0;
+  }
+
+  /** host: the seats to play — its own first phone, and the phone opened from the opponent's QR code (`via` = the opponent's gid; failing that, a new one that isn't one of ours) */
+  private mmSeats(fallback: boolean) {
+    const mm = this.mm;
+    if (!mm) return null;
+    const link = this.app.link;
+    const seats = this.app.input.activeSeats.filter((s) => !s.local && s.pid);
+    const plain = seats.filter((s) => !link.padVia(s.pid as string));
+    let theirs = seats.find((s) => link.padVia(s.pid as string) === mm.peer.gid);
+    if (!theirs && fallback) theirs = plain.find((s) => !mm.own.has(s.pid as string));
+    if (!theirs) return null;
+    const mine = plain.find((s) => s !== theirs && mm.own.has(s.pid as string)) ?? plain.find((s) => s !== theirs);
+    return mine ? { mine, theirs } : null;
+  }
+
+  /** host: a singles match, this TV's first phone against the opponent's (team 0 the host's), in a random world */
+  private mmStart(mine: { slot: number; color: string }, theirs: { slot: number; color: string; pid: string | null }) {
+    const mm = this.mm;
+    if (!mm) return;
+    const S = this.settings;
+    const p0 = this.app.humanSpec(mine.slot, 0);
+    const p1 = this.app.humanSpec(theirs.slot, 1);
+    const n0 = p0.name;
+    const n1 = p1.name === n0 ? `${p1.name} 2` : p1.name;
+    const cfg: MatchConfig = { doubles: false, gamesToWin: S.games, players: [p0, p1], teamNames: [n0, n1], firstServer: this.rng.chance(0.5) ? 0 : 1 };
+    this.teams = [
+      { name: n0, color: mine.color },
+      { name: n1, color: theirs.color },
+    ];
+    mm.phase = 'play';
+    mm.peerPid = theirs.pid ?? '';
+    mm.away = 0;
+    this.quick = null;
+    this.tourIdx = -1;
+    this.mode = S.kaleido ? 'kaleido' : 'quick';
+    this.beginMatch(S.kaleido ? this.shuffledWorlds()[0] : this.rng.pick(WORLDS).id, false, cfg);
+  }
+
+  /** host: the opponent's phone never came — the guest stays in the room's lobby, told so */
+  private mmNoPhone() {
+    const mm = this.mm;
+    if (!mm) return;
+    const name = mm.peer.name;
+    this.app.link.toGuests({ type: 'mm-note', text: 'Your phone didn’t join in time — scan the code, then ask the host to try again' });
+    this.mmDone(false);
+    this.toast(`${name}’s phone never joined`, '#ffc53d');
+    this.go(this.onlineScreen());
+  }
+
+  /** host: the opponent's TV (or its phone) is gone */
+  private mmOpponentLeft() {
+    const playing = this.mm?.phase === 'play';
+    this.mmDone(true);
+    if (playing) this.quitToMenu();
+    const again = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Find another opponent')));
+    const back = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Back')));
+    const nav = new Nav([
+      { el: again, onSelect: () => (this.app.input.padCount ? this.startQuickMatch() : this.go(this.onlineScreen())) },
+      { el: back, onSelect: () => this.go(this.onlineScreen()) },
+    ]);
+    const sheet = h('div', { class: 'sheet panel' }, h('h2', null, 'Your opponent left'), h('div', { class: 'hintline' }, 'The match was called off'), h('div', { class: 'menu' }, again, back));
+    this.go(this.navScreen('opponentleft', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.onlineScreen()), { title: 'Your opponent left', hint: 'A to choose' }));
+  }
+
+  /** host, "Play again": the same two players, another world */
+  private mmRematch() {
+    const mm = this.mm;
+    if (!mm) return;
+    const seats = this.mmSeats(true);
+    if (seats) {
+      this.mmStart(seats.mine, seats.theirs);
+      return;
+    }
+    mm.phase = 'wait';
+    mm.at = performance.now();
+    mm.guestAt = this.app.link.guests.some((g) => g.gid === mm.peer.gid) ? mm.at : 0;
+    this.quickScreen({ kind: 'again', name: mm.peer.name }, 'Waiting for your opponent');
   }
 
   // team presets from the humans present
@@ -1022,14 +1291,23 @@ export class Flow {
     const headline = anyHuman ? (humansWon ? `${winTeam.name} wins!` : 'CPU wins!') : `${winTeam.name} wins!`;
     const st = this.stats;
     const statRow = (k: string, a: number | string, b: number | string) => [h('span', null, k), h('b', null, String(a)), h('b', null, String(b))];
-    const again = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Rematch')));
+    // (a quick match: Play again with the same opponent, or Leave)
+    const mmHost = this.mm?.role === 'host' && this.mm.phase === 'play';
+    const again = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, mmHost ? 'Play again' : 'Rematch')));
     const other = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, this.mode === 'kaleido' ? 'New Kaleido Rally' : 'Another world')));
-    const menu = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Main menu')));
-    const nav = new Nav([
-      { el: again, onSelect: () => this.lastCfg && this.beginMatch(this.lastCfg.world, true) },
-      { el: other, onSelect: () => (this.mode === 'kaleido' ? this.beginMatch(this.shuffledWorlds()[0]) : this.go(this.worldScreen())) },
-      { el: menu, onSelect: () => this.quitToMenu() },
-    ]);
+    const menu = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, mmHost ? 'Leave' : 'Main menu')));
+    const nav = new Nav(
+      mmHost
+        ? [
+            { el: again, onSelect: () => this.mmRematch() },
+            { el: menu, onSelect: () => this.mmLeave() },
+          ]
+        : [
+            { el: again, onSelect: () => this.lastCfg && this.beginMatch(this.lastCfg.world, true) },
+            { el: other, onSelect: () => (this.mode === 'kaleido' ? this.beginMatch(this.shuffledWorlds()[0]) : this.go(this.worldScreen())) },
+            { el: menu, onSelect: () => this.quitToMenu() },
+          ],
+    );
     const sheet = h(
       'div',
       { class: 'sheet panel', style: `--c:${winTeam.color}` },
@@ -1049,9 +1327,9 @@ export class Flow {
         ...statRow('Fastest shot', `${Math.round(st.fastest[0])} km/h`, `${Math.round(st.fastest[1])} km/h`),
       ),
       h('div', { class: 'hintline' }, `Longest rally: ${st.longest} shots`),
-      h('div', { class: 'menu' }, again, other, menu),
+      h('div', { class: 'menu' }, ...(mmHost ? [again, menu] : [again, other, menu])),
     );
-    return this.navScreen('results', h('div', { class: 'screen center results' }, sheet), nav, () => this.quitToMenu(), { title: humansWon ? 'You won!' : 'Match over', hint: 'A to choose' });
+    return this.navScreen('results', h('div', { class: 'screen center results' }, sheet), nav, () => (mmHost ? this.mmLeave() : this.quitToMenu()), { title: humansWon ? 'You won!' : 'Match over', hint: mmHost ? 'A play again · B leave' : 'A to choose' });
   }
 
   // ---------------------------------------------------------------- match lifecycle
@@ -1293,7 +1571,7 @@ export class Flow {
     const leave = item('Leave match');
     const nav = new Nav([
       { el: resume, onSelect: () => this.go(null) },
-      { el: leave, onSelect: () => this.leaveGuestMatch() },
+      { el: leave, onSelect: () => (this.mm ? this.mmGuestExit('') : this.leaveGuestMatch()) },
     ]);
     const sheet = h('div', { class: 'sheet panel', style: 'width:auto;min-width:calc(var(--u)*56)' }, h('h2', null, 'Menu'), h('div', { class: 'hintline' }, 'The match goes on without you'), h('div', { class: 'menu' }, resume, leave));
     return this.navScreen('guestpause', h('div', { class: 'screen center' }, sheet), nav, () => this.go(null), { title: 'Menu', hint: 'A to choose · B back' });
@@ -1376,6 +1654,8 @@ export class Flow {
   }
 
   private quitToMenu() {
+    // (quitting a quick match from the pause menu: the guest is sent home)
+    this.mmDone(true);
     this.tourIdx = -1;
     this.lab = false;
     this.versusEnd = null;

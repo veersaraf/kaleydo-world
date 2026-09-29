@@ -3455,3 +3455,102 @@ kbd {
 .lobby.noroom .join {
   display: none;
 }
+
+/* Play online: three cards */
+.online .sheet {
+  width: min(calc(var(--u) * 112), 68vw);
+}
+
+.ocard h3 {
+  font-size: calc(var(--u) * 3);
+}
+
+.ocard p {
+  font-size: calc(var(--u) * 1.6);
+}
+
+.onote {
+  min-height: calc(var(--u) * 2);
+  font-size: calc(var(--u) * 1.6);
+  font-weight: 700;
+  color: #b7791f;
+}
+
+.join.nudge {
+  animation: nudge 0.5s ease-in-out 3;
+}
+
+@keyframes nudge {
+  50% {
+    transform: scale(1.04);
+    box-shadow: 0 0 0 calc(var(--u) * 0.6) #ffc53d;
+  }
+}
+
+/* Quick match: waiting for an opponent */
+.quick .sheet {
+  align-items: center;
+  text-align: center;
+  width: min(calc(var(--u) * 72), 90vw);
+}
+
+.qhead {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: calc(var(--u) * 4.6);
+  line-height: 1.1;
+}
+
+.qtimer {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: calc(var(--u) * 7);
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.qsub {
+  font-size: calc(var(--u) * 2.2);
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+.qphones {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: calc(var(--u) * 1);
+}
+
+.qspin {
+  display: flex;
+  gap: calc(var(--u) * 1.2);
+}
+
+.qspin i {
+  width: calc(var(--u) * 1.8);
+  height: calc(var(--u) * 1.8);
+  border-radius: 50%;
+  background: var(--accent);
+  animation: qbob 1s ease-in-out infinite;
+}
+
+.qspin i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.qspin i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+.quick.found .qspin i,
+.quick.again .qspin i {
+  background: #17966a;
+}
+
+@keyframes qbob {
+  50% {
+    transform: translateY(calc(var(--u) * -1.2));
+    opacity: 0.4;
+  }
+}

@@ -218,6 +218,10 @@ export class GuestLobby {
   onShow: () => void = () => {};
   onHide: () => void = () => {};
   state: LobbyState = 'joining';
+  /** quick match: who this TV was paired with (its lobby then says so) */
+  matchedWith = '';
+  /** a line from the host (e.g. its opponent's phone never came), shown under the roster */
+  note = '';
   private dead: 'hostgone' | 'noroom' | null = null;
   private head: HTMLElement;
   private sub: HTMLElement;
@@ -274,7 +278,7 @@ export class GuestLobby {
     this.state = this.dead ?? (L.roster ? 'in' : 'joining');
     const R = L.roster;
     const me = L.guestId();
-    const sig = JSON.stringify([this.state, this.code, R, L.online]);
+    const sig = JSON.stringify([this.state, this.code, R, L.online, this.matchedWith, this.note]);
     if (!force && sig === this.sig) return;
     this.sig = sig;
     this.el.className = `screen lobby ${this.state}`;
@@ -294,17 +298,18 @@ export class GuestLobby {
       return;
     }
     if (this.state === 'joining') {
-      this.sub.append(L.online ? 'Joining…' : 'Connecting…');
+      this.sub.append(this.matchedWith ? `Matched with ${this.matchedWith}! ` : '', L.online ? 'Joining…' : 'Connecting…');
       this.status.textContent = 'Waiting for the host…';
       return;
     }
-    this.sub.append(R?.host ? `with ${R.host}` : 'with the host');
+    this.sub.append(this.matchedWith ? `Matched with ${this.matchedWith}!` : R?.host ? `with ${R.host}` : 'with the host');
     const pads = R?.pads ?? [];
     const guests = R?.guests ?? [];
     this.roster.append(
       h('div', { class: 'lcol' }, h('h4', null, pads.length ? `Phones (${pads.length})` : 'Phones'), ...(pads.length ? pads.map((p) => h('div', { class: 'lp', style: `--c:${p.color ?? '#9aa'}` }, h('i'), h('span', null, p.name), p.slot !== undefined ? h('small', null, `P${p.slot + 1}${p.via === me ? ' · yours' : ''}`) : null)) : [h('div', { class: 'lnone' }, 'None yet — scan the code with your phone')])),
       h('div', { class: 'lcol' }, h('h4', null, `TVs (${guests.length + 1})`), h('div', { class: 'lp tv' }, h('i'), h('span', null, R?.host ? `${R.host}’s TV` : 'Host'), h('small', null, 'host')), ...guests.map((g) => h('div', { class: 'lp tv' }, h('i'), h('span', null, g.name), h('small', null, g.gid === me ? 'you' : '')))),
     );
-    this.status.textContent = 'Waiting for the host to start…';
+    const mine = pads.filter((p) => p.via === me).length;
+    this.status.textContent = this.note || (this.matchedWith && !mine ? 'Scan the code with your phone to play' : 'Waiting for the host to start…');
   }
 }
