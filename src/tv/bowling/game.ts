@@ -49,6 +49,8 @@ const SLIDE_Z = FOUL_Z + 0.42;
 const APPROACH_T = 1.35;
 /** the ball sits this far to the bowling-hand side of the body */
 const HAND_X = 0.2;
+/** a phone's message is at most this old when it's played from then, s */
+const MAX_AGE = 0.3;
 /** the phone measures the swing's real direction; the lane wants a fraction of it
  *  (0.1 rad over 18 m is 1.8 m — a sure gutter — so a small pull stays a small miss) */
 const ANGLE_GAIN = 0.1;
@@ -122,8 +124,9 @@ export class BowlingGame {
   lastThrow: BallThrow | null = null;
   /** how the last ball went (for the camera's reaction shot) */
   lastMark: BowlMark | null = null;
-  /** a release that came before the bowler reached the line: hurry there, then let go */
-  private pending: { speed: number; angle: number; spin: number } | null = null;
+  /** a release that came before the bowler reached the line: hurry there, then let go
+   *  (`age`: how old the phone's message was, the ball's flight is caught up by that much when it goes) */
+  private pending: { speed: number; angle: number; spin: number; age: number } | null = null;
 
   constructor(
     public bowlers: Bowler[],
@@ -144,18 +147,25 @@ export class BowlingGame {
 
   // ------------------------------------------------------------ input
 
-  /** the grip went down (hold the ball) or up (let it go — the release follows) */
-  grip(slot: number, down: boolean) {
+  /**
+   * The grip went down (hold the ball) or up (let it go — the release follows).
+   * `age`: the message is that many seconds old (the phone's detector, the network):
+   * the walk-up started that long ago.
+   */
+  grip(slot: number, down: boolean, age = 0) {
     const b = this.bowler;
     if (b.slot !== slot) return;
     if (this.state === 'intro' && down) return this.startNow();
     if (down && this.state === 'ready') {
+      age = this.ageOf(age);
       this.gripping = true;
-      this.gripT = this.t;
+      this.gripT = this.t - age;
       this.gripUpT = -1;
       this.setState('approach');
+      // (the four steps started `age` ago: the approach clock and the body's are that far on)
+      this.stateT0 -= age;
       this.body.phase = 'approach';
-      this.body.t = 0;
+      this.body.t = age;
       this.onEvent({ type: 'grip', bowler: b });
     } else if (!down && this.gripping) {
       // the release follows at once; if it doesn't (the phone left the bowling
@@ -165,10 +175,15 @@ export class BowlingGame {
     }
   }
 
-  /** the phone measured a release: speed m/s, angle rad (+ right), spin −1..1 */
-  release(slot: number, r: { speed: number; angle: number; spin: number }) {
+  /**
+   * The phone measured a release: speed m/s, angle rad (+ right), spin −1..1.
+   * `age`: the ball left the hand that many seconds ago — it's rolled on by that much at once,
+   * so it isn't late.
+   */
+  release(slot: number, r: { speed: number; angle: number; spin: number }, age = 0) {
     const b = this.bowler;
     if (b.slot !== slot) return;
+    age = this.ageOf(age);
     if (this.state === 'ready') {
       // a release with no grip first (a swipe): walk up from the stance
       this.setState('approach');
@@ -178,15 +193,19 @@ export class BowlingGame {
     if (this.state !== 'approach' || this.pending) return;
     this.gripUpT = -1;
     // a tap with no swing behind it: not a throw (a thumb brushing the grip)
-    if (r.speed < 2.8 && this.t - this.gripT < 0.6) return this.cancel();
+    if (r.speed < 2.8 && this.t - age - this.gripT < 0.6) return this.cancel();
     const angle = r.angle * ANGLE_GAIN;
     // a little wrist turn is a little hook, a real twist a big one: a stray turn
     // doesn't wreck a straight ball; the hardest twist curves about 23 boards
     const spin = Math.sign(r.spin) * Math.pow(Math.min(1, Math.abs(r.spin)), 1.5) * SPIN_GAIN;
     // the ball leaves the hand at the foul line: if the bowler isn't there yet,
     // they hurry through the last steps and let go on arrival
-    if (this.body.step >= 0.9) this.throwBall(r.speed, angle, spin);
-    else this.pending = { speed: r.speed, angle, spin };
+    if (this.body.step >= 0.9) this.throwBall(r.speed, angle, spin, 0, age);
+    else this.pending = { speed: r.speed, angle, spin, age };
+  }
+
+  private ageOf(age: number) {
+    return Number.isFinite(age) ? clamp(age, 0, MAX_AGE) : 0;
   }
 
   /** back to the stance, ball in hand, as if the grip never happened */
@@ -287,7 +306,7 @@ export class BowlingGame {
         if (this.pending && u >= 0.97) {
           const r = this.pending;
           this.pending = null;
-          this.throwBall(r.speed, r.angle, r.spin);
+          this.throwBall(r.speed, r.angle, r.spin, 0, r.age);
           break;
         }
         if (b.cpu !== null && t >= this.cpuReleaseAt) this.cpuThrow(b);
@@ -321,7 +340,8 @@ export class BowlingGame {
     return -1.6 + ((u - 0.75) / 0.25) * 2.3; // forward to the release
   }
 
-  private throwBall(speed: number, angle: number, spin: number, dx = 0) {
+  /** `age`: it left the hand this long ago — the roll is stepped forward by that much now */
+  private throwBall(speed: number, angle: number, spin: number, dx = 0, age = 0) {
     const b = this.bowler;
     const x = clamp(this.releaseX(b) + dx, -LANE.width / 2 + LANE.ballR, LANE.width / 2 - LANE.ballR);
     const th: BallThrow = { x, speed: clamp(speed, 2.5, 10.5), angle: clamp(b.aim + angle, -0.2, 0.2), spin: clamp(spin, -1, 1) };
@@ -331,11 +351,13 @@ export class BowlingGame {
     this.armLive = null;
     this.plan = null;
     this.body.phase = 'release';
-    this.body.t = 0;
+    this.body.t = age;
     this.body.holding = false;
     this.body.spin = th.spin;
     this.setState('lane');
     this.onEvent({ type: 'release', bowler: b, t: th, kph: th.speed * 3.6 });
+    // (the physics takes at most 0.1 s a step: catch up in the same fixed sub-steps as the frames do)
+    for (let left = age; left > 1e-6 && this.state !== 'result'; left -= 0.05) this.phys.step(Math.min(0.05, left));
   }
 
   /**

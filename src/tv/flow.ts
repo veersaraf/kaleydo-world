@@ -159,15 +159,16 @@ export class Flow {
       if (this.app.sport === 'baseball' && !this.screen && this.baseballButton(slot, b, down)) return;
       if (down) this.button(slot, b);
     };
-    app.input.onGuard = (slot, down) => {
-      if (!this.screen || !down) this.app.duel?.guard(slot, down);
+    // (a phone's message is `age` s old when it gets here: the games play it from then)
+    app.input.onGuard = (slot, down, age) => {
+      if (!this.screen || !down) this.app.duel?.guard(slot, down, age);
     };
-    app.input.onSlash = (slot, a) => {
-      if (!this.screen) this.app.duel?.slash(slot, a);
+    app.input.onSlash = (slot, a, age) => {
+      if (!this.screen) this.app.duel?.slash(slot, a, age);
     };
     app.onDuelEvent = (e) => this.duelEvent(e);
-    app.input.onDraw = (slot, down) => {
-      if (!this.screen) this.app.archery?.draw(slot, down);
+    app.input.onDraw = (slot, down, age) => {
+      if (!this.screen) this.app.archery?.draw(slot, down, age);
     };
     app.onArcheryEvent = (e) => this.archeryEvent(e);
     app.onBaseballEvent = (e) => this.baseballEvent(e);
@@ -175,11 +176,11 @@ export class Flow {
       this.hrHud?.setReplay(on);
       if (on && !this.app.attract) this.audio?.sfx.ui('shift');
     };
-    app.input.onGrip = (slot, down) => {
-      if (!this.screen) this.app.bowl?.grip(slot, down);
+    app.input.onGrip = (slot, down, age) => {
+      if (!this.screen) this.app.bowl?.grip(slot, down, age);
     };
-    app.input.onBowl = (slot, r) => {
-      if (!this.screen) this.app.bowl?.release(slot, r);
+    app.input.onBowl = (slot, r, age) => {
+      if (!this.screen) this.app.bowl?.release(slot, r, age);
     };
     app.input.onArm = (slot, arm) => this.app.bowl?.setArm(slot, arm);
     app.onBowlEvent = (e) => this.bowlEvent(e);

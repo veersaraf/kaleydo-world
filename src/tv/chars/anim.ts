@@ -262,7 +262,8 @@ export class Animator {
       const [nx, ny, nz] = this.phone.n;
       const f = V(nx, nz, -ny);
       norm(f);
-      lerpV(this.face, this.face, f, clamp(dt * 20 * this.mirror));
+      // (the phone's pose arrives already carried on to now: only a light hand on the stepping, not the ~50 ms trail of the old 20/s)
+      lerpV(this.face, this.face, f, 1 - Math.exp(-70 * dt * this.mirror));
     } else {
       // at rest the face looks forward / to the side
       const rest = V(hs * 0.55, 0.05, -0.8);

@@ -26,7 +26,7 @@ export interface SwingEv {
   slot: number;
   power: number;
   spin: number;
-  /** estimated real-time age of the swing when it arrived, seconds */
+  /** estimated real-time age of the swing when it arrived, seconds (0..SWING_AGE_MAX) */
   age: number;
   source: 'pad' | 'mouse' | 'key';
   side?: 'fh' | 'bh' | 'oh';
@@ -36,6 +36,114 @@ export interface SwingEv {
 }
 
 export type Btn = PadButton;
+
+/**
+ * The oldest a swing can be taken to be when it arrives, seconds: the same reach as the other
+ * timed messages (ageOf's 0.25). Through the cloud a swing is often 0.1–0.2 s old; clamping it
+ * lower reads a well-timed swing as late (see tennis/match.ts, whose late window is the narrow one).
+ */
+export const SWING_AGE_MAX = 0.25;
+
+/**
+ * The last few samples of something a phone streams at 20–30 Hz (its orientation: 6 numbers; the
+ * bowling arm: 1), by arrival time. What's drawn isn't the newest sample held until the next
+ * one comes (a staircase, half a step behind on average) and isn't eased towards it (a trail
+ * behind it either): `now()` carries the newest sample on by the time since it arrived, along
+ * the velocity of the last two steps, for a moment at most; `at()` reads what was on screen at a
+ * past instant (the pose a release was made in).
+ */
+export class Track {
+  private static readonly CAP = 16;
+  private t = new Float64Array(Track.CAP);
+  private rt = new Float64Array(Track.CAP);
+  private v: Float64Array;
+  private n = 0;
+  private head = 0;
+  constructor(readonly dim: number) {
+    this.v = new Float64Array(Track.CAP * dim);
+  }
+
+  /** arrival time (ms) of the newest sample, or −Infinity */
+  get last() {
+    return this.n ? this.t[this.idx(this.n - 1)] : -Infinity;
+  }
+
+  /** `rt`: the relay's clock when it forwarded the message (0 = unknown), which keeps the spacing honest when several arrive together */
+  push(t: number, rt: number, vals: ArrayLike<number>) {
+    const k = (this.head + this.n) % Track.CAP;
+    if (this.n < Track.CAP) this.n++;
+    else this.head = (this.head + 1) % Track.CAP;
+    this.t[k] = t;
+    this.rt[k] = rt;
+    for (let d = 0; d < this.dim; d++) this.v[k * this.dim + d] = vals[d];
+  }
+
+  clear() {
+    this.n = 0;
+    this.head = 0;
+  }
+
+  private idx(i: number) {
+    return (this.head + i) % Track.CAP;
+  }
+
+  /** ms between two samples: the relay's clock when it has one, else arrival */
+  private gap(a: number, b: number) {
+    const r = this.rt[b] - this.rt[a];
+    const d = this.rt[a] > 0 && this.rt[b] > 0 && r > 0 && r < 1000 ? r : this.t[b] - this.t[a];
+    return Math.max(1, d);
+  }
+
+  /**
+   * The newest sample carried on to `now` (ms): by the time since it arrived, at the rate of the last
+   * two intervals, but no further than `maxEx` ms (a stream that has stopped stays put). A change
+   * smaller than `dead` over those two intervals is a hand at rest (the phone rounds to 0.01):
+   * no velocity. False if there's nothing fresher than `stale` ms.
+   */
+  now(now: number, out: Float64Array | number[], maxEx = 45, dead = 0.015, stale = 400) {
+    if (!this.n) return false;
+    const b = this.idx(this.n - 1);
+    const age = now - this.t[b];
+    if (age > stale) return false;
+    const D = this.dim;
+    for (let d = 0; d < D; d++) out[d] = this.v[b * D + d];
+    if (this.n < 2 || maxEx <= 0) return true;
+    const a = this.idx(Math.max(0, this.n - 3));
+    const steps = Math.max(1, Math.min(2, this.n - 1));
+    const span = this.gap(a, b);
+    // (more than a step and a half beyond the newest is a guess too far, whatever maxEx says)
+    const ex = Math.min(Math.max(0, age), maxEx, (1.5 * span) / steps);
+    let mag = 0;
+    for (let d = 0; d < D; d++) mag += (this.v[b * D + d] - this.v[a * D + d]) ** 2;
+    if (Math.sqrt(mag) < dead) return true;
+    const k = ex / span;
+    for (let d = 0; d < D; d++) out[d] += (this.v[b * D + d] - this.v[a * D + d]) * k;
+    return true;
+  }
+
+  /** the value at time `t` (ms, the arrival clock): between the samples either side of it, else the nearest */
+  at(t: number, out: Float64Array | number[]) {
+    if (!this.n) return false;
+    const D = this.dim;
+    let hi = this.n - 1;
+    while (hi > 0 && this.t[this.idx(hi - 1)] >= t) hi--;
+    const b = this.idx(hi);
+    if (hi === 0 || this.t[b] <= t) {
+      for (let d = 0; d < D; d++) out[d] = this.v[b * D + d];
+      return true;
+    }
+    const a = this.idx(hi - 1);
+    const u = Math.min(1, Math.max(0, (t - this.t[a]) / Math.max(1, this.t[b] - this.t[a])));
+    for (let d = 0; d < D; d++) out[d] = this.v[a * D + d] + (this.v[b * D + d] - this.v[a * D + d]) * u;
+    return true;
+  }
+}
+
+/** A phone pose read from a track: the racket/blade (s, the phone's top) and the screen's normal (n), player frame. */
+export interface OriPose {
+  s: [number, number, number];
+  n: [number, number, number];
+}
 
 export class Input {
   seats: (Seat | null)[] = [null, null, null, null];
@@ -72,6 +180,11 @@ export class Input {
   private bowlDrag: { y: number; t: number; hist: { x: number; y: number; t: number }[] } | null = null;
   /** live racket orientation per slot (player frame: x right, y towards screen, z up) */
   racket: ({ s: [number, number, number]; n: [number, number, number]; t: number } | null)[] = [null, null, null, null];
+  /** the last few poses per slot (see Track), for reading them smoothly and at a past instant */
+  private oriTrack = [new Track(6), new Track(6), new Track(6), new Track(6)];
+  private armTrack = [new Track(1), new Track(1), new Track(1), new Track(1)];
+  private oriBuf = new Float64Array(6);
+  private oriOut: OriPose[] = [0, 1, 2, 3].map(() => ({ s: [0, 1, 0], n: [0, 0, 1] }));
   /** set by the app: while true the mouse drives swings (in matches) */
   mouseSwings = false;
   private mouse = { x: 0, y: 0, t: 0, hist: [] as { x: number; y: number; t: number }[], cool: 0 };
@@ -245,7 +358,7 @@ export class Input {
         this.onSeatsChanged();
         break;
       case 'swing':
-        this.onSwing({ slot: seat.slot, power: m.power, spin: m.spin, age: this.ageOf(rt, m.lat, m.age, 0.16), source: 'pad', side: m.side, path: m.path, attack: m.attack });
+        this.onSwing({ slot: seat.slot, power: m.power, spin: m.spin, age: this.ageOf(rt, m.lat, m.age, SWING_AGE_MAX), source: 'pad', side: m.side, path: m.path, attack: m.attack });
         break;
       case 'toss':
         this.onToss(seat.slot);
@@ -259,10 +372,19 @@ export class Input {
       case 'prep':
         this.onPrep(seat.slot, m.side);
         break;
-      case 'ori':
-        this.racket[seat.slot] = { s: m.s, n: m.n, t: performance.now() };
-        if (m.arm !== undefined) this.onArm(seat.slot, m.arm);
+      case 'ori': {
+        const now = performance.now();
+        this.racket[seat.slot] = { s: m.s, n: m.n, t: now };
+        this.oriBuf.set(m.s, 0);
+        this.oriBuf.set(m.n, 3);
+        this.oriTrack[seat.slot].push(now, rt, this.oriBuf);
+        if (m.arm !== undefined) {
+          this.oriBuf[0] = m.arm;
+          this.armTrack[seat.slot].push(now, rt, this.oriBuf);
+          this.onArm(seat.slot, m.arm);
+        }
         break;
+      }
       case 'grip':
         this.onGrip(seat.slot, m.down, this.ageOf(rt, m.lat));
         break;
@@ -279,6 +401,46 @@ export class Input {
         this.onDraw(seat.slot, m.down, this.ageOf(rt, m.lat));
         break;
     }
+  }
+
+  /**
+   * The phone's pose to draw now (`now`, ms): the newest carried on by the time since it arrived
+   * (see Track.now). Null if the stream has stopped. The object is reused: read it, don't keep it.
+   * `maxEx` 0 gives the newest sample exactly (for an aim, where a steady hand shouldn't be
+   * amplified).
+   */
+  oriNow(slot: number, now = performance.now(), maxEx = 45): OriPose | null {
+    const b = this.oriBuf;
+    if (!this.oriTrack[slot].now(now, b, maxEx, 0.015)) return null;
+    return this.oriPose(slot, b);
+  }
+
+  /** the pose that arrived nearest to time `t` (ms, performance.now()'s clock): a release's, a draw's */
+  oriAt(slot: number, t: number): OriPose | null {
+    const b = this.oriBuf;
+    if (!this.oriTrack[slot].at(t, b)) return null;
+    return this.oriPose(slot, b);
+  }
+
+  private oriPose(slot: number, b: Float64Array) {
+    const o = this.oriOut[slot];
+    // (a carried-on pose is no longer exactly unit length)
+    const ls = Math.hypot(b[0], b[1], b[2]) || 1;
+    o.s[0] = b[0] / ls;
+    o.s[1] = b[1] / ls;
+    o.s[2] = b[2] / ls;
+    const ln = Math.hypot(b[3], b[4], b[5]) || 1;
+    o.n[0] = b[3] / ln;
+    o.n[1] = b[4] / ln;
+    o.n[2] = b[5] / ln;
+    return o;
+  }
+
+  /** the bowling arm's angle to draw now (radians), carried on like the pose; null if the phone isn't streaming it */
+  armNow(slot: number, now = performance.now(), maxEx = 45): number | null {
+    const b = this.oriBuf;
+    // (rounded to 0.01 rad: a change under 0.012 over two steps is standing still)
+    return this.armTrack[slot].now(now, b, maxEx, 0.012) ? b[0] : null;
   }
 
   // ---------------------------------------------------------------- local input

@@ -831,5 +831,116 @@ function cpuGame(skills: number[], seed: number, opts: ArcheryOptions = {}, chec
   ok(lastOf(ev, 'score')?.who === 1, 'the CPU shoots its own arrow');
 }
 
+
+// ---------------------------------------------------------------- latency: a message that's `age` s old
+{
+  // the draw began `age` ago: it's that far along
+  const { g } = start([person(0)], { layout: range([{}]) });
+  g.draw(0, true, 0.3);
+  near(g.archer.draw, 0.3 / RANGE.drawT, 1e-9, 'a draw begun 0.3 s ago is a third drawn');
+  near(g.archer.t, 0.3, 1e-9, 'and 0.3 s into its phase');
+  run(g, 0.3);
+  near(g.archer.draw, 0.6 / RANGE.drawT, 1e-6, 'and carries on from there');
+  const h = start([person(0)], { layout: range([{}]) });
+  h.g.draw(0, true, 9);
+  ok(h.g.archer.phase === 'draw', 'a message can only be so old (clamped)');
+}
+{
+  // let go with age: the same arrow as one let go that much earlier
+  const shot = (age: number) => {
+    const { g } = start([person(0)], { layout: range([{}], 2) });
+    const a = aimAt(g, g.mainTarget());
+    g.aim(0, a.yaw, a.pitch);
+    g.draw(0, true);
+    until(g, () => g.archer.phase === 'hold');
+    run(g, 0.3);
+    if (age > 0) run(g, age);
+    g.draw(0, false, age);
+    const early = { z: g.shotArrow!.z, y: g.shotArrow!.y, x: g.shotArrow!.x, t: g.t };
+    until(g, () => g.state !== 'flight', 5);
+    return { g, s: g.last!, early };
+  };
+  const a = shot(0);
+  const b = shot(0.12);
+  near(b.s.px, a.s.px, 2e-3, 'the arrow let go with age 0.12 lands where the one let go on time does (x)');
+  near(b.s.py, a.s.py, 2e-3, '… (y)');
+  near(b.s.flightT, a.s.flightT, 0.02, '… after the same flight');
+  ok(b.s.points === a.s.points, 'and scores the same');
+  // just after the release it is already 0.12 s along
+  const c = start([person(0)], { layout: range([{}], 2) });
+  const ac = aimAt(c.g, c.g.mainTarget());
+  c.g.aim(0, ac.yaw, ac.pitch);
+  c.g.draw(0, true);
+  until(c.g, () => c.g.archer.phase === 'hold');
+  run(c.g, 0.3);
+  c.g.draw(0, false);
+  run(c.g, 0.12);
+  near(b.early.z, c.g.shotArrow!.z, 2e-3, 'the aged arrow is where the on-time one is 0.12 s after its release');
+  near(b.early.y, c.g.shotArrow!.y, 2e-3, '… (height)');
+}
+{
+  // the aim is the aim of then: a jerk of the trigger finger in the last moments doesn't count
+  const { g } = start([person(0)], { layout: range([{}]) });
+  const A = aimAt(g, g.mainTarget());
+  const B = { yaw: A.yaw + 0.05, pitch: A.pitch - 0.03 };
+  g.aim(0, A.yaw, A.pitch);
+  g.draw(0, true);
+  until(g, () => g.archer.phase === 'hold');
+  const frame = () => {
+    g.step(DT);
+  };
+  for (let t = 0; t < 0.3; t += DT) (g.aim(0, A.yaw, A.pitch), frame());
+  // the phone jerks as the button lifts: 0.1 s of B, then the message arrives
+  for (let t = 0; t < 0.1; t += DT) (g.aim(0, B.yaw, B.pitch), frame());
+  g.aim(0, B.yaw, B.pitch);
+  g.draw(0, false, 0.15);
+  near(g.archer.yaw, A.yaw, 1e-6, 'shot along the aim from 0.15 s ago (yaw)');
+  near(g.archer.pitch, A.pitch, 1e-6, '… (pitch)');
+  // with no age it is the current one
+  const h = start([person(0)], { layout: range([{}]) });
+  h.g.aim(0, A.yaw, A.pitch);
+  h.g.draw(0, true);
+  until(h.g, () => h.g.archer.phase === 'hold');
+  h.g.aim(0, B.yaw, B.pitch);
+  h.g.draw(0, false);
+  near(h.g.archer.yaw, B.yaw, 1e-6, 'without an age it is the aim right now');
+  // and halfway through the change it's between (the log is interpolated)
+  const k = start([person(0)], { layout: range([{}]) });
+  k.g.aim(0, A.yaw, A.pitch);
+  k.g.draw(0, true);
+  until(k.g, () => k.g.archer.phase === 'hold');
+  k.g.aim(0, A.yaw, A.pitch);
+  k.g.step(0.1);
+  k.g.aim(0, B.yaw, B.pitch);
+  k.g.step(0.1);
+  k.g.aim(0, B.yaw, B.pitch);
+  k.g.draw(0, false, 0.1);
+  within(k.g.archer.yaw, A.yaw, B.yaw, 'between the frames either side of the instant');
+}
+{
+  // the draw is judged as of the release: a tap that took 0.05 s on the phone is put down, whatever the frames say
+  const { g } = start([person(0)], { layout: range([{}]) });
+  g.draw(0, true, 0);
+  run(g, 0.3);
+  g.draw(0, false, 0.28);
+  ok(g.archer.phase === 'nock' && g.state === 'aim', 'released 0.02 s into the draw: put down, not shot', [g.archer.phase, g.state]);
+  const h = start([person(0)], { layout: range([{}]) });
+  h.g.draw(0, true, 0);
+  run(h.g, 0.3);
+  h.g.draw(0, false, 0);
+  ok(h.g.state === 'flight' || h.g.state === 'result', 'the same release with no age is a shot');
+  // a weaker draw at the release than now: slower arrow
+  const s1 = start([person(0)], { layout: range([{}]) });
+  s1.g.draw(0, true, 0);
+  run(s1.g, 0.6);
+  s1.g.draw(0, false, 0.3);
+  const s2 = start([person(0)], { layout: range([{}]) });
+  s2.g.draw(0, true, 0);
+  run(s2.g, 0.6);
+  s2.g.draw(0, false, 0);
+  const sp = (g: ArcheryGame) => (g as unknown as { shotSpeed: number }).shotSpeed;
+  ok(sp(s1.g) < sp(s2.g) - 1, 'the arrow leaves at the draw it had 0.3 s ago', [sp(s1.g), sp(s2.g)]);
+}
+
 console.log(fails ? `${fails} of ${checks} archery checks FAILED.` : `All ${checks} archery checks passed.`);
 if (fails) process.exit(1);
