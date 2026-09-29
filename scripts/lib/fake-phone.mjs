@@ -237,8 +237,9 @@ export function phone() {
     /** a forehand (or a bat swing: the same turn) whose fastest moment is `inMs` from now — or at `at` (Date.now() ms) */
     tennis({ inMs = 600, at = 0 } = {}) {
       if (at) inMs = Math.max(0, at - Date.now());
-      sw = { kind: 'tennis', tp: now() + inMs / 1000 };
-      return new Promise((done) => setTimeout(() => ((sw = null), done()), inMs + 700));
+      const mine = (sw = { kind: 'tennis', tp: now() + inMs / 1000 });
+      // (a later swing isn't cut short by this one's timer)
+      return new Promise((done) => setTimeout(() => (sw === mine && (sw = null), done()), inMs + 700));
     },
     /** turn the phone (smoothly, over at least `ms` — never faster than ~2.5 rad/s: aiming, not swinging)
      *  to hold its top along `top`, screen facing `screen` */

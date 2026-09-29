@@ -30,6 +30,7 @@ const RANGE_FULL = RANGE.fullSpeed;
 import type { DuelEvent, Duelist } from './duel/types';
 import type { BowlEvent } from './bowling/game';
 import type { PadMode } from '../shared/protocol';
+import type { NetEnd, NetStart } from '../shared/net';
 
 type Level = 'rookie' | 'club' | 'pro' | 'ace';
 
@@ -141,6 +142,12 @@ export class Flow {
   private lastCfg: { cfg: MatchConfig; world: string } | null = null;
   private tossHintShown = false;
   private resultsShown = false;
+  // ---- online: this TV is a guest in another TV's match (src/tv/net/guest.ts)
+  private guestRun: NetStart | null = null;
+  private guestPrevMode: 'quick' | 'kaleido' = 'quick';
+  private guestBadge: HTMLElement | null = null;
+  /** the room's lobby sets this: called when the guest is done with a match (results, or the host left) and the lobby should be shown again. Without it: the main menu. */
+  onGuestReturn: (() => void) | null = null;
 
   constructor(private app: App) {
     this.root = document.getElementById('ui')!;
@@ -246,6 +253,13 @@ export class Flow {
       this.syncPads(true);
     };
     app.onFrame = (dt) => this.frame(dt);
+    // online: a host's match streamed to this TV, and this TV's match streamed to its guests
+    app.onGuestStart = (s) => this.beginGuestMatch(s);
+    app.onGuestEnd = (e) => this.guestMatchOver(e);
+    app.onGuestStatus = (on) => this.guestStatus(on);
+    app.onGuestReplay = (on) => this.hud?.setReplay(on);
+    app.onGuestHud = (text, sub, cls) => this.hud?.say(text, sub, cls ?? '');
+    app.net.kaleido = () => this.mode === 'kaleido';
     app.input.mouseSwings = this.settings.mouse;
     app.splitPref = this.settings.split;
     app.onSplit = (on) => this.hud?.setSplit(on ? app.rig2 : null);
@@ -1023,6 +1037,126 @@ export class Flow {
     this.syncPads(true);
   }
 
+  // ---------------------------------------------------------------- online: guest of another TV's match
+
+  /**
+   * The host started a match (App.onGuestStart): hide the menus, show the HUD, and show the host's
+   * match (a stream from src/tv/net/guest.ts; this TV doesn't simulate).
+   */
+  beginGuestMatch(start: NetStart) {
+    this.tourIdx = -1;
+    this.lab = false;
+    this.versusEnd = null;
+    if (!this.guestRun) this.guestPrevMode = this.mode;
+    // (no Kaleido shifts of our own: the host's `world` messages move the world)
+    this.mode = 'quick';
+    this.guestRun = start;
+    this.go(null);
+    this.stats = this.freshStats();
+    this.pointsSinceShift = 0;
+    // (the host's results screen isn't ours: its `end` message brings ours)
+    this.resultsShown = true;
+    this.tossHintShown = true;
+    this.teams = [{ ...start.teams[0] }, { ...start.teams[1] }];
+    this.app.paused = false;
+    this.app.startGuestMatch(start);
+    this.hud?.el.remove();
+    this.hud = new Hud(this.teams, this.app.rig);
+    this.hudLayer.append(this.hud.el);
+    const def = worldDef(start.world);
+    this.hud.showBanner(def, `${this.teams[0].name}  vs  ${this.teams[1].name}`);
+    this.hud.setScore(this.app.match!);
+    this.syncScoreboard();
+    if (this.audio) {
+      this.audio.playSong(def.song);
+      this.audio.music.setIntensity(2);
+      this.audio.sfx.cheer(0.5);
+    }
+  }
+
+  /** the host's match ended (App.onGuestEnd): the results, or — if the host abandoned it — back out */
+  private guestMatchOver(end: NetEnd) {
+    if (!this.guestRun) return;
+    if (end.winner < 0) {
+      this.toast('The host ended the match');
+      this.leaveGuestMatch();
+      return;
+    }
+    this.go(this.guestResultsScreen(end));
+  }
+
+  /** done with the host's match: the lobby again (or the main menu) */
+  leaveGuestMatch() {
+    this.guestRun = null;
+    this.mode = this.guestPrevMode;
+    this.guestStatus(false);
+    if (this.onGuestReturn) {
+      this.hud?.el.remove();
+      this.hud = null;
+      this.app.stopGuestMatch();
+      this.go(null);
+      this.onGuestReturn();
+    } else this.quitToMenu();
+  }
+
+  /** "reconnecting…" while the host's snapshots have stopped coming */
+  private guestStatus(on: boolean) {
+    if (on && !this.guestBadge) {
+      this.guestBadge = h(
+        'div',
+        { style: 'position:absolute;top:2.4%;left:50%;transform:translateX(-50%);padding:.45em 1.1em;border-radius:99px;background:rgba(18,18,30,.74);color:#fff;font:600 15px/1 var(--font);letter-spacing:.1em;text-transform:uppercase;pointer-events:none' },
+        'reconnecting…',
+      );
+      this.hudLayer.append(this.guestBadge);
+    } else if (!on && this.guestBadge) {
+      this.guestBadge.remove();
+      this.guestBadge = null;
+    }
+  }
+
+  private guestPauseScreen(): Screen {
+    const item = (label: string) => h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, label)));
+    const resume = item('Resume');
+    const leave = item('Leave match');
+    const nav = new Nav([
+      { el: resume, onSelect: () => this.go(null) },
+      { el: leave, onSelect: () => this.leaveGuestMatch() },
+    ]);
+    const sheet = h('div', { class: 'sheet panel', style: 'width:auto;min-width:calc(var(--u)*56)' }, h('h2', null, 'Menu'), h('div', { class: 'hintline' }, 'The match goes on without you'), h('div', { class: 'menu' }, resume, leave));
+    return this.navScreen('guestpause', h('div', { class: 'screen center' }, sheet), nav, () => this.go(null), { title: 'Menu', hint: 'A to choose · B back' });
+  }
+
+  private guestResultsScreen(end: NetEnd): Screen {
+    const w = end.winner as 0 | 1;
+    const winTeam = this.teams[w];
+    const st = this.stats;
+    const statRow = (k: string, a: number | string, b: number | string) => [h('span', null, k), h('b', null, String(a)), h('b', null, String(b))];
+    const back = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Back')));
+    const nav = new Nav([{ el: back, onSelect: () => this.leaveGuestMatch() }]);
+    const sheet = h(
+      'div',
+      { class: 'sheet panel', style: `--c:${winTeam.color}` },
+      h('div', { class: 'winner' }, `${winTeam.name} wins!`),
+      h('div', { class: 'final' }, `${end.games[0]} – ${end.games[1]}`),
+      h(
+        'div',
+        { class: 'stats' },
+        h('span', { class: 'h' }, ''),
+        h('b', { class: 'h' }, this.teams[0].name),
+        h('b', { class: 'h' }, this.teams[1].name),
+        ...statRow('Points won', st.points[0], st.points[1]),
+        ...statRow('Aces', st.aces[0], st.aces[1]),
+        ...statRow('Winners', st.winners[0], st.winners[1]),
+        ...statRow('Errors', st.errors[0], st.errors[1]),
+        ...statRow('Perfect hits', st.perfects[0], st.perfects[1]),
+        ...statRow('Fastest shot', `${Math.round(st.fastest[0])} km/h`, `${Math.round(st.fastest[1])} km/h`),
+      ),
+      h('div', { class: 'hintline' }, `Longest rally: ${st.longest} shots`),
+      h('div', { class: 'menu' }, back),
+    );
+    return this.navScreen('results', h('div', { class: 'screen center results' }, sheet), nav, () => this.leaveGuestMatch(), { title: 'Match over', hint: 'A to go back' });
+  }
+
   /**
    * A phone dropped out: whatever it was holding lets go (a grip, a guard, a drawn
    * string would otherwise stay held with nobody to release it), and the game waits
@@ -1049,6 +1183,11 @@ export class Flow {
   }
 
   private pause() {
+    if (this.guestRun && !this.screen) {
+      this.go(this.guestPauseScreen());
+      this.sound('select');
+      return;
+    }
     if ((!this.app.match && !this.app.bowl && !this.app.duel && !this.app.archery && !this.app.baseball) || this.app.attract || this.screen) return;
     this.app.paused = true;
     // a string pulled back when the game stops is let down, not loosed
@@ -2541,7 +2680,7 @@ export class Flow {
         this.hud?.setScore(m);
         this.hud?.setRally(0);
         this.syncScoreboard();
-        this.app.link.toAll({ type: 'score', line: `${m.score.pointText(0)}–${m.score.pointText(1)}  ·  ${m.score.games[0]}–${m.score.games[1]}` });
+        if (!this.guestRun) this.app.link.toAll({ type: 'score', line: `${m.score.pointText(0)}–${m.score.pointText(1)}  ·  ${m.score.games[0]}–${m.score.games[1]}` });
         // instant replay for highlights
         this.pointsSinceReplay++;
         const lh = this.lastHit;

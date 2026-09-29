@@ -53,6 +53,10 @@ import type { FrameView } from './worlds/base';
 import type { Pose } from './chars/pose';
 import type { MatchState } from './tennis/match';
 import type { V3 } from './core/math';
+import type { HostToGuest } from '../shared/protocol';
+import { isNetMsg, type NetEnd, type NetStart } from '../shared/net';
+import { NetHost } from './net/host';
+import { GuestStream, shadowMatch } from './net/guest';
 
 export class App {
   renderer: THREE.WebGLRenderer;
@@ -64,6 +68,23 @@ export class App {
   input: Input;
   match: Match | null = null;
   anims: Animator[] = [];
+  /** the animators' own poses (what an instant replay leaves standing while the host streams) */
+  private livePoses: Pose[] = [];
+  // ---- online rooms (see src/tv/net): this TV streams its match to guest TVs, or renders a host's
+  /** host: streams the match to the room's guest TVs */
+  net = new NetHost(this);
+  /** guest: the host's match being shown (this.match is its shadow); stats in guest.stats */
+  guest: GuestStream | null = null;
+  /** guest: the host started a match — default builds it; the flow builds its screens first, then calls startGuestMatch */
+  onGuestStart: (s: NetStart) => void = (s) => void this.startGuestMatch(s);
+  /** guest: the host's match is over (or was abandoned: winner −1) */
+  onGuestEnd: (e: NetEnd) => void = () => {};
+  /** guest: a caption from the host that no match event carries */
+  onGuestHud: (text: string, sub?: string, cls?: string) => void = () => {};
+  /** guest: snapshots stopped coming (true) / came back (false) */
+  onGuestStatus: (reconnecting: boolean) => void = () => {};
+  /** guest: the host is watching an instant replay (true) / stopped (false) */
+  onGuestReplay: (on: boolean) => void = () => {};
   attract = true;
   paused = false;
   private last = 0;
@@ -200,6 +221,8 @@ export class App {
       else if (m.type === 'pad-leave') this.input.padLeave(m.pid);
       else if (m.type === 'pad') this.input.padMsg(m.pid, m.rt, m.msg);
     };
+    // (a guest TV: the host's match stream arrives here; the lobby may wrap this and pass the rest on)
+    this.link.onHostMessage = (m) => this.guestMessage(m);
     this.link.connect();
     window.addEventListener('resize', () => this.resize());
     this.resize();
@@ -287,9 +310,18 @@ export class App {
     // restart the second camera's fly-in too
     this.rig2.setMode('menu');
     this.rig2.setMode('intro');
+    // guest TVs in the room get to see it
+    this.net.begin(this.match!, cfg, worldId);
+  }
+
+  /** another game (or a fresh match) replaces what was streaming to guests / being shown from a host */
+  private endStreams() {
+    this.net.stop();
+    this.guest = null;
   }
 
   private begin(cfg: MatchConfig, worldId: string) {
+    this.endStreams();
     this.stopBowling();
     this.stopDuel();
     this.stopArchery();
@@ -309,6 +341,7 @@ export class App {
     const humans = (team: number) => this.match!.players.some((p) => p.human && p.team === team);
     this.split = !cfg.attract && !cfg.practice && this.splitPref && humans(0) && humans(1);
     this.anims = this.match.players.map((p) => new Animator(p));
+    this.livePoses = this.anims.map((a) => a.pose);
     this.stage.setPlayers(this.match.players.map((p) => p.look));
     this.worldId = worldId;
     this.stage.setWorld(worldId);
@@ -360,7 +393,8 @@ export class App {
 
   private event(e: MatchEvent) {
     const m = this.match!;
-    if (!this.attract && (e.type === 'hit' || e.type === 'bounce' || e.type === 'net')) this.pendingEvents.push(e);
+    this.net.event(e);
+    if (!this.attract && !this.guest && (e.type === 'hit' || e.type === 'bounce' || e.type === 'net')) this.pendingEvents.push(e);
     if (e.type === 'hit') {
       if (m.hitstop > 0) {
         this.hitstop = m.hitstop;
@@ -495,6 +529,8 @@ export class App {
       cam: this.rig.cam,
       beat: this.beat(),
     };
+    // (the guest TVs see the match as it stands while the replay runs)
+    this.net.frame(this.livePoses);
     this.stage.update(view);
     this.stage.render(this.rig.cam);
     this.onFrame(realDt);
@@ -553,7 +589,8 @@ export class App {
     const wid = this.stage.current.def.id;
     if (wid !== this.quality.world) this.quality.setWorld(wid, now);
     this.quality.beginFrame();
-    if (this.replay) this.replayFrame(realDt);
+    if (this.guest) this.guestFrame(m, realDt);
+    else if (this.replay) this.replayFrame(realDt);
     else this.playFrame(m, realDt);
     this.quality.endFrame();
     if (!document.hidden) {
@@ -572,6 +609,7 @@ export class App {
     this.stopDuel();
     this.stopArchery();
     this.stopBaseball();
+    this.endStreams();
     this.match = null;
     this.replay = null;
     this.attract = attract;
@@ -804,6 +842,7 @@ export class App {
     this.stopDuel();
     this.stopArchery();
     this.stopBaseball();
+    this.endStreams();
     this.match = null;
     this.replay = null;
     this.attract = attract;
@@ -977,6 +1016,7 @@ export class App {
     this.stopDuel();
     this.stopArchery();
     this.stopBaseball();
+    this.endStreams();
     this.match = null;
     this.replay = null;
     this.attract = attract;
@@ -1114,6 +1154,7 @@ export class App {
     this.stopDuel();
     this.stopArchery();
     this.stopBaseball();
+    this.endStreams();
     this.match = null;
     this.replay = null;
     this.attract = attract;
@@ -1246,6 +1287,114 @@ export class App {
   }
   private tmpBall = new THREE.Vector3();
 
+  // ---------------------------------------------------------------- online: a guest TV
+
+  /**
+   * The link's host messages (role 'guest'): binary snapshot frames and the match stream's control
+   * messages. A `start` for a match already being shown is ignored (a late joiner makes the host repeat it).
+   */
+  guestMessage(m: HostToGuest | ArrayBuffer) {
+    if (m instanceof ArrayBuffer) {
+      this.guest?.push(m);
+      return;
+    }
+    if (m.type !== 'net' || !isNetMsg(m.msg)) return;
+    const msg = m.msg;
+    if (msg.type === 'start') {
+      if (this.guest?.id === msg.id) return;
+      this.onGuestStart(msg);
+    } else if (this.guest && msg.id === this.guest.id) this.guest.control(msg);
+  }
+
+  /**
+   * Show the host's match: build the same world and characters, and a SHADOW match (a Match that is
+   * never stepped) for the camera, HUD and worlds to read; the stream (src/tv/net/guest.ts) writes into it.
+   * The guest ignores its own keyboard, mouse and phones' swings.
+   */
+  startGuestMatch(start: NetStart): GuestStream {
+    this.endStreams();
+    this.stopBowling();
+    this.stopDuel();
+    this.stopArchery();
+    this.stopBaseball();
+    if (this.replay) this.setDof(null);
+    this.replay = null;
+    this.timeScale = 1;
+    this.smashCue = null;
+    this.smashAfter = 0;
+    this.rig.smash = this.rig2.smash = null;
+    for (const f of this.rec) this.recPool.push(f);
+    this.rec.length = 0;
+    this.pendingEvents = [];
+    this.attract = false;
+    this.paused = false;
+    this.hitstop = 0;
+    const shadow = shadowMatch(start);
+    this.match = shadow;
+    this.anims = [];
+    this.livePoses = [];
+    this.split = false;
+    if (this.splitOn) {
+      this.splitOn = false;
+      this.applyViews();
+    }
+    this.stage.setPlayers(shadow.players.map((p) => p.look));
+    this.worldId = start.world;
+    this.stage.setWorld(start.world);
+    this.stage.setTeamColors(start.halo[0], start.halo[1]);
+    this.rig.setMode('menu');
+    this.rig.setMode('intro');
+    this.guest = new GuestStream(start, {
+      event: (e) => this.event(e),
+      world: (id, transition, origin) => this.stage.setWorld(id, { transition, origin }),
+      hud: (text, sub, cls) => this.onGuestHud(text, sub, cls),
+      end: (e) => this.onGuestEnd(e),
+      status: (r) => this.onGuestStatus(r),
+      replay: (on) => this.onGuestReplay(on),
+      clockOffset: () => this.link.serverOffset,
+    }, shadow);
+    return this.guest;
+  }
+
+  /** Leave the host's match (its results are done, or we are leaving): back to the menu's showcase. */
+  stopGuestMatch() {
+    if (!this.guest) return;
+    this.guest = null;
+    this.startAttract(this.stage.current?.def.id ?? this.worldId);
+  }
+
+  private guestFrame(m: Match, realDt: number) {
+    const g = this.guest!;
+    g.advance(realDt);
+    this.stageSmash(m, realDt);
+    this.rig.update(m, realDt, this.realT);
+    const ball = m.ballView(m.t, { x: 0, y: 0, z: 0 });
+    let speed = 0;
+    if (!m.ball.holder && m.state !== 'toss') {
+      const v = segVel(m.ball.seg, m.t, { x: 0, y: 0, z: 0 });
+      speed = Math.hypot(v.x, v.y, v.z);
+    }
+    const view: FrameView = {
+      t: m.t,
+      dt: g.dt,
+      realT: this.realT,
+      realDt,
+      ball,
+      ballSpeed: speed,
+      // (nothing to show until the first snapshot has said where it is)
+      ballVisible: g.ready,
+      holder: m.ball.holder ? m.players.indexOf(m.ball.holder) : -1,
+      poses: g.poses,
+      excitement: m.excitement,
+      state: m.state,
+      cam: this.rig.cam,
+      beat: this.beat(),
+    };
+    this.stage.update(view);
+    this.stage.render(this.rig.cam);
+    this.onFrame(realDt);
+  }
+
   /**
    * Stage a human's smash chance: as the floater comes down to them, time eases
    * into slow motion, the camera swings low behind them and the ball glows.
@@ -1334,6 +1483,7 @@ export class App {
       cam: this.rig.cam,
       beat: this.beat(),
     };
+    this.net.frame(poses);
     this.stage.update(view);
     this.stage.render(split ? [this.rig.cam, this.rig2.cam] : this.rig.cam);
     this.onFrame(realDt);

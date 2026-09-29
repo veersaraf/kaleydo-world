@@ -152,7 +152,8 @@ export class Match {
   /** swing time for CPUs, per plan */
   private aiSwingAt = new Map<TPlayer, number>();
   private cpuTossAt = 0;
-  private pendingHit: TPlayer | null = null;
+  /** the player whose swing the ball is being drawn towards (public: a guest TV's shadow match is set from the stream) */
+  pendingHit: TPlayer | null = null;
   private deadUntil = 0;
   private resetAt = 0;
   private flightJudged: { out: boolean; net: boolean } = { out: false, net: false };
