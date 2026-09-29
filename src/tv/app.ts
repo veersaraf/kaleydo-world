@@ -231,10 +231,12 @@ export class App {
   resize() {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    this.renderer.setSize(w, h, false);
+    // (an effects-only level change keeps the size: assigning canvas.width, even to the same number, reallocates the drawing buffer)
+    const bw = Math.floor(w * this.pr),
+      bh = Math.floor(h * this.pr);
+    if (bw !== this.canvas.width || bh !== this.canvas.height) this.renderer.setSize(bw, bh, false);
     this.canvas.style.width = w + 'px';
     this.canvas.style.height = h + 'px';
-    this.renderer.setSize(Math.floor(w * this.pr), Math.floor(h * this.pr), false);
     this.stage.resize(w, h, this.pr);
     this.applyViews();
   }
@@ -430,6 +432,9 @@ export class App {
       // 120 Hz+ screens: draw every other refresh — a steady 60 beats a wobbly 90
       if (this.lastRender && now - this.lastRender < 12.5) return;
       this.lastRender = now;
+      // each sport in each world has its own remembered quality level (a duel is heavier than a rally)
+      const id = this.stage.current?.def.id;
+      if (id) this.quality.setWorld(this.sport === 'tennis' ? id : `${id}/${this.sport}`, now);
       this.frame(now);
     };
     requestAnimationFrame(tick);

@@ -20,6 +20,9 @@ export class Trail {
   mesh: THREE.Mesh;
   private n: number;
   private pts: THREE.Vector3[] = [];
+  private filled = false;
+  /** where the newest point sits in `pts` (a ring: the oldest is overwritten by the next one) */
+  private head = 0;
   private pos: Float32Array;
   private geo: THREE.BufferGeometry;
   private mat: THREE.ShaderMaterial;
@@ -84,6 +87,8 @@ export class Trail {
       transparent: true,
       depthWrite: false,
       side: THREE.DoubleSide,
+      // a flat ribbon has no back face to sort: one pass (two-pass rebuilds the program every frame)
+      forceSinglePass: true,
       blending: style.additive ? THREE.AdditiveBlending : THREE.NormalBlending,
     });
     this.mesh = new THREE.Mesh(this.geo, this.mat);
@@ -106,35 +111,48 @@ export class Trail {
   }
 
   reset(p: THREE.Vector3) {
-    this.pts = Array.from({ length: this.n }, () => p.clone());
+    if (this.pts.length !== this.n) this.pts = Array.from({ length: this.n }, () => new THREE.Vector3());
+    for (const q of this.pts) q.copy(p);
+    this.head = 0;
+    this.filled = true;
     this.lastPush.copy(p);
   }
 
   update(p: THREE.Vector3, speed: number, cam: THREE.Camera, dt: number, time: number) {
-    if (!this.pts.length) this.reset(p);
+    if (!this.filled) this.reset(p);
     // teleports (new point, held ball) should not smear
     if (p.distanceTo(this.lastPush) > 4) this.reset(p);
-    this.pts.pop();
-    this.pts.unshift(p.clone());
+    // the oldest point's vector becomes the newest (nothing allocated per frame)
+    const n = this.n;
+    this.head = (this.head + n - 1) % n;
+    this.pts[this.head].copy(p);
     this.lastPush.copy(p);
     const want = Math.min(1, THREE.MathUtils.clamp((speed - 7) / 14, 0, 1) * this.boost);
     this.strength += (want - this.strength) * Math.min(1, dt * (want > this.strength ? 20 : 6));
     this.mat.uniforms.uStrength.value = this.strength;
     this.mat.uniforms.uTime.value = time;
     const camPos = (cam as THREE.PerspectiveCamera).position;
-    const n = this.n;
     const w0 = this.style.width;
+    const pos = this.pos;
+    const P = this.pts;
+    const h = this.head;
     for (let i = 0; i < n; i++) {
-      const a = this.pts[Math.max(0, i - 1)];
-      const b = this.pts[Math.min(n - 1, i + 1)];
+      const a = P[(h + Math.max(0, i - 1)) % n];
+      const b = P[(h + Math.min(n - 1, i + 1)) % n];
+      const q = P[(h + i) % n];
       this.tmp.subVectors(a, b);
       if (this.tmp.lengthSq() < 1e-8) this.tmp.set(1, 0, 0);
-      this.side.subVectors(camPos, this.pts[i]).cross(this.tmp).normalize();
-      const q = this.pts[i];
+      this.side.subVectors(camPos, q).cross(this.tmp).normalize();
       // wider far away so the trail stays readable at the far baseline
       const far = 1 + Math.max(0, q.distanceTo(camPos) - 9) * 0.035;
       const w = w0 * this.boost * (1 - i / (n - 1)) * (0.6 + 0.4 * this.strength) * far;
-      this.pos.set([q.x - this.side.x * w, q.y - this.side.y * w, q.z - this.side.z * w, q.x + this.side.x * w, q.y + this.side.y * w, q.z + this.side.z * w], i * 6);
+      const o = i * 6;
+      pos[o] = q.x - this.side.x * w;
+      pos[o + 1] = q.y - this.side.y * w;
+      pos[o + 2] = q.z - this.side.z * w;
+      pos[o + 3] = q.x + this.side.x * w;
+      pos[o + 4] = q.y + this.side.y * w;
+      pos[o + 5] = q.z + this.side.z * w;
     }
     (this.geo.attributes.position as THREE.BufferAttribute).needsUpdate = true;
   }

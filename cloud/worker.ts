@@ -8,6 +8,13 @@
 // server does, for the swing-latency maths); the TV's go to one phone or all.
 // A room belongs to the first TV that claims it (a random key it keeps), so a
 // guessed code can't take over someone's game.
+//
+// Online play adds a third role: a GUEST TV (a friend's laptop, anywhere) joins a
+// room by its code. The host TV stays the only simulation; the guest's own phones
+// open the same /c?room=CODE and join the host directly as ordinary pads. The relay
+// tells the host who joined, forwards the host's messages to every guest (JSON as
+// {type:'host', msg}; a BINARY frame — the match snapshot, ~30 Hz — as it is, untouched)
+// and a guest's JSON to the host as {type:'guest', gid, msg}.
 
 export interface Env {
   ASSETS: { fetch(req: Request): Promise<Response> };
@@ -45,6 +52,17 @@ interface Pad {
   ws: WebSocket;
 }
 
+interface Guest {
+  gid: string;
+  name: string;
+  ws: WebSocket;
+}
+
+/** a guest's message to the host stays small (its hello) */
+const GUEST_MAX = 4096;
+/** guests per room (the snapshot goes to each of them) */
+const GUESTS_MAX = 8;
+
 const cleanName = (s: string | null) =>
   String(s || '')
     .replace(/[^\p{L}\p{N} _.'-]/gu, '')
@@ -59,6 +77,8 @@ export class Room {
   private tv: WebSocket | null = null;
   private tvKey: string | null = null;
   private pads = new Map<string, Pad>();
+  /** the guest TVs (a plain array: the snapshot broadcast walks it 30 times a second and allocates nothing) */
+  private guests: Guest[] = [];
   private room = '';
   private origin = '';
 
@@ -77,10 +97,13 @@ export class Room {
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
     server.accept();
+    // (the default is 'blob', which can't be forwarded: the host's snapshots must arrive as bytes)
+    (server as WebSocket & { binaryType: string }).binaryType = 'arraybuffer';
     if (role === 'tv') {
       this.origin = url.origin;
       this.attachTV(server, url.searchParams.get('key') || '');
     } else if (role === 'pad') this.attachPad(server, url);
+    else if (role === 'guest') this.attachGuest(server, url);
     else server.close(1008, 'role');
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -116,10 +139,22 @@ export class Room {
     this.tv = ws;
     const padUrl = `${this.origin}/c?room=${this.room}`;
     this.send(ws, { type: 'hello', joinUrl: padUrl, padUrl, caUrl: null, ips: [], dev: false, pads: this.padList(), room: this.room });
+    // guests that were here before the TV (re)connected: tell it who's waiting
+    for (const g of this.guests) this.send(ws, { type: 'guest-join', gid: g.gid, name: g.name });
     ws.addEventListener('message', (ev) => {
+      // the match snapshot: a binary frame, to every guest as it is (no parsing, no copy)
+      if (typeof ev.data !== 'string') {
+        const gs = this.guests;
+        for (let i = 0; i < gs.length; i++) {
+          try {
+            gs[i].ws.send(ev.data);
+          } catch {}
+        }
+        return;
+      }
       let m: { type?: string; pid?: string; msg?: unknown; t?: number } | null = null;
       try {
-        m = JSON.parse(String(ev.data));
+        m = JSON.parse(ev.data);
       } catch {
         return;
       }
@@ -128,12 +163,84 @@ export class Room {
         this.send(ws, { type: 'pong', t: m.t, st: Date.now() });
         return;
       }
+      if (m?.type === 'to-guests') {
+        if (this.guests.length) {
+          const out = JSON.stringify({ type: 'host', msg: m.msg });
+          for (const g of this.guests) {
+            try {
+              g.ws.send(out);
+            } catch {}
+          }
+        }
+        return;
+      }
       if (m?.type !== 'to-pad') return;
       if (m.pid === '*') for (const p of this.pads.values()) this.send(p.ws, m.msg);
       else if (m.pid) this.send(this.pads.get(m.pid)?.ws ?? null, m.msg);
     });
     const gone = () => {
-      if (this.tv === ws) this.tv = null;
+      if (this.tv !== ws) return;
+      this.tv = null;
+      // the guests stay (the TV may be back in seconds and will hear of them again)
+      const out = JSON.stringify({ type: 'host-gone' });
+      for (const g of this.guests) {
+        try {
+          g.ws.send(out);
+        } catch {}
+      }
+    };
+    ws.addEventListener('close', gone);
+    ws.addEventListener('error', gone);
+  }
+
+  private attachGuest(ws: WebSocket, url: URL) {
+    const gid = cleanPid(url.searchParams.get('gid'));
+    if (!gid) {
+      ws.close(1008, 'gid');
+      return;
+    }
+    // "the room exists" = a TV has claimed it (its key stays set while it reconnects)
+    if (!this.tvKey) {
+      this.send(ws, { type: 'no-room' });
+      ws.close(1000, 'no-room');
+      return;
+    }
+    const prev = this.guests.findIndex((g) => g.gid === gid);
+    if (prev < 0 && this.guests.length >= GUESTS_MAX) {
+      ws.close(1013, 'full');
+      return;
+    }
+    const guest: Guest = { gid, name: cleanName(url.searchParams.get('name')), ws };
+    if (prev >= 0) {
+      // a reload: this one replaces the old (which leaves quietly)
+      const old = this.guests[prev];
+      this.guests[prev] = guest;
+      try {
+        old.ws.close();
+      } catch {}
+    } else this.guests.push(guest);
+    if (this.tv) this.send(this.tv, { type: 'guest-join', gid, name: guest.name });
+    else this.send(ws, { type: 'host-gone' });
+    ws.addEventListener('message', (ev) => {
+      if (typeof ev.data !== 'string' || ev.data.length > GUEST_MAX) return;
+      let msg: { type?: string; t?: number } | null = null;
+      try {
+        msg = JSON.parse(ev.data);
+      } catch {
+        return;
+      }
+      if (!msg || typeof msg.type !== 'string') return;
+      if (msg.type === 'ping') {
+        this.send(ws, { type: 'pong', t: msg.t, st: Date.now() });
+        return;
+      }
+      this.send(this.tv, { type: 'guest', gid, msg });
+    });
+    const gone = () => {
+      const i = this.guests.indexOf(guest);
+      if (i < 0) return;
+      this.guests.splice(i, 1);
+      this.send(this.tv, { type: 'guest-leave', gid });
     };
     ws.addEventListener('close', gone);
     ws.addEventListener('error', gone);

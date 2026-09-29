@@ -4,6 +4,7 @@
 // remote without a room is asked for the code, and one with a wrong code isn't
 // seated at this TV.
 //   npx wrangler dev --port 8787 &  then  BASE=http://127.0.0.1:8787 node scripts/cloud-e2e.mjs
+// (scripts/room-e2e.mjs covers online rooms: guest TVs)
 import { chromium } from 'playwright-core';
 import { phone } from './lib/fake-phone.mjs';
 
@@ -21,8 +22,8 @@ await tv.goto(BASE + '/');
 await tv.evaluate(() => localStorage.setItem('kaleido.settings', JSON.stringify({ seenTutorial: true })));
 await tv.goto(BASE + '/');
 await tv.waitForFunction(() => window.kaleido?.link?.online, null, { timeout: 30000 });
-const info = await tv.evaluate(() => ({ cloud: window.kaleido.link.cloud, room: window.kaleido.link.room, url: window.kaleido.link.joinUrl }));
-check('the TV is in the cloud with a room', info.cloud && /^[A-Z0-9]{5}$/.test(info.room || ''), JSON.stringify(info));
+const info = await tv.evaluate(() => ({ cloud: window.kaleido.link.cloud, room: window.kaleido.link.room, url: window.kaleido.link.joinUrl, role: window.kaleido.link.role }));
+check('the TV is in the cloud with a room, as its host', info.cloud && info.role === 'host' && /^[A-Z0-9]{5}$/.test(info.room || ''), JSON.stringify(info));
 await tv.waitForFunction(() => document.querySelector('.join .qr img')?.src?.startsWith('data:image'), null, { timeout: 10000 }).catch(() => null);
 check('the join panel shows a QR code and the room', await tv.evaluate(() => !!document.querySelector('.join .qr img')?.src?.startsWith('data:image') && document.querySelector('.join .url')?.textContent.includes(window.kaleido.link.room)));
 

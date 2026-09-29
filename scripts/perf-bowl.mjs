@@ -2,6 +2,7 @@
 // JS time per frame, frame gaps and late frames, and the slowest moments.
 //   node scripts/perf-bowl.mjs [world] [seconds]
 import { chromium } from 'playwright-core';
+import { programProbe, programReport } from './lib/perf-probe.mjs';
 const BASE = process.env.BASE || 'http://localhost:3200';
 const world = process.argv[2] || 'park';
 const secs = +(process.argv[3] || 40);
@@ -18,6 +19,7 @@ await tv.waitForTimeout(800);
 await tv.mouse.click(640, 370);
 await tv.evaluate((w) => window.flow.beginBowling(w, 0.65), world);
 await tv.waitForFunction(() => window.kaleido.bowl && window.kaleido.bowl.state === 'ready', null, { timeout: 30000 });
+await tv.evaluate(programProbe);
 const res = await tv.evaluate((secs) => new Promise((done) => {
   const k = window.kaleido;
   const rows = [];
@@ -51,4 +53,5 @@ const res = await tv.evaluate((secs) => new Promise((done) => {
 }), secs);
 console.log(JSON.stringify(res, null, 1));
 console.log(logs.join('\n') || 'no errors');
+console.log('shader programs built during play:', JSON.stringify(await tv.evaluate(programReport)));
 await browser.close();

@@ -2,6 +2,7 @@
 // the median and 95th-percentile frame and how many frames ran late.
 //   node scripts/perf-baseball.mjs [world] [seconds]
 import { chromium } from 'playwright-core';
+import { programProbe, programReport } from './lib/perf-probe.mjs';
 const BASE = process.env.BASE || 'http://localhost:3200';
 const world = process.argv[2] || 'park';
 const secs = +(process.argv[3] || 25);
@@ -17,6 +18,7 @@ await tv.waitForTimeout(800);
 // the menu's showcase: two CPU sluggers
 await tv.evaluate((w) => window.kaleido.startAttract(w, 'baseball'), world);
 await tv.waitForTimeout(3000);
+await tv.evaluate(programProbe);
 const r = await tv.evaluate((secs) => new Promise((done) => {
   const d = [];
   let last = performance.now();
@@ -33,4 +35,5 @@ const s = r.d.slice().sort((a, b) => a - b);
 const pct = (p) => s[Math.floor((s.length - 1) * p)].toFixed(1);
 console.log(`${world}: ${s.length} frames · p50 ${pct(0.5)} ms · p95 ${pct(0.95)} ms · late (>25 ms) ${r.d.filter((x) => x > 25).length} · quality ${JSON.stringify(r.q)}`);
 console.log(errs.join('\n') || 'no errors');
+console.log('shader programs built during play:', JSON.stringify(await tv.evaluate(programReport)));
 await browser.close();

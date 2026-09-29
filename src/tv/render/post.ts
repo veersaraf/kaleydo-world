@@ -113,6 +113,7 @@ export class Bloom {
   constructor(public count = 5) {}
 
   setSize(w: number, h: number) {
+    if (this.levels.length && this.levels[0].width === Math.max(1, Math.floor(w / 2)) && this.levels[0].height === Math.max(1, Math.floor(h / 2))) return;
     this.levels.forEach((l) => l.dispose());
     this.ups.forEach((l) => l.dispose());
     this.levels = [];

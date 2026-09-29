@@ -23,6 +23,7 @@ export class JoinPanel {
   private url: HTMLElement;
   private seats: HTMLElement;
   private blurb!: HTMLElement;
+  private friends: HTMLElement;
   private shownUrl = '';
 
   constructor(
@@ -33,6 +34,7 @@ export class JoinPanel {
     this.qr = h('img', { alt: 'Scan to join' });
     this.url = h('div', { class: 'url' }, '');
     this.seats = h('div', { class: 'seats' });
+    this.friends = h('div', { class: 'friends' });
     this.el = h(
       'div',
       { class: 'join panel' + (compact ? ' compact' : '') },
@@ -48,6 +50,7 @@ export class JoinPanel {
           this.url,
         ),
       ),
+      this.friends,
       this.seats,
     );
     this.refresh();
@@ -62,7 +65,10 @@ export class JoinPanel {
       if (this.link.cloud) {
         // the cloud: the QR code opens the remote in this TV's room, from anywhere
         void QRCode.toDataURL(u, { margin: 1, width: 360, color: { dark: '#1d1c33', light: '#ffffff' } }).then((src: string) => (this.qr.src = src));
-        this.blurb.textContent = 'Scan with your phone’s camera to turn it into a remote. Or open the address below and enter the room code.';
+        this.blurb.textContent =
+          this.link.role === 'guest'
+            ? 'Scan with your phone’s camera: it joins the host’s game, and you play from your own screen. Or open the address below and enter the room code.'
+            : 'Scan with your phone’s camera to turn it into a remote. Or open the address below and enter the room code.';
         this.url.textContent = `Room ${this.link.room} · ${location.host}/c`;
       } else {
         this.qr.src = `/api/qr.svg?dark=1d1c33&t=${Date.now()}`;
@@ -72,6 +78,11 @@ export class JoinPanel {
     } else if (!u) {
       this.url.textContent = this.link.online ? 'No Wi-Fi address found' : 'Connecting to the KALEIDO server…';
     }
+    // (a guest's phones sit at the host: the lobby lists them, not these four seats)
+    this.el.classList.toggle('noseats', this.link.role === 'guest');
+    const n = this.link.role === 'host' ? this.link.guests.length : 0;
+    this.friends.textContent = n ? `${n} ${n === 1 ? 'friend’s TV' : 'friends’ TVs'} watching` : '';
+    this.friends.classList.toggle('on', n > 0);
     const sig = [0, 1, 2, 3].map((i) => {
       const s = this.input.seats[i];
       return s ? `${s.name}|${s.connected}|${s.local}|${s.color}|${JSON.stringify(s.look ?? null)}` : '-';
