@@ -204,6 +204,22 @@ streams the match to theirs. B / Esc leaves. `node scripts/room-e2e.mjs`
 (against `npx wrangler dev --port 8792`) checks all of it. The Mac's own server
 has no rooms.
 
+**Quick match.** Nobody to send a code to? On Play online, the third card, **Quick
+match** (it needs a phone joined on your TV), puts your TV in a queue held by one
+Durable Object (`cloud/lobby.ts`, the `LOBBY` binding) and shows "Looking for an
+opponent… 0:07". On each arrival and every 5 s the lobby pairs the longest-waiting TV with
+the earliest-arrived other one on the same continent (as Cloudflare's edge reports it;
+after 20 s, with anyone), and the one that has waited longer **hosts**: its room already
+exists, so the other TV simply joins it as a guest. The guest's phone scans the QR code on
+its lobby (the phone it had is in its own room), and once it is seated (up to 15 s) the
+host starts a singles match by itself: its first phone against that one, in a random world
+(Kaleido and the game count as set). Afterwards the host offers **Play again** (A: another
+match, same two people) or **Leave** (B: both TVs go back to Play online). If the opponent's
+TV or phone goes away mid-match the host says "Your opponent left". B cancels a search.
+`npx tsx scripts/mm-pair-test.ts` checks the pairing rule; `node scripts/mm-e2e.mjs`
+(against `npx wrangler dev --port 8801`; `GET /mm/stats` says how many TVs are queued)
+plays it through with two TVs and their simulated phones.
+
 **What to expect over the internet.** The host never waits for the network: it plays
 at full speed, and a phone's swing is timed by when it *happened* (the phone reports
 how old the swing is, plus its delay to the relay, plus the relay's to the host), not by

@@ -147,7 +147,11 @@ export type GuestToHost = { type: 'hello'; name: string };
 export type HostToGuest =
   /** the room's roster (sent by the host's link whenever a phone or guest comes or goes); host = the name to greet it by */
   | { type: 'room'; code: string; pads: PadInfo[]; guests: GuestInfo[]; host?: string }
-  | { type: 'net'; msg: unknown };
+  | { type: 'net'; msg: unknown }
+  /** quick match: the host is done with this pairing (it left after a match, or gave up on the guest's phone) — the guest leaves the room */
+  | { type: 'mm-leave' }
+  /** quick match: a line for the guest's lobby (e.g. "your phone never joined") */
+  | { type: 'mm-note'; text: string };
 
 export type ServerToTV =
   /** joinUrl: what the QR code opens (the http join page, which forwards to padUrl, the remote); caUrl: the iOS profile */
@@ -181,6 +185,16 @@ export type TVToServer =
   | { type: 'to-pad'; pid: string; msg: TVMsg }
   | { type: 'to-guests'; msg: HostToGuest }
   | { type: 'ping'; t: number };
+
+/** quick match (cloud/lobby.ts): what the lobby tells a TV waiting for an opponent. peer.gid is the other TV's guest id: the guest's phones
+ *  join the host's room with &via=<that gid>. Both sockets are closed by the lobby after 'matched'. */
+export type LobbyMsg =
+  | { type: 'waiting'; n: number; t: number }
+  | { type: 'matched'; role: 'host'; peer: { gid: string; name: string } }
+  | { type: 'matched'; role: 'guest'; code: string; peer: { gid: string; name: string } };
+
+/** what TVLink.onMatchmaking reports: the lobby's messages, plus its own errors and the host's word to a guest */
+export type MatchmakingEvent = LobbyMsg | { type: 'mm-error'; reason: string } | { type: 'peer-left' } | { type: 'note'; text: string };
 
 export type ServerToPad =
   | TVMsg

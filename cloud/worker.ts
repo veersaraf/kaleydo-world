@@ -23,9 +23,13 @@
 // moment it arrives — the guest's TV can make the swing's sound at once, before the match stream
 // (which has to go to the host, be judged, and come back) shows anything.
 
+import { Lobby } from './lobby';
+export { Lobby };
+
 export interface Env {
   ASSETS: { fetch(req: Request): Promise<Response> };
   ROOMS: DurableObjectNamespace;
+  LOBBY: DurableObjectNamespace;
 }
 
 const ROOM_RE = /^[A-Z0-9]{4,8}$/;
@@ -39,6 +43,16 @@ export default {
       if (!ROOM_RE.test(room)) return new Response('bad room', { status: 400 });
       if (req.headers.get('Upgrade') !== 'websocket') return new Response('websocket only', { status: 426 });
       return env.ROOMS.get(env.ROOMS.idFromName(room)).fetch(req);
+    }
+    // Quick match: the lobby (one Durable Object) pairs TVs that are looking for an opponent (cloud/lobby.ts)
+    if (p === '/mm' || p === '/mm/stats') {
+      if (p === '/mm' && req.headers.get('Upgrade') !== 'websocket') return new Response('websocket only', { status: 426 });
+      // (where the TV is, as Cloudflare's edge sees it: never the client's word)
+      const to = new URL(req.url);
+      to.searchParams.delete('cont');
+      const cont = (req as Request & { cf?: { continent?: string } }).cf?.continent;
+      if (cont) to.searchParams.set('cont', cont);
+      return env.LOBBY.get(env.LOBBY.idFromName('lobby')).fetch(new Request(to, req));
     }
     // the game knows it's in the cloud (no local server: rooms instead)
     if (p === '/api/info') return Response.json({ cloud: true });

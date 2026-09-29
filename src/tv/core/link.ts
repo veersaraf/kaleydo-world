@@ -5,7 +5,7 @@
 // up a room code, shows it with a QR code, and its phones join that room. Which one
 // the page was served from says which (/api/info).
 
-import type { GuestInfo, GuestToHost, HostToGuest, PadInfo, ServerToTV, TVMsg } from '../../shared/protocol';
+import type { GuestInfo, GuestToHost, HostToGuest, LobbyMsg, MatchmakingEvent, PadInfo, ServerToTV, TVMsg } from '../../shared/protocol';
 
 export const ROOM_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -38,6 +38,8 @@ export class TVLink {
   hostName = '';
   /** guest: the host's messages, and its binary snapshot frames */
   onHostMessage: (m: HostToGuest | ArrayBuffer) => void = () => {};
+  /** quick match: the lobby's word while this TV waits for an opponent, and — for a guest — the host's word that the pairing is over */
+  onMatchmaking: (m: MatchmakingEvent) => void = () => {};
   onMessage: (m: ServerToTV) => void = () => {};
   onStatus: (online: boolean) => void = () => {};
   private retry = 0;
@@ -50,6 +52,7 @@ export class TVLink {
   private reopenTimer = 0;
   private pingTimers: number[] = [];
   private clock: { rtt: number; off: number }[] = [];
+  private mm: WebSocket | null = null;
 
   connect() {
     this.mode ??= this.detect();
@@ -209,6 +212,77 @@ export class TVLink {
     }
   }
 
+  /** host: the guest TV a phone was opened from ('' = one of this TV's own phones, or not known) */
+  padVia(pid: string) {
+    return this.pads.find((p) => p.pid === pid)?.via ?? '';
+  }
+
+  // ---------------------------------------------------------------- quick match (cloud/lobby.ts)
+
+  /** Look for an opponent: this TV joins the lobby's queue (keeping its own room meanwhile; role stays 'host'). `players` = its seated phones.
+   *  The lobby's answers come to onMatchmaking. As the guest of a pairing this link joins the host's room itself (joinRoom), then reports 'matched'. */
+  quickMatch(players: number) {
+    this.cancelQuickMatch();
+    if (!this.cloud || this.role !== 'host' || !this.room) {
+      this.onMatchmaking({ type: 'mm-error', reason: 'Quick match needs the online version' });
+      return;
+    }
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const q = `room=${this.room}&key=${this.key}&gid=${this.guestId()}&name=${encodeURIComponent(this.guestName)}&players=${Math.max(0, Math.min(4, players | 0))}`;
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(`${proto}//${location.host}/mm?${q}`);
+    } catch {
+      this.onMatchmaking({ type: 'mm-error', reason: 'Couldn’t reach the lobby' });
+      return;
+    }
+    this.mm = ws;
+    let matched = false;
+    ws.onmessage = (ev) => {
+      if (this.mm !== ws || typeof ev.data !== 'string') return;
+      let m: LobbyMsg;
+      try {
+        m = JSON.parse(ev.data);
+      } catch {
+        return;
+      }
+      if (m.type === 'waiting') {
+        this.onMatchmaking({ type: 'waiting', n: Number(m.n) || 1, t: Number(m.t) || 0 });
+      } else if (m.type === 'matched' && m.peer && typeof m.peer.gid === 'string') {
+        matched = true;
+        const peer = { gid: String(m.peer.gid).slice(0, 40), name: String(m.peer.name || 'TV').slice(0, 12) };
+        this.mm = null;
+        try {
+          ws.close();
+        } catch {}
+        if (m.role === 'host') this.onMatchmaking({ type: 'matched', role: 'host', peer });
+        else if (m.role === 'guest' && typeof m.code === 'string' && new RegExp(`^[${ROOM_CHARS}]{5}$`).test(m.code)) {
+          // (only this side ever goes anywhere: it joins the host's room, and its phones scan the new QR code)
+          this.joinRoom(m.code);
+          this.onMatchmaking({ type: 'matched', role: 'guest', code: m.code, peer });
+        }
+      }
+    };
+    ws.onclose = () => {
+      if (this.mm !== ws) return;
+      this.mm = null;
+      if (!matched) this.onMatchmaking({ type: 'mm-error', reason: 'Lost the connection to the lobby' });
+    };
+  }
+
+  /** stop looking (the lobby drops this TV when the socket closes) */
+  cancelQuickMatch() {
+    const ws = this.mm;
+    this.mm = null;
+    try {
+      ws?.close();
+    } catch {}
+  }
+
+  get searching() {
+    return !!this.mm;
+  }
+
   /** host: send the guests the room's roster (phones with their seats, guests) if it changed (or `force`) */
   pushRoster(force = false) {
     if (this.role !== 'host') return;
@@ -227,6 +301,14 @@ export class TVLink {
   private guestMessage(m: ServerToTV) {
     if (m.type === 'host') {
       this.hostHere = true;
+      if (m.msg.type === 'mm-leave') {
+        this.onMatchmaking({ type: 'peer-left' });
+        return;
+      }
+      if (m.msg.type === 'mm-note') {
+        this.onMatchmaking({ type: 'note', text: String(m.msg.text || '').slice(0, 120) });
+        return;
+      }
       if (m.msg.type === 'room') this.roster = m.msg;
       this.onHostMessage(m.msg);
       return;
