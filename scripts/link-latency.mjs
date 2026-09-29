@@ -15,6 +15,8 @@
 //   BASE=http://localhost:3300 node scripts/link-latency.mjs
 //   BASE=http://127.0.0.1:8790 node scripts/link-latency.mjs          (npx wrangler dev --port 8790: the cloud)
 //   SKEW=4000 ...   the TV page's clock runs 4 s fast (the cloud's clocks disagree): serverOffset should come out near -4000
+//   On the http transport it also stalls the phone's POSTs for 400 ms while the remote sends poses (a swing in the middle) through its real
+//   PadLink, and checks what the TV gets afterwards: at most ONE of the stalled poses (the newest), and the swing no later than it.
 //   TRANSPORTS=ws | http | ws,http   (http is the iPhone fallback: POST up, SSE down; the local server only)
 //   LAG=1 node scripts/link-latency.mjs      the internet: starts `npx wrangler dev --port 8802` if nothing answers there and puts the
 //                                            phone behind scripts/lib/lag-proxy.mjs (30 ± 6 ms, 15 % of frames +100 ms), 40 + 40 swings.
@@ -94,6 +96,13 @@ const info = await tv.evaluate(() => ({ cloud: window.kaleido.link.cloud, url: w
 await tv.evaluate(() => {
   window.__sw = [];
   window.kaleido.input.onSwing = (e) => window.__sw.push({ power: e.power, at: performance.timeOrigin + performance.now(), age: e.age });
+  // (every pad message in the order it is handled, for the stalled-POST check)
+  window.__pm = [];
+  const pm = window.kaleido.input.padMsg.bind(window.kaleido.input);
+  window.kaleido.input.padMsg = (pid, rt, m) => {
+    if (m.type === 'ori' || m.type === 'swing') window.__pm.push({ type: m.type, tag: m.type === 'ori' ? m.s[0] : m.power, ts: m.ts, at: performance.timeOrigin + performance.now() });
+    return pm(pid, rt, m);
+  };
 });
 console.log(`${BASE}  ${info.cloud ? 'cloud room' : 'local server'}${SKEW ? `  (TV clock ${SKEW} ms fast)` : ''}\n`);
 
@@ -206,9 +215,44 @@ for (const transport of transports) {
       k.err.push(g.age * 1000 - (g.at - s.at));
     }
   }
+  // the HTTP fallback after a stall: the POSTs hang for 400 ms while the remote streams poses (12, tagged s[0] = 0.123) and sends a swing
+  // (power 0.777) half-way; two pings first take up both POST slots, as a stall does. Then what the TV was handed:
+  let stall = null;
+  if (transport === 'http') {
+    await tv.evaluate(() => (window.__pm.length = 0));
+    const t0 = await pad.evaluate(async () => {
+      const of = window.fetch.bind(window);
+      window.fetch = async (u, o) => {
+        const wait = String(u).includes('/api/pad/send') ? window.__gate - performance.now() : 0;
+        if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+        return of(u, o);
+      };
+      const L = window.__padLink;
+      const t0 = performance.timeOrigin + performance.now();
+      window.__gate = performance.now() + 400;
+      L.send({ type: 'ping', t: performance.now() });
+      L.send({ type: 'ping', t: performance.now() });
+      for (let i = 0; i < 12; i++) {
+        L.send({ type: 'ori', s: [0.123, 0.99, 0.01 * i], n: [0, 0, 1] });
+        if (i === 6) L.send({ type: 'swing', seq: 900, power: 0.777, spin: 0, peak: 1, age: 0, lat: Math.round(L.lat), touch: false, side: 1, attack: 0, path: null });
+        await new Promise((r) => setTimeout(r, 33));
+      }
+      await new Promise((r) => setTimeout(r, 900));
+      window.__gate = 0;
+      return t0;
+    });
+    const pm = await tv.evaluate(() => window.__pm);
+    const release = t0 + 400;
+    const late = pm.filter((m) => m.at >= release - 5); // (nothing crosses while the POSTs hang)
+    const tagged = late.filter((m) => m.type === 'ori' && Math.abs(m.tag - 0.123) < 1e-9).length;
+    const swingIx = late.findIndex((m) => m.type === 'swing' && Math.abs(m.tag - 0.777) < 1e-9);
+    const firstOri = late.findIndex((m) => m.type === 'ori');
+    stall = { tagged, swingIx, firstOri, early: pm.filter((m) => m.at < release - 5).length, ts: late.filter((m) => m.type === 'ori' && typeof m.ts === 'number').length };
+    await pad.evaluate(() => (window.fetch = window.fetch)); // (page is closed next)
+  }
   const latEnd = latOf(await pill());
   const offEnd = await tv.evaluate(() => window.kaleido.link.serverOffset);
-  rows.push({ transport, joinMs, lat2s, latEnd, off2s, offEnd, rtt: res.rtts, oneWay, ages, kinds, got: got.length });
+  rows.push({ transport, stall, joinMs, lat2s, latEnd, off2s, offEnd, rtt: res.rtts, oneWay, ages, kinds, got: got.length });
   await ctx.close();
   await wait(500);
 }
@@ -231,6 +275,14 @@ for (const r of rows) {
   const pass = st.err.length >= SWINGS * 0.9 && okN >= Math.ceil(0.95 * st.err.length);
   if (!pass) failed = true;
   console.log(`  ${pass ? 'PASS' : 'FAIL'}  the stamped swings' age is within 10 ms of their true time for ${okN}/${st.err.length} (need 95 %)`);
+}
+for (const r of rows.filter((x) => x.stall)) {
+  const st = r.stall;
+  const pass = st.swingIx >= 0 && st.tagged <= 1 && (st.firstOri < 0 || st.swingIx < st.firstOri);
+  if (!pass) failed = true;
+  console.log(`--- ${r.transport} after a 400 ms stall of the POSTs (12 poses + a swing queued behind two pings; the newest pose of the span may be the phone's own stream)`);
+  console.log(`  the TV was handed ${st.tagged} of the 12 stalled poses; the swing ${st.swingIx < 0 ? 'NEVER ARRIVED' : `was message #${st.swingIx + 1} after the release, the first pose #${st.firstOri + 1}`}`);
+  console.log(`  ${pass ? 'PASS' : 'FAIL'}  at most one stalled pose, and the swing is not behind it`);
 }
 console.log(logs.length ? '\npage errors:\n' + logs.join('\n') : '\nno page errors');
 await browser.close();

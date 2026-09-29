@@ -61,7 +61,7 @@ export type PadMsg =
    *  swing itself shows where the arm is within a fraction of a second. In a duel
    *  s is the blade: ~30 a second (10 over the HTTP fallback); without motion sensors
    *  the pose the guard toggle says (upright, or across the body) */
-  | { type: 'ori'; s: [number, number, number]; n: [number, number, number]; arm?: number }
+  | { type: 'ori'; s: [number, number, number]; n: [number, number, number]; arm?: number; /** the relay's clock at the send, one integer (the phone's Date.now() + its offset; only once known): the TV draws the pose as old as it really is */ ts?: number }
   /** bowling: the grip (hold the ball) went down / was let go */
   | { type: 'grip'; down: boolean; lat: number; ts?: number }
   /** bowling: the ball was released — measured from the swing.
