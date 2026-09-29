@@ -9,6 +9,8 @@ import { DuelGame, DUEL_TIMING } from '../src/tv/duel/game';
 import { ARENA, FALL_T, startZ } from '../src/tv/duel/arena';
 import { bladeAngle, blocks, type DuelEvent, type Duelist, type SlashInput, type SwordAim } from '../src/tv/duel/types';
 import { cockAim, guardAim, readyAim } from '../src/tv/duel/aim';
+import { DuelAnimator } from '../src/tv/duel/anim';
+import type { FighterState } from '../src/tv/duel/types';
 
 let fails = 0;
 let checks = 0;
@@ -701,6 +703,19 @@ function cpuMatch(a: number, b: number, seed: number, check?: (g: DuelGame) => v
   ok(rescued.before === 1, 'the blow first lands as a hit (the guard had not arrived)');
   ok(rescued.ev.some((e) => e.type === 'block' && e.who === 0 && e.by === 1), 'then the guard raised 0.15 s ago turns it into a block', rescued.ev.map((e) => e.type));
   ok(rescued.g.fighters[0].phase === 'guard', 'the defender stands guarding', rescued.g.fighters[0].phase);
+  const blocksSeen = rescued.ev.filter((e) => e.type === 'block');
+  ok(blocksSeen.length === 1 && blocksSeen[0].type === 'block' && blocksSeen[0].rescued === true, 'exactly one block event, flagged as rescued (it corrects the hit)', blocksSeen);
+  ok(rescued.ev.filter((e) => e.type === 'hit').length === 1, 'and the one hit that was shown stays the only hit');
+  ok(rescued.g.fighters[0].phase !== 'stagger' && rescued.g.fighters[0].push === 0, 'no lingering stagger or push');
+  ok((rescued.g.fighters[0].snap ?? 0) === 1 && (rescued.g.fighters[1].snap ?? 0) === 0, "the rescued fighter's pose is flagged to cut, not ease");
+  const ordinary = fight();
+  ordinary.g.aim(0, guardAim({ blade: [0, 0, 1], edge: [0, 1, 0] }, Math.PI / 2, 1));
+  ordinary.g.guard(0, true);
+  run(ordinary.g, 0.02);
+  ordinary.g.slash(1, cut(0, 0.6));
+  run(ordinary.g, 0.3);
+  const ob = ordinary.ev.filter((e) => e.type === 'block');
+  ok(ob.length === 1 && ob[0].type === 'block' && !ob[0].rescued && !ordinary.g.fighters[0].snap, 'a block in time is not flagged, and nothing snaps');
   ok(Math.abs(rescued.g.fighters[0].z - startZ(0)) < 0.2, 'and was not knocked back', rescued.g.fighters[0].z - startZ(0));
   const late = guardTrial(0.015, Math.PI / 2);
   ok(!late.ev.some((e) => e.type === 'block'), 'a guard that went up after the blow landed is too late', late.ev.map((e) => e.type));
@@ -726,6 +741,30 @@ function cpuMatch(a: number, b: number, seed: number, check?: (g: DuelGame) => v
   ok(g.fighters[0].phase === 'guard', 'guarding');
   g.guard(0, false, 0.1);
   ok(g.fighters[0].phase === 'ready' && Math.abs(g.fighters[0].t - 0.1) < 1e-9, 'let go 0.1 s ago: ready, 0.1 s in', [g.fighters[0].phase, g.fighters[0].t]);
+}
+
+
+{
+  // a rescued fighter's pose cuts to the guard: it doesn't ease out of the reeling
+  const pitchAfter = (snap: number) => {
+    const a = new DuelAnimator(1, look);
+    const st: FighterState = { x: 0, z: 1.5, facing: 1, handed: 1, phase: 'ready', t: 5, aim: readyAim({ blade: [0, 0, 1], edge: [0, -1, 0] }), attack: null, push: 0 };
+    let t = 0;
+    for (let i = 0; i < 30; i++, t += 1 / 60) a.update(t, 1 / 60, st);
+    st.phase = 'stagger';
+    for (let i = 0; i < 6; i++, t += 1 / 60) {
+      st.t = i / 60;
+      a.update(t, 1 / 60, st);
+    }
+    st.phase = 'guard';
+    st.t = 0;
+    st.snap = snap;
+    return a.update(t, 1 / 60, st).bodyPitch;
+  };
+  const eased = pitchAfter(0);
+  const snapped = pitchAfter(1);
+  ok(eased > 0.2, 'sanity: without a snap the reeling lean is still on the body a frame later', eased);
+  ok(snapped < 0.05, 'with a snap the body is already in the guard', snapped);
 }
 
 console.log(fails ? `${fails} of ${checks} duel checks FAILED.` : `All ${checks} duel checks passed.`);

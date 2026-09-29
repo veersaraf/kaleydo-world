@@ -1796,7 +1796,9 @@ export class Flow {
         break;
       case 'block':
         this.duelStats.blocks[e.who]++;
-        a?.sfx.clank(0.8, pan(e.x));
+        // (a rescued block corrects the hit shown a moment ago: that blow doesn't count, and its thwack has sounded)
+        if (e.rescued) this.duelStats.hits[e.by]--;
+        else a?.sfx.clank(0.8, pan(e.x));
         hud?.say('BLOCKED!', `${name(e.by)} is stunned`, 'small good');
         pad(e.who, 'block', 'BLOCKED!', 'strike now — they’re stunned');
         pad(e.by, 'whiff', 'BLOCKED', 'you’re stunned — watch out');

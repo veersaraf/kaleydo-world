@@ -578,7 +578,7 @@ export class DuelGame {
   }
 
   /** j's guard stops i's strike, at time `at` */
-  private block(i: number, at: number) {
+  private block(i: number, at: number, rescued = false) {
     const j = 1 - i;
     const sa = this.sides[i];
     const sd = this.sides[j];
@@ -594,7 +594,7 @@ export class DuelGame {
     const y = ARENA.top + 1.15;
     const z = def.z - def.facing * 0.55;
     this.fx({ type: 'block', x: def.x, y, z, strength: sa.strength });
-    this.onEvent({ type: 'block', who: j, by: i, x: def.x, y, z });
+    this.onEvent(rescued ? { type: 'block', who: j, by: i, x: def.x, y, z, rescued: true } : { type: 'block', who: j, by: i, x: def.x, y, z });
   }
 
   /** both blades land together, at time `at` */
@@ -821,7 +821,8 @@ export class DuelGame {
     }
     sd.guardHeld = true;
     this.setPhase(j, 'guard', 0, at);
-    this.block(i, u.at);
+    def.snap = (def.snap ?? 0) + 1;
+    this.block(i, u.at, true);
   }
 
   /** the phase fighter i was in at time `at` (now, or a moment ago) */

@@ -69,6 +69,9 @@ export interface FighterState {
   attack: SlashInput | null;
   /** stagger / fall / clash: how fast they're being pushed backwards, m/s */
   push: number;
+  /** counts up when the game puts this fighter back in a pose they weren't in (a hit undone by a guard
+   *  that turns out to have been up in time): the animator cuts to the new pose rather than easing out of the old one */
+  snap?: number;
 }
 
 /** Effects for the arena to draw this frame (world positions). */
@@ -95,7 +98,7 @@ export type DuelEvent =
   /** `who` took a clean hit from `by` */
   | { type: 'hit'; who: number; by: number; strength: number; x: number; y: number; z: number }
   /** `who` blocked `by`'s attack — `by` is stunned */
-  | { type: 'block'; who: number; by: number; x: number; y: number; z: number }
+  | { type: 'block'; who: number; by: number; x: number; y: number; z: number; /** a hit that was shown a moment ago, turned into this block by a guard that had been up in time: it corrects that hit, it isn't a second blow */ rescued?: boolean }
   | { type: 'clash'; x: number; y: number; z: number }
   /** `who` is at the edge: one more hit and they're off */
   | { type: 'edge'; who: number }

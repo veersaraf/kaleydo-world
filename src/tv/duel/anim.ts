@@ -103,6 +103,7 @@ export class DuelAnimator {
   private headPitch = 0;
   private headYaw = 0;
   private started = false;
+  private snapSeen = 0;
   /** walking: where the root was last frame, its smoothed local velocity and the stride's phase */
   private lastX = 0;
   private lastZ = 0;
@@ -165,6 +166,13 @@ export class DuelAnimator {
     P.tired = 0;
     P.legLift = 0;
     if (!this.started) this.first(s, hs);
+    else if ((s.snap ?? 0) !== this.snapSeen) {
+      // put back in a pose they weren't in (a hit undone): cut to it, don't ease out of the reeling
+      this.first(s, hs);
+      this.squash = 1;
+      this.squashV = 0;
+    }
+    this.snapSeen = s.snap ?? 0;
     this.measureWalk(s, dt);
     if (s.phase !== this.phase) this.enter(s);
 
@@ -569,7 +577,13 @@ export class DuelAnimator {
     this.aimRoot(s.aim, this.aD, this.aE);
     this.hold(T, hs, this.aD, this.aE, 0);
     cp(P.body, T.body);
-    for (let i = 0; i < 2; i++) cp(P.feet[i], T.feet[i]);
+    P.bodyPitch = T.pitch;
+    P.bodyYaw = T.yaw;
+    P.bodyRoll = T.roll;
+    for (let i = 0; i < 2; i++) {
+      cp(P.feet[i], T.feet[i]);
+      P.footPitch[i] = 0;
+    }
     cp(P.hands[0], T.hand);
     cp(P.racketDir, T.dir);
     cp(P.racketFace, T.edge);
