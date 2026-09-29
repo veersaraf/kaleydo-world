@@ -3127,3 +3127,18 @@ kbd {
   opacity: 0.35;
   transition: opacity 0.2s;
 }
+
+.scard .beta {
+  position: absolute;
+  top: calc(var(--u) * 1.4);
+  left: calc(var(--u) * 1.6);
+  z-index: 2;
+  padding: calc(var(--u) * 0.3) calc(var(--u) * 1);
+  border-radius: 99px;
+  background: rgba(15, 14, 40, 0.72);
+  color: #ffe34d;
+  font-size: calc(var(--u) * 1.3);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  box-shadow: 0 0 0 calc(var(--u) * 0.2) rgba(255, 227, 77, 0.6);
+}

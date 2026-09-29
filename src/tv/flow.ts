@@ -456,8 +456,20 @@ export class Flow {
     }, delay);
   }
 
+  /** Kaleido mode picks the starting world at random */
+  private pickWorld(w: string) {
+    return this.settings.kaleido ? this.shuffledWorlds()[0] : w;
+  }
+
+  /** Behind a sport's setup and world screens, that sport is being played. */
+  private showcase(sport: 'tennis' | 'bowling' | 'duel' | 'archery' | 'baseball') {
+    if (!this.app.attract || this.app.attractSport === sport) return;
+    this.attractSportAt = this.time + 90;
+    this.app.startAttract(this.app.stage.current?.def.id ?? 'park', sport);
+  }
+
   /** The Kaleido toggle on every setup screen: big moments shatter the world into the next one. */
-  private kaleidoRow() {
+  private kaleidoRow(onChange?: () => void) {
     const S = this.settings;
     const v = h('span');
     const r = h('div', { class: 'row kal' }, h('span', { class: 'k' }, h('i', { class: 'kgem' }), 'Kaleido mode'), h('span', { class: 'v' }, h('span', { class: 'arrow' }, '◀'), v, h('span', { class: 'arrow' }, '▶')));
@@ -469,6 +481,7 @@ export class Flow {
       S.kaleido = !S.kaleido;
       this.save();
       refresh();
+      onChange?.();
     };
     refresh();
     return { r, item: { el: r, onLeft: toggle, onRight: toggle, onSelect: toggle } };
@@ -478,9 +491,9 @@ export class Flow {
   private static SPORTS = [
     { id: 'tennis', ico: '🎾', name: 'Tennis', tag: 'Rally, smash, serve — singles or doubles', c: '#2f9bff', c2: '#1a5fd6' },
     { id: 'bowling', ico: '🎳', name: 'Bowling', tag: 'Swing, let go, hook it — ten frames', c: '#ff9a3d', c2: '#e2541f' },
-    { id: 'duel', ico: '⚔️', name: 'Sword Duel', tag: 'Slash, block, knock them off', c: '#ff5a78', c2: '#c82456' },
-    { id: 'archery', ico: '🏹', name: 'Archery', tag: 'Point, draw, let go — mind the wind', c: '#3ccf74', c2: '#138a55' },
-    { id: 'baseball', ico: '⚾', name: 'Home Run Derby', tag: 'Swing for the fences', c: '#6f7dff', c2: '#3a3fcf' },
+    { id: 'duel', ico: '⚔️', name: 'Sword Duel', tag: 'Slash, block, knock them off', c: '#ff5a78', c2: '#c82456', beta: true },
+    { id: 'archery', ico: '🏹', name: 'Archery', tag: 'Point, draw, let go — mind the wind', c: '#3ccf74', c2: '#138a55', beta: true },
+    { id: 'baseball', ico: '⚾', name: 'Home Run Derby', tag: 'Swing for the fences', c: '#6f7dff', c2: '#3a3fcf', beta: true },
   ] as const;
 
   /** The home screen: a card per sport (the showcase behind switches to the one you're on), the tour and settings. */
@@ -501,6 +514,7 @@ export class Flow {
         h('div', { class: 'nm' }, sp.name),
         h('div', { class: 'tg' }, sp.tag),
         h('div', { class: 'go' }, 'Play ▶'),
+        'beta' in sp && sp.beta ? h('div', { class: 'beta' }, 'BETA') : '',
       ),
     );
     const tb = loadTour().beaten;
@@ -570,6 +584,7 @@ export class Flow {
 
   private setupScreen(mode: 'quick' | 'kaleido'): Screen {
     this.mode = mode;
+    this.showcase('tennis');
     const S = this.settings;
     const sheet = h('div', { class: 'sheet panel' });
     void mode;
@@ -645,7 +660,9 @@ export class Flow {
         el: go,
         onSelect: () => {
           this.mode = this.settings.kaleido ? 'kaleido' : 'quick';
-          this.go(this.worldScreen());
+          // Kaleido picks the worlds (and shatters between them): no need to choose one
+          if (this.settings.kaleido) this.beginMatch(this.shuffledWorlds()[0]);
+          else this.go(this.worldScreen());
         },
       },
     ]);
@@ -682,6 +699,7 @@ export class Flow {
   }
 
   private worldScreen(): Screen {
+    this.showcase('tennis');
     const cards = WORLDS.map((w) =>
       h(
         'div',
@@ -1080,6 +1098,7 @@ export class Flow {
 
   /** Who's batting (every phone, plus an optional CPU), how tough the pitcher is, how many pitches, where. */
   private baseballSetup(): Screen {
+    this.showcase('baseball');
     const S = this.settings;
     const cpuLevels = [
       { label: 'No CPU', skill: -1 },
@@ -1108,7 +1127,7 @@ export class Flow {
     const pitchRow = row('Pitcher');
     const countRow = row('Pitches');
     const worldRow = row('World');
-    const kal = this.kaleidoRow();
+    const kal = this.kaleidoRow(() => refresh());
     const go = h('div', { class: 'row go' }, 'Play ball!');
     const refresh = () => {
       const names = this.app.input.activeSeats.map((st) => st.name);
@@ -1116,7 +1135,7 @@ export class Flow {
       cpuRow.v.textContent = cpuLevels[cpu].label;
       pitchRow.v.textContent = pitchers[pi].label;
       countRow.v.textContent = `${counts[ci]} each`;
-      worldRow.v.textContent = WORLDS[wi].name;
+      worldRow.v.textContent = this.settings.kaleido ? 'Random — Kaleido picks' : WORLDS[wi].name;
     };
     const cycle = (d: number) => {
       wi = (wi + d + WORLDS.length) % WORLDS.length;
@@ -1124,7 +1143,7 @@ export class Flow {
       refresh();
     };
     const step = (n: number, d: number, len: number) => (n + d + len) % len;
-    const begin = () => this.beginBaseball({ world: WORLDS[wi].id, cpu: cpuLevels[cpu].skill, pitching: pitchers[pi].v, pitches: counts[ci] });
+    const begin = () => this.beginBaseball({ world: this.pickWorld(WORLDS[wi].id), cpu: cpuLevels[cpu].skill, pitching: pitchers[pi].v, pitches: counts[ci] });
     const nav = new Nav([
       { el: cpuRow.r, onLeft: () => ((cpu = step(cpu, -1, 4)), refresh()), onRight: () => ((cpu = step(cpu, 1, 4)), refresh()), onSelect: () => ((cpu = step(cpu, 1, 4)), refresh()) },
       { el: pitchRow.r, onLeft: () => ((pi = step(pi, -1, 3)), refresh()), onRight: () => ((pi = step(pi, 1, 3)), refresh()), onSelect: () => ((pi = step(pi, 1, 3)), refresh()) },
@@ -1379,6 +1398,7 @@ export class Flow {
 
   /** Who's shooting (every phone, plus an optional CPU) and where. */
   private archerySetup(): Screen {
+    this.showcase('archery');
     const S = this.settings;
     const cpuLevels = [
       { label: 'No CPU', skill: -1 },
@@ -1396,13 +1416,13 @@ export class Flow {
     const who = h('div', { class: 'hintline' });
     const cpuRow = row('Opponent');
     const worldRow = row('World');
-    const kal = this.kaleidoRow();
+    const kal = this.kaleidoRow(() => refresh());
     const go = h('div', { class: 'row go' }, 'Shoot!');
     const refresh = () => {
       const names = this.app.input.activeSeats.map((st) => st.name);
       who.textContent = names.length ? `Archers: ${names.join(', ')}` : 'Archer: Player 1';
       cpuRow.v.textContent = cpuLevels[cpu].label;
-      worldRow.v.textContent = WORLDS[wi].name;
+      worldRow.v.textContent = this.settings.kaleido ? 'Random — Kaleido picks' : WORLDS[wi].name;
     };
     const cycle = (d: number) => {
       wi = (wi + d + WORLDS.length) % WORLDS.length;
@@ -1413,7 +1433,7 @@ export class Flow {
       { el: cpuRow.r, onLeft: () => ((cpu = (cpu + 3) % 4), refresh()), onRight: () => ((cpu = (cpu + 1) % 4), refresh()), onSelect: () => ((cpu = (cpu + 1) % 4), refresh()) },
       { el: worldRow.r, onLeft: () => cycle(-1), onRight: () => cycle(1), onSelect: () => cycle(1) },
       kal.item,
-      { el: go, onSelect: () => this.beginArchery(WORLDS[wi].id, cpuLevels[cpu].skill) },
+      { el: go, onSelect: () => this.beginArchery(this.pickWorld(WORLDS[wi].id), cpuLevels[cpu].skill) },
     ]);
     refresh();
     const sheet = h(
@@ -1611,6 +1631,7 @@ export class Flow {
 
   /** Who you fight (a CPU, or a friend on a second phone) and where. */
   private duelSetup(): Screen {
+    this.showcase('duel');
     const S = this.settings;
     const seats = this.app.input.activeSeats;
     const opp = [
@@ -1628,11 +1649,11 @@ export class Flow {
     };
     const oppRow = row('Opponent');
     const worldRow = row('World');
-    const kal = this.kaleidoRow();
+    const kal = this.kaleidoRow(() => refresh());
     const go = h('div', { class: 'row go' }, 'Fight!');
     const refresh = () => {
       oppRow.v.textContent = opp[oi].label;
-      worldRow.v.textContent = WORLDS[wi].name;
+      worldRow.v.textContent = this.settings.kaleido ? 'Random — Kaleido picks' : WORLDS[wi].name;
     };
     const cycle = (d: number) => {
       wi = (wi + d + WORLDS.length) % WORLDS.length;
@@ -1644,7 +1665,7 @@ export class Flow {
       { el: oppRow.r, onLeft: () => ((oi = (oi + n - 1) % n), refresh()), onRight: () => ((oi = (oi + 1) % n), refresh()), onSelect: () => ((oi = (oi + 1) % n), refresh()) },
       { el: worldRow.r, onLeft: () => cycle(-1), onRight: () => cycle(1), onSelect: () => cycle(1) },
       kal.item,
-      { el: go, onSelect: () => this.beginDuel(WORLDS[wi].id, opp[oi].skill) },
+      { el: go, onSelect: () => this.beginDuel(this.pickWorld(WORLDS[wi].id), opp[oi].skill) },
     ]);
     refresh();
     const sheet = h(
@@ -1861,6 +1882,7 @@ export class Flow {
 
   /** Who's bowling, an optional CPU, and where. */
   private bowlSetup(): Screen {
+    this.showcase('bowling');
     const S = this.settings;
     const cpuLevels = [
       { label: 'No CPU', skill: -1 },
@@ -1878,13 +1900,13 @@ export class Flow {
     const who = h('div', { class: 'hintline' });
     const cpuRow = row('Opponent');
     const worldRow = row('World');
-    const kal = this.kaleidoRow();
+    const kal = this.kaleidoRow(() => refresh());
     const go = h('div', { class: 'row go' }, 'Bowl!');
     const refresh = () => {
       const names = this.app.input.activeSeats.map((st) => st.name);
       who.textContent = names.length ? `Bowlers: ${names.join(', ')}` : 'Bowler: Player 1';
       cpuRow.v.textContent = cpuLevels[cpu].label;
-      worldRow.v.textContent = WORLDS[wi].name;
+      worldRow.v.textContent = this.settings.kaleido ? 'Random — Kaleido picks' : WORLDS[wi].name;
     };
     const cycle = (d: number) => {
       wi = (wi + d + WORLDS.length) % WORLDS.length;
@@ -1895,7 +1917,7 @@ export class Flow {
       { el: cpuRow.r, onLeft: () => ((cpu = (cpu + 3) % 4), refresh()), onRight: () => ((cpu = (cpu + 1) % 4), refresh()), onSelect: () => ((cpu = (cpu + 1) % 4), refresh()) },
       { el: worldRow.r, onLeft: () => cycle(-1), onRight: () => cycle(1), onSelect: () => cycle(1) },
       kal.item,
-      { el: go, onSelect: () => void this.beginBowling(WORLDS[wi].id, cpuLevels[cpu].skill) },
+      { el: go, onSelect: () => void this.beginBowling(this.pickWorld(WORLDS[wi].id), cpuLevels[cpu].skill) },
     ]);
     refresh();
     const sheet = h(
