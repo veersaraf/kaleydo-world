@@ -4,9 +4,13 @@
 import { Match, type MatchEvent } from '../src/tv/tennis/match';
 import { AI_LEVELS } from '../src/tv/tennis/ai';
 import { Rng } from '../src/tv/core/math';
+import { EventHash, seedMathRandom } from './sim-hash';
+
+const hash = new EventHash();
 
 const sources: Record<string, number> = {};
 function run(level: string, timingSigma: number, seed: number, doubles = false, games = 3) {
+  seedMathRandom(seed);
   const r = new Rng(seed);
   const players: any[] = [{ team: 0, name: 'Human', look: {}, handed: 1, ctrl: { kind: 'human', slot: 0, ai: AI_LEVELS.auto } }];
   if (doubles) players.push({ team: 0, name: 'Mate', look: {}, handed: 1, ctrl: { kind: 'cpu', ai: AI_LEVELS[level] } });
@@ -26,6 +30,7 @@ function run(level: string, timingSigma: number, seed: number, doubles = false, 
   let chanceOpen = false;
   let lastKind = '';
   m.onEvent = (e: MatchEvent) => {
+    hash.add(m.t, e);
     if (e.type === 'smash-chance') {
       chances++;
       const src = (m.ball.pop ? 'pop:' : 'high:') + (m.ball.lastHitter?.human ? 'self' : lastKind) + (e.p.plan?.volley ? '/air' : '/bounce');
@@ -121,3 +126,4 @@ for (const [lvl, sig, dbl] of cases) {
     for (const k in sources) delete sources[k];
   }
 }
+console.log(`event stream ${hash}`);
