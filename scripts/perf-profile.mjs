@@ -1,17 +1,20 @@
 // Draw calls per world + a JS CPU profile (self time by function) for one world.
+//   node scripts/perf-profile.mjs [worlds] [profiled world] [sport]
 import { chromium } from 'playwright-core';
 const BASE = process.env.BASE || 'http://localhost:3200';
 const worlds = (process.argv[2] || 'plaza,ink,neon,pixel,paper,clay,water,cosmic').split(',');
 const profWorld = process.argv[3] || 'ink';
+const sport = process.argv[4] || 'tennis';
 const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'] });
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 740 }, deviceScaleFactor: 2 });
 const tv = await ctx.newPage();
 await tv.goto(BASE + '/');
 await tv.evaluate(() => localStorage.setItem('kaleido.settings', JSON.stringify({ seenTutorial: true })));
 await tv.goto(BASE + '/');
-await tv.waitForTimeout(2000);
+await tv.waitForFunction(() => document.querySelector('.boot.done') || !document.querySelector('.boot'), null, { timeout: 30000 });
+await tv.waitForTimeout(1000);
 for (const w of worlds) {
-  await tv.evaluate((w) => window.kaleido.startAttract(w), w);
+  await tv.evaluate(([w, s]) => window.kaleido.startAttract(w, s), [w, sport]);
   await tv.waitForTimeout(1200);
   const info = await tv.evaluate(() => {
     const k = window.kaleido;
@@ -28,7 +31,7 @@ for (const w of worlds) {
   console.log(w.padEnd(7), JSON.stringify(info));
 }
 // CPU profile
-await tv.evaluate((w) => window.kaleido.startAttract(w), profWorld);
+await tv.evaluate(([w, s]) => window.kaleido.startAttract(w, s), [profWorld, sport]);
 await tv.waitForTimeout(1500);
 const cdp = await ctx.newCDPSession(tv);
 await cdp.send('Profiler.enable');
