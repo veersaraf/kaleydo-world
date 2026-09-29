@@ -5,3 +5,4 @@ server/.certs
 *.log
 .claude/worktrees/
 captures/
+.wrangler/

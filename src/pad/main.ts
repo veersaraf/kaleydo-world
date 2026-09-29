@@ -1,3 +1,4 @@
+import './roomgate';
 import { LiftDetector } from './lift';
 import '@fontsource/fredoka/latin-400.css';
 import '@fontsource/fredoka/latin-600.css';

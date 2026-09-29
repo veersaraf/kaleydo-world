@@ -6,6 +6,7 @@ import type { TVLink } from '../core/link';
 import { avatarSvg } from '../../pad/avatar';
 import { playerLook } from '../chars/look';
 import { hashStr } from '../../shared/hash';
+import QRCode from 'qrcode';
 
 type SeatOf = NonNullable<Input['seats'][number]>;
 
@@ -21,6 +22,7 @@ export class JoinPanel {
   private qr: HTMLImageElement;
   private url: HTMLElement;
   private seats: HTMLElement;
+  private blurb!: HTMLElement;
   private shownUrl = '';
 
   constructor(
@@ -42,7 +44,7 @@ export class JoinPanel {
           'div',
           null,
           h('h3', null, 'Grab your phone'),
-          h('p', null, 'Scan with your iPhone camera, on this Mac’s Wi-Fi. The first time, a one-minute setup.'),
+          (this.blurb = h('p', null, 'Scan with your iPhone camera, on this Mac’s Wi-Fi. The first time, a one-minute setup.')),
           this.url,
         ),
       ),
@@ -57,9 +59,16 @@ export class JoinPanel {
     const u = this.link.joinUrl;
     if (u && u !== this.shownUrl) {
       this.shownUrl = u;
-      this.qr.src = `/api/qr.svg?dark=1d1c33&t=${Date.now()}`;
-      // (the QR code opens the http join page, which sends the phone on to the https remote)
-      this.url.textContent = u.replace(/^https?:\/\//, '');
+      if (this.link.cloud) {
+        // the cloud: the QR code opens the remote in this TV's room, from anywhere
+        void QRCode.toDataURL(u, { margin: 1, width: 360, color: { dark: '#1d1c33', light: '#ffffff' } }).then((src: string) => (this.qr.src = src));
+        this.blurb.textContent = 'Scan with your phone’s camera to turn it into a remote. Or open the address below and enter the room code.';
+        this.url.textContent = `Room ${this.link.room} · ${location.host}/c`;
+      } else {
+        this.qr.src = `/api/qr.svg?dark=1d1c33&t=${Date.now()}`;
+        // (the QR code opens the http join page, which sends the phone on to the https remote)
+        this.url.textContent = u.replace(/^https?:\/\//, '');
+      }
     } else if (!u) {
       this.url.textContent = this.link.online ? 'No Wi-Fi address found' : 'Connecting to the KALEIDO server…';
     }

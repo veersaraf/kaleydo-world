@@ -69,8 +69,12 @@ export class PadLink {
     this.onStatus(s);
   }
 
+  /** in the cloud: the TV's room (from the QR code's link) */
+  readonly room = (new URLSearchParams(location.search).get('room') || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
   private qs() {
-    return `pid=${encodeURIComponent(this.pid)}&name=${encodeURIComponent(this.getName())}`;
+    const r = this.room ? `&room=${this.room}` : '';
+    return `pid=${encodeURIComponent(this.pid)}&name=${encodeURIComponent(this.getName())}${r}`;
   }
 
   private tryWS() {
@@ -86,7 +90,8 @@ export class PadLink {
     }
     this.ws = ws;
     const giveUp = window.setTimeout(() => {
-      if (!opened) {
+      // (a room in the cloud has a real certificate: the socket will open, keep trying it)
+      if (!opened && !this.room) {
         this.wsFailed = true;
         try {
           ws.close();
@@ -111,7 +116,7 @@ export class PadLink {
       clearTimeout(giveUp);
       if (this.ws !== ws) return;
       this.ws = null;
-      if (!opened) {
+      if (!opened && !this.room) {
         this.wsFailed = true;
         this.startHTTP();
         return;

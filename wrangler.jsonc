@@ -1,0 +1,9 @@
+// KALEIDO in the cloud: `npm run build && npx wrangler deploy` (see cloud/worker.ts, README)
+{
+  "name": "kaleido",
+  "main": "cloud/worker.ts",
+  "compatibility_date": "2026-09-01",
+  "assets": { "directory": "./dist", "binding": "ASSETS", "run_worker_first": ["/ws", "/api/*", "/c", "/c/", "/pad"] },
+  "durable_objects": { "bindings": [{ "name": "ROOMS", "class_name": "Room" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }]
+}

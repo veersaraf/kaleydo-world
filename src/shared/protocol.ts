@@ -128,12 +128,14 @@ export interface PadInfo {
 
 export type ServerToTV =
   /** joinUrl: what the QR code opens (the http join page, which forwards to padUrl, the remote); caUrl: the iOS profile */
-  | { type: 'hello'; joinUrl: string | null; padUrl?: string | null; caUrl: string | null; ips: string[]; dev: boolean; pads: PadInfo[] }
+  | { type: 'hello'; joinUrl: string | null; padUrl?: string | null; caUrl: string | null; ips: string[]; dev: boolean; pads: PadInfo[]; room?: string }
   | { type: 'net'; joinUrl: string | null; padUrl?: string | null; caUrl: string | null; ips: string[] }
   | { type: 'pad-join'; pid: string; name: string; transport: string }
   | { type: 'pad-leave'; pid: string }
   | { type: 'pad'; pid: string; rt: number; msg: PadMsg }
-  | { type: 'replaced' };
+  | { type: 'replaced' }
+  /** the cloud: this room code belongs to another TV (pick another) */
+  | { type: 'room-taken' };
 
 export type ServerToPad =
   | TVMsg

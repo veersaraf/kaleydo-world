@@ -20,6 +20,14 @@ in code. There are no image, model or audio files.
 
 ## Play
 
+Two ways:
+
+- **Online:** open the hosted game in any computer's browser (a laptop, or a TV
+  with a browser), and scan the QR code with your phone. The phone becomes a
+  remote at once — no app, no setup, no certificate — and friends can join the
+  same room from their phones. (See *Hosting it* below.)
+- **On your own Mac**, no internet needed (phones on the same Wi-Fi):
+
 ```bash
 npm install
 npm start
@@ -163,6 +171,25 @@ of the song, and the arrangement builds as the rally gets longer.
   the entry for the game's address, then rejoin. On the remote, the ⚙ menu has
   a sensitivity setting (*Big swings / Normal / Light swings*).
 - **Too hard / too easy** — change the CPU level in Quick Match.
+
+## Hosting it
+
+The game is static files plus a tiny relay: `cloud/worker.ts` is a Cloudflare
+Worker that serves `dist/` and gives each TV a room (a Durable Object) that its
+phones join — the same relay `server/server.mjs` runs on a Mac. A TV makes up a
+5-letter room code; its QR code opens `/c?room=CODE` on the phone. With a real
+domain the site has a real certificate, so phones get motion sensors with no
+setup.
+
+```bash
+npm run cloud:dev      # build, and run it locally on http://127.0.0.1:8787
+npx wrangler login     # once: your Cloudflare account
+npm run cloud:deploy   # build, and publish to <name>.workers.dev
+```
+
+Then point a domain at it in the Cloudflare dashboard (Workers → kaleido →
+Settings → Domains & Routes). The free plan is plenty for a hobby game.
+`node scripts/cloud-e2e.mjs` checks a running cloud copy end to end.
 
 ## Development
 
