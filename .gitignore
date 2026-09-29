@@ -6,3 +6,6 @@ server/.certs
 .claude/worktrees/
 captures/
 .wrangler/
+
+# e2e screenshots land in the cwd
+/*.png
