@@ -122,8 +122,15 @@ export class Orientation {
   private facing(): [number, number] | null {
     const top = this.toEarth([0, 1, 0]);
     const back = this.toEarth([0, 0, -1]);
-    const x = top[0] + back[0],
-      y = top[1] + back[1];
+    // The top, within ~30° of level, points at the screen by itself (a remote, a sword held
+    // out); the back counts more the more the phone stands up (a hilt upright in the fist).
+    // The two disagree when the phone is held on its side — top at the TV, screen to the
+    // left, as a sword gripped in a fist often is — and then it's the top that's right (the
+    // two added were 45° off).
+    const level = Math.hypot(top[0], top[1]);
+    const wb = Math.min(1, Math.max(0, (0.85 - level) / 0.35));
+    const x = top[0] + wb * back[0],
+      y = top[1] + wb * back[1];
     return Math.hypot(x, y) < 0.3 ? null : [x, y];
   }
 

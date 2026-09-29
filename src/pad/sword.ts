@@ -110,6 +110,8 @@ export interface SwordJudged {
   base: number;
   /** how fast the sword was drawn back the other way just before (its windup, rad/s: see WOUND) */
   wound: number;
+  /** the blade at the ready (player frame) the stroke was read against */
+  ready?: Vec3;
   verdict: 'blow' | 'held' | 'windup' | 'weak' | 'near' | 'shapeless' | 'too soon' | 'guard';
 }
 
@@ -145,6 +147,8 @@ const MIN_SWEEP = 0.3; // rad the tip turns by the decision (a knock doesn't)…
 const NEAR_SWEEP = 0.15; // …a near miss, at least this
 const COHERENT = 0.5; // |Σ v| / Σ |v|: the stroke goes one way (not a scribble)
 const ACROSS = 0.3; // share of the tip's travel that's across the view (not straight at the screen)
+const READY_CALM = 1.5; // rad/s: the phone is calm (held at the ready, or aiming) below this…
+const READY_TAU = Number(process.env.SW_RT ?? 0.4); // …and the ready blade follows it over this long (s)
 const DIR_WINDOW = 200; // ms before the peak the direction is read over
 const RISE = 0.25; // s: a stroke that takes longer than this from half speed to its peak (a twirl, a slow
 // turn) needs a faster peak (by the square of how much longer)
@@ -160,10 +164,13 @@ const QUIET = 300; // …for this long (ms): nothing's coming
 const WOUND_MS = 700; // ms before the stroke began that a windup is looked for: motion the other way…
 const WOUND = 0.2; // …at least this fast, as a share of the blow's peak (and START)…
 const WOUND_K = 2; // …but the blow at least this much faster than it (else they're a pair of moves alike)
+const UP_SURE = Number(process.env.SW_US ?? 10); // a rising stroke this hard (rad/s, ≈ 570°/s) is a rising cut; a gentler one may be the sword raised to chop…
+const RAISE_WAIT = Number(process.env.SW_RW ?? 900); // …and waits this long (ms after its peak) for the chop
 const WINDUP_MAX = 700; // ms after its peak it waits at most (while a stroke is under way)
 const UNWIND = 1.1; // the blow after a windup is at least this much harder than it (a rising windup: 0.6)
 // after an attack
 const GAP = 170; // ms: no two blows peak closer than this
+const REVERSE = 0.5; // …or once the tip goes back the other way (cos < −this)
 const SETTLE = 0.45; // the motion has settled once below this much of the last peak (and START)
 const RETURN_MS = 1000; // for this long, a stroke back the other way…
 const RETURN_K = 0.75; // …has to be this hard, as a share of the blow's peak…
@@ -279,6 +286,9 @@ export class SwordDetector {
   private pushBias = 0;
   private gSign = 0;
   private igUp = 0;
+  /** the blade's direction at the ready (player frame, smoothed while calm) */
+  private bReady: Vec3 = [0, 1, 0];
+  private haveReady = false;
 
   /** Forget the motion so far (e.g. the duel starts). */
   reset() {
@@ -320,10 +330,29 @@ export class SwordDetector {
     }
     const w = this.toPlayer(qrot(s.q, [s.rx, s.ry, s.rz]));
     const b = this.toPlayer(qrot(s.q, [0, 1, 0]));
-    // the imaginary sword's tip, from the elbow (unit length)
-    const lx = LB * b[0],
-      ly = LA + LB * b[1],
-      lz = LB * b[2];
+    const wn = Math.hypot(w[0], w[1], w[2]);
+    // the blade at the ready: where it points while the phone is calm
+    const br = this.bReady;
+    if (!this.haveReady) {
+      br[0] = b[0];
+      br[1] = b[1];
+      br[2] = b[2];
+      this.haveReady = true;
+    } else if (wn < READY_CALM) {
+      const k = Math.min(1, dt / Number(process.env.SW_RT ?? READY_TAU));
+      for (let i = 0; i < 3; i++) br[i] += (b[i] - br[i]) * k;
+      const l = Math.hypot(br[0], br[1], br[2]) || 1;
+      for (let i = 0; i < 3; i++) br[i] /= l;
+    }
+    // the imaginary sword's tip, from the elbow (unit length), the blade as held at the ready
+    // (never pointing back: a sword rested on the shoulder still cuts in front)
+    const V = process.env.SW_V ?? 'ready';
+    const LBx = Number(process.env.SW_LB ?? LB);
+    const bb = V === 'inst' ? b : br;
+    const upr = V === 'upr' ? Math.min(1, Math.max(0, (bb[2] - Number(process.env.SW_U0 ?? 0.45)) / 0.3)) : 1;
+    const lx = LBx * upr * bb[0],
+      ly = LA + LBx * upr * (V === 'inst' ? bb[1] : Math.max(0, bb[1])),
+      lz = LBx * upr * bb[2];
     const ll = Math.hypot(lx, ly, lz) || 1;
     const r0 = lx / ll,
       r1 = ly / ll,
@@ -360,13 +389,16 @@ export class SwordDetector {
     if (p) {
       // a possible windup: no blow followed (the phone came to rest, or nothing came in time), or the
       // next stroke isn't coming back the other way — it was a blow after all
-      let go = t - p.tPeak > WINDUP_MAX;
+      // (raising the sword, not so hard: people hold it up there a moment before the chop — it
+      // waits longer, however still the phone is)
+      const raise = p.up && p.peak < UP_SURE / this.sensitivity;
+      let go = t - p.tPeak > (raise ? RAISE_WAIT : WINDUP_MAX);
       if (!this.inStroke) {
         if (sp < REST) {
           if (p.quiet < 0) p.quiet = t;
         } else p.quiet = -1;
-        if ((p.quiet >= 0 && t - p.quiet >= QUIET) || t - p.at >= HOLD) go = true;
-      } else if (t - this.t0 >= 30 && (this.sx || this.sz) && Math.cos(Math.atan2(this.sz, this.sx) - p.dir) > -0.2) go = true;
+        if (!raise && ((p.quiet >= 0 && t - p.quiet >= QUIET) || t - p.at >= HOLD)) go = true;
+      } else if (!raise && t - this.t0 >= 30 && (this.sx || this.sz) && Math.cos(Math.atan2(this.sz, this.sx) - p.dir) > -0.2) go = true;
       if (go) {
         this.pending = null;
         this.emit(p);
@@ -375,7 +407,12 @@ export class SwordDetector {
     if (!this.settled) {
       // still the last blow (its follow-through, or a push's wobble) — or, after a possible windup,
       // still that (the next stroke is the one that comes back the other way)
-      if (sp < (this.pending ? start : Math.max(start, SETTLE * this.settleP))) this.settled = true;
+      // — until it calms down, or turns back the other way (a windup that flows straight into
+      // its blow without stopping at the top, a blow into its return)
+      const j = this.idx(0);
+      const ref = this.pending ? this.pending.dir : this.lastDir;
+      const back = process.env.SW_NOREV ? false : this.VX[j] * Math.cos(ref) + this.VZ[j] * Math.sin(ref) < -REVERSE * sp;
+      if (sp < (this.pending ? start : Math.max(start, SETTLE * this.settleP)) || back) this.settled = true;
       else return;
     }
     if (!this.inStroke) {
@@ -441,7 +478,7 @@ export class SwordDetector {
     }
     const wasWound = wound >= Math.max(START / k, WOUND * peak) && peak >= WOUND_K * wound;
     const J: SwordJudged | null = this.onJudge
-      ? { t: tPeak, peak, dir, sweep, across: all > 0 ? across / all : 0, coherent: across > 0 ? d / across : 0, need: 0, base: 0, wound, verdict: 'shapeless' }
+      ? { t: tPeak, peak, dir, sweep, across: all > 0 ? across / all : 0, coherent: across > 0 ? d / across : 0, need: 0, base: 0, wound, ready: [...this.bReady] as Vec3, verdict: 'shapeless' }
       : null;
     const judged = (v: SwordJudged['verdict'], need = 0, base = 0) => {
       if (!J) return;
