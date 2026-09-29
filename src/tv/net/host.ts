@@ -176,9 +176,11 @@ export class NetHost {
     const p = (q: { id: number } | null | undefined) => (q ? q.id : -1);
     let n: NetEvent;
     switch (e.type) {
-      case 'hit':
-        n = { type: 'hit', t, p: p(e.p), power: e.power, spin: e.spin, perfect: e.perfect, kind: e.kind, stroke: e.stroke, pos: e.pos, kph: e.kph, rally: e.rally, tau: e.tau, serve: e.serve, dtMs: e.dtMs, aim: e.aim, crossed: e.crossed, shotSpin: e.shotSpin, rocket: e.rocket };
+      case 'hit': {
+        const sw = e.p.swing;
+        n = { type: 'hit', t, p: p(e.p), warp: sw && sw.hit ? { t0: sw.t0, tc: sw.tc } : undefined, power: e.power, spin: e.spin, perfect: e.perfect, kind: e.kind, stroke: e.stroke, pos: e.pos, kph: e.kph, rally: e.rally, tau: e.tau, serve: e.serve, dtMs: e.dtMs, aim: e.aim, crossed: e.crossed, shotSpin: e.shotSpin, rocket: e.rocket };
         break;
+      }
       case 'whiff':
         n = { type: 'whiff', t, p: p(e.p), tau: e.tau, dtMs: e.dtMs, why: e.why };
         break;

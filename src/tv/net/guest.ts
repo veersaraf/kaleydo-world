@@ -30,8 +30,11 @@ import type { V3 } from '../core/math';
 import { STATES, decodeSnap, newSnap, type NetEnd, type NetEvent, type NetHud, type NetMsg, type NetPose, type NetStart, type NetWorld, type Snap } from '../../shared/net';
 
 const RING = 128;
-/** how many of the newest snapshots are searched for the ball's segment and the racket magnet */
+/** how many snapshots are searched for the ball's segment and the racket magnet, starting a few after the one at the time */
 const SCAN = 24;
+const AHEAD = 8;
+/** an event's time is rounded to the ms: a flight that starts at the event (a toss, a hit) is taken from ~2 ms before it */
+const SEG_SLACK = 0.002;
 /** no snapshot for this long: we say we are reconnecting */
 const STALL_MS = 1500;
 
@@ -85,7 +88,7 @@ interface Pending {
 class BallSync {
   segSerial = -1;
 
-  set(m: Match, X: Snap, Z: Snap | null) {
+  set(m: Match, X: Snap, Z: Snap['warp'] | null) {
     const b = m.ball;
     const g = X.seg;
     if (this.segSerial !== X.serial) {
@@ -99,16 +102,16 @@ class BallSync {
     // the racket magnet, while a hit is being lined up
     const prev = m.pendingHit;
     if (Z) {
-      const p = m.players[Z.warp.p];
+      const p = m.players[Z.p];
       if (p) {
         if (prev && prev !== p) prev.swing = null;
         const sw = (p.swing ?? ({ stroke: 'fh', hit: true, resolved: false, input: { power: 0.5, spin: 0, tau: 0 }, serve: false } as unknown as SwingState)) as SwingState;
-        sw.t0 = Z.warp.t0;
-        sw.tc = Z.warp.tc;
-        sw.te = Z.warp.tc + 0.36;
-        sw.cx = Z.warp.cx;
-        sw.cy = Z.warp.cy;
-        sw.cz = Z.warp.cz;
+        sw.t0 = Z.t0;
+        sw.tc = Z.tc;
+        sw.te = Z.tc + 0.36;
+        sw.cx = Z.cx;
+        sw.cy = Z.cy;
+        sw.cz = Z.cz;
         sw.resolved = false;
         p.swing = sw;
         m.pendingHit = p;
@@ -145,6 +148,8 @@ export class GuestStream {
   private pending: Pending[] = [];
   private timeline: { wall: number; msg: NetWorld | NetHud | NetEnd }[] = [];
   private lastFired: Snap | null = null;
+  /** the racket magnets that hits told of (a snapshot in the ~30 ms one lasts may not have been sent) */
+  private hitWarps: Snap['warp'][] = [];
   private main = new BallSync();
   private probe: { m: Match; sync: BallSync } | null = null;
   private plan: HitPlan = { t: 0, bx: 0, by: 0, bz: 0, stroke: 'oh', volley: false, sx: 0, sz: 0, reachable: true, cost: 0, speed: 0 };
@@ -199,7 +204,13 @@ export class GuestStream {
       if (gap > 0 && gap < 1000) this.dropped += gap;
     }
     this.lastSeq = s.seq;
-    for (const ev of s.events) this.pending.push({ ev, carrier: s });
+    for (const ev of s.events) {
+      this.pending.push({ ev, carrier: s });
+      if (ev.type === 'hit' && ev.warp) {
+        this.hitWarps.push({ p: ev.p, t0: ev.warp.t0, tc: ev.warp.tc, cx: ev.pos.x, cy: ev.pos.y, cz: ev.pos.z });
+        if (this.hitWarps.length > 8) this.hitWarps.shift();
+      }
+    }
     // the regular tick's interval (event snapshots in between don't count)
     if (!s.ev) {
       if (this.lastRegularWall >= 0) {
@@ -351,20 +362,28 @@ export class GuestStream {
     m.ball.live = s.ballLive;
   }
 
-  /** the newest snapshot whose segment has started by sim time `t`, and the one whose racket magnet is on at `t` */
-  private pickBall(m: Match, sync: BallSync, t: number, fallback: Snap) {
-    let X = fallback;
-    let Z: Snap | null = null;
+  /**
+   * The newest snapshot whose segment has started by sim time `t`, and the one whose racket magnet is on at `t`
+   * (searching back from a few snapshots after `near`, the one at that time).
+   */
+  private pickBall(m: Match, sync: BallSync, t: number, near: Snap, slack = SEG_SLACK) {
+    let X = near;
+    let Z: Snap['warp'] | null = null;
     let foundX = false;
-    for (let s = this.serial, n = 0; s >= 1 && n < SCAN && this.at(s).serial === s; s--, n++) {
+    // (a snapshot taken at exactly this time knows whether the racket magnet was on then)
+    let exact: Snap | null = null;
+    for (let s = Math.min(this.serial, near.serial + AHEAD), n = 0; s >= 1 && n < SCAN && this.at(s).serial === s; s--, n++) {
       const S = this.at(s);
-      if (!foundX && S.seg.t0 <= t + 1e-6) {
+      if (!foundX && S.seg.t0 <= t + slack) {
         X = S;
         foundX = true;
       }
-      if (!Z && S.warp.p >= 0 && S.warp.t0 <= t && t < S.warp.tc) Z = S;
-      if (foundX && (Z || n > 6)) break;
+      if (!Z && S.warp.p >= 0 && S.warp.t0 <= t && t < S.warp.tc) Z = S.warp;
+      if (!exact && S.t === t) exact = S;
+      if (foundX && (Z || n > 6) && (exact || S.t < t)) break;
     }
+    if (exact) Z = exact.warp.p >= 0 && exact.warp.t0 <= t && t < exact.warp.tc ? exact.warp : null;
+    else if (!Z) Z = this.hitWarps.find((w) => w.t0 <= t && t < w.tc) ?? null;
     sync.set(m, X, Z);
   }
 
@@ -503,7 +522,7 @@ export class GuestStream {
     pr.m.state = st;
     pr.m.ball.holder = A.holder >= 0 ? (pr.m.players[A.holder] ?? null) : null;
     pr.sync.segSerial = -1;
-    this.pickBall(pr.m, pr.sync, t, A);
+    this.pickBall(pr.m, pr.sync, t, A, 1e-6);
     if (pr.m.ball.holder) return false;
     pr.m.ballView(t, out);
     return true;

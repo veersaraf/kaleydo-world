@@ -149,8 +149,6 @@ export class Flow {
   private guestRun: NetStart | null = null;
   private guestPrevMode: 'quick' | 'kaleido' = 'quick';
   private guestBadge: HTMLElement | null = null;
-  /** the room's lobby sets this: called when the guest is done with a match (results, or the host left) and the lobby should be shown again. Without it: the main menu. */
-  onGuestReturn: (() => void) | null = null;
 
   constructor(private app: App) {
     this.root = document.getElementById('ui')!;
@@ -270,6 +268,15 @@ export class Flow {
     app.onGuestReplay = (on) => this.hud?.setReplay(on);
     app.onGuestHud = (text, sub, cls) => this.hud?.say(text, sub, cls ?? '');
     app.net.kaleido = () => this.mode === 'kaleido';
+    // (the host leaving mid-match takes a guest back to the lobby, which says so)
+    const roomMsg = app.link.onMessage;
+    app.link.onMessage = (m) => {
+      roomMsg(m);
+      if (this.guestRun && (m.type === 'host-gone' || m.type === 'no-room')) {
+        this.toast('The host left the room');
+        this.leaveGuestMatch();
+      }
+    };
     app.input.mouseSwings = this.settings.mouse;
     app.splitPref = this.settings.split;
     app.onSplit = (on) => this.hud?.setSplit(on ? app.rig2 : null);
@@ -1157,6 +1164,8 @@ export class Flow {
     // (no Kaleido shifts of our own: the host's `world` messages move the world)
     this.mode = 'quick';
     this.guestRun = start;
+    // (the lobby gives way to the match; it comes back with leaveGuestMatch)
+    this.guestLobby?.hide();
     this.go(null);
     this.stats = this.freshStats();
     this.pointsSinceShift = 0;
@@ -1191,17 +1200,17 @@ export class Flow {
     this.go(this.guestResultsScreen(end));
   }
 
-  /** done with the host's match: the lobby again (or the main menu) */
+  /** done with the host's match: the room's lobby again (the main menu if there is none) */
   leaveGuestMatch() {
     this.guestRun = null;
     this.mode = this.guestPrevMode;
     this.guestStatus(false);
-    if (this.onGuestReturn) {
+    if (this.guestLobby) {
       this.hud?.el.remove();
       this.hud = null;
       this.app.stopGuestMatch();
       this.go(null);
-      this.onGuestReturn();
+      this.guestLobby.show();
     } else this.quitToMenu();
   }
 

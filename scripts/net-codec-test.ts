@@ -48,7 +48,7 @@ function randEvent(t: number): NetEvent {
   const pos = { x: R(-6, 6), y: R(0, 3), z: R(-14, 14) };
   const mb = <T,>(v: T) => (rng.chance(0.5) ? v : undefined);
   switch (type) {
-    case 'hit': return { type, t, p, power: R(0, 1), spin: R(-1, 1), perfect: rng.chance(0.4), kind: pick(HIT_KINDS), stroke: pick(STROKES), pos, kph: R(20, 230), rally: rng.int(0, 40), tau: R(-1.3, 1.3), serve: rng.chance(0.2), dtMs: mb(rng.int(-200, 200)), aim: mb(R(-1, 1)), crossed: mb(true), shotSpin: R(-1, 1), rocket: mb(true) };
+    case 'hit': return { type, t, p, power: R(0, 1), spin: R(-1, 1), perfect: rng.chance(0.4), kind: pick(HIT_KINDS), stroke: pick(STROKES), pos, kph: R(20, 230), rally: rng.int(0, 40), tau: R(-1.3, 1.3), serve: rng.chance(0.2), dtMs: mb(rng.int(-200, 200)), aim: mb(R(-1, 1)), crossed: mb(true), shotSpin: R(-1, 1), rocket: mb(true), warp: rng.chance(0.5) ? { t0: t - R(0.03, 0.08), tc: t - R(0, 0.03) } : undefined };
     case 'whiff': return { type, t, p, tau: R(-3, 3), dtMs: mb(rng.int(-300, 300)), why: mb(pick(WHIFF_WHY.slice(1))) };
     case 'toss': case 'tired': case 'smash-chance': case 'catch': return { type, t, p };
     case 'athletic': return { type, t, p, move: pick(MOVES) };
@@ -135,6 +135,7 @@ function compareEvent(w: string, a: NetEvent, b: NetEvent) {
       const tol = k === 'power' || k === 'spin' || k === 'shotSpin' || k === 'aim' ? 1 / 127 : k === 'kph' ? 0.06 : k === 'impact' ? 0.006 : k === 'tau' ? 0.0006 : k === 'dtMs' ? 0.51 : 0;
       near(w + k, x, y, tol);
     } else if (k === 'pos') eqv(w + 'pos', x, y, QUANT.pos);
+    else if (k === 'warp') { if (!y) bad.push(w + 'warp lost'); else { near(w + 'warp.t0', x.t0, y.t0, 0.0016); near(w + 'warp.tc', x.tc, y.tc, 0.0016); } }
     else if (k === 'points') { if (x[0] !== y[0] || x[1] !== y[1]) bad.push(w + 'points'); }
     else if (x !== y && !(x === false && y === undefined) && !(x === undefined && y === false)) bad.push(`${w}${k}: ${JSON.stringify(x)} vs ${JSON.stringify(y)}`);
   }
@@ -191,7 +192,7 @@ function compareEvent(w: string, a: NetEvent, b: NetEvent) {
 
 // ---------------------------------------------------------------- 3. a whole match over a jittery network
 interface Net { arrive: number; data: unknown }
-function streamMatch(opts: { doubles: boolean; seed: number; stall?: [number, number]; jitter?: number; base?: number }) {
+function streamMatch(opts: { doubles: boolean; seed: number; stall?: [number, number]; jitter?: number; base?: number; hostMs?: number }) {
   const T0 = 1_700_000_000_000;
   let vnow = 0;
   const clock = { perf: () => vnow, date: () => T0 + vnow };
@@ -245,22 +246,29 @@ function streamMatch(opts: { doubles: boolean; seed: number; stall?: [number, nu
   const dtF = 1000 / 60;
   const ball = { x: 0, y: 0, z: 0 };
   let startedAt = -1;
+  const hostMs = opts.hostMs ?? dtF;
+  let nextHost = 0;
+  let missedWarps = 0;
+  let engagedWarps = 0;
+  const seenWarp = new Set<number>();
   for (let k = 0; k < 60 * 60 * 8; k++) {
     vnow = k * dtF;
-    // ---- the host's frame
-    if (m.state !== 'over') {
-      m.step(1 / 120);
-      m.step(1 / 120);
+    // ---- the host's frame (a slow host has fewer of them)
+    if (vnow >= nextHost - 1e-6) {
+      nextHost += hostMs;
+      const simDt = hostMs / 1000;
+      const n = Math.max(1, Math.ceil(simDt * 120 - 1e-6));
+      if (m.state !== 'over') for (let i = 0; i < n; i++) m.step(simDt / n);
+      m.ballView(m.t, ball);
+      // (a smash chance being staged for a moment, as App.stageSmash does from Match.smashChance)
+      app.smashCue = m.t > 20 && m.t < 20.4 && m.state === 'play' ? { p: m.players[0], plan: { t: m.t + 0.5, bx: 1, by: 2.2, bz: 3, sx: 1.5, sz: 4 } } : null;
+      const poses = anims.map((a) => a.update(m.t, simDt, ball, m.state));
+      const t0 = performance.now();
+      net.frame(poses);
+      encodeMs.push(performance.now() - t0);
+      hostLog.push({ t: m.t, x: ball.x, y: ball.y, z: ball.z, holder: !!m.ball.holder });
+      if (hostLog.length > 400) hostLog.shift();
     }
-    m.ballView(m.t, ball);
-    // (a smash chance being staged for a moment, as App.stageSmash does from Match.smashChance)
-    app.smashCue = m.t > 20 && m.t < 20.4 && m.state === 'play' ? { p: m.players[0], plan: { t: m.t + 0.5, bx: 1, by: 2.2, bz: 3, sx: 1.5, sz: 4 } } : null;
-    const poses = anims.map((a) => a.update(m.t, 1 / 60, ball, m.state));
-    const t0 = performance.now();
-    net.frame(poses);
-    encodeMs.push(performance.now() - t0);
-    hostLog.push({ t: m.t, x: ball.x, y: ball.y, z: ball.z, holder: !!m.ball.holder });
-    if (hostLog.length > 400) hostLog.shift();
     // ---- the network
     const gnow = vnow + 5;
     while (queue.length && queue[0].arrive <= gnow) {
@@ -281,6 +289,22 @@ function streamMatch(opts: { doubles: boolean; seed: number; stall?: [number, nu
       guest.advance(1 / 60);
       frames++;
       if (guest.match.smashChance(guest.match.players[0])) cueAt.push(guest.tR);
+      // a hit whose racket magnet no snapshot caught (the host frame was longer than the swing): the hit event's own copy draws the ball to the racket
+      for (const w of (guest as any).hitWarps as { p: number; t0: number; tc: number; cx: number; cy: number; cz: number }[]) {
+        if (seenWarp.has(w.tc) || w.tc > guest.tR - 0.05) continue;
+        seenWarp.add(w.tc);
+        const ring = (guest as any).ring as Snap[];
+        if (ring.some((q) => q.serial > 0 && q.warp.p >= 0 && Math.abs(q.warp.t0 - w.t0) < 0.002)) continue;
+        missedWarps++;
+        const saved = (guest as any).hitWarps;
+        const tm = (w.t0 + w.tc) / 2 + 0.002;
+        const a = { x: 0, y: 0, z: 0 }, b = { x: 0, y: 0, z: 0 };
+        (guest as any).hitWarps = [];
+        const ok1 = guest.ballAtSimTime(tm, a);
+        (guest as any).hitWarps = saved;
+        const ok2 = guest.ballAtSimTime(tm, b);
+        if (ok1 && ok2 && Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) > 0.002) engagedWarps++;
+      }
       const g = guest;
       const gm = g.match;
       gm.ballView(gm.t, ballTmp);
@@ -334,7 +358,7 @@ function streamMatch(opts: { doubles: boolean; seed: number; stall?: [number, nu
   }
   void startedAt;
   renderList.sort((a, b) => a - b);
-  return { m, guest: guest as GuestStream | null, hostEvents, guestEvents, ended, status, maxErr, meanErr: sumErr / Math.max(1, cmp), cmp, jumps, maxStep, frames, encodeMs, net, renderList, cueAt };
+  return { m, guest: guest as GuestStream | null, hostEvents, guestEvents, ended, status, maxErr, meanErr: sumErr / Math.max(1, cmp), cmp, jumps, maxStep, frames, encodeMs, net, renderList, cueAt, missedWarps, engagedWarps };
 }
 
 for (const doubles of [false, true]) {
@@ -358,6 +382,17 @@ for (const doubles of [false, true]) {
   check(`${label}: encoding under 0.2 ms`, em[Math.floor(em.length * 0.99)] < 0.2, `p99 ${(em[Math.floor(em.length * 0.99)] * 1000).toFixed(0)} µs`);
   const rl = r.renderList;
   console.log(`   drawn ball vs the host's log (linear between its frames: rough at bounces and hits; ${rl.length} frames): p50 ${(rl[rl.length >> 1] * 100).toFixed(2)} cm, p95 ${(rl[Math.floor(rl.length * 0.95)] * 100).toFixed(2)} cm`);
+}
+
+// ---- a slow host (22 fps: some racket magnets last less than a frame and no snapshot sees them)
+{
+  const r = streamMatch({ doubles: false, seed: 11, hostMs: 45 });
+  const g = r.guest!;
+  check('slow host: the same events, in the same order', r.hostEvents.join() === r.guestEvents.join() && !!r.ended, `${r.hostEvents.length} events`);
+  check('slow host: the ball is where the host\'s was at each of its frames', r.maxErr < 0.02 && r.cmp > 500, `${(r.maxErr * 100).toFixed(3)} cm over ${r.cmp} frames`);
+  check('slow host: racket magnets no snapshot saw are still drawn, from the hit event', r.missedWarps > 3 && r.engagedWarps >= r.missedWarps * 0.85, `${r.engagedWarps} of ${r.missedWarps}`);
+  check('slow host: the ball never jumped', r.jumps === 0, `largest step ${r.maxStep.toFixed(2)} m per frame`);
+  void g;
 }
 
 // ---- a stall in the middle of a match: 1 s is ridden out quietly; 2.5 s says "reconnecting…" and recovers

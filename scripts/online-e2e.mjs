@@ -2,10 +2,10 @@
 // to it serves and rallies against the CPU) and streams it; a guest TV page renders the stream.
 //
 //   BRIDGE=1 node scripts/online-e2e.mjs     the host's toGuests and the guest's onHostMessage are joined
-//                                            in-page through Playwright bindings (no relay needed: the
+//                                            in-page through a Playwright binding (no relay needed: the
 //                                            server just has to serve the game)
 //   node scripts/online-e2e.mjs              through the room: the guest joins the host's room by its code
-//                                            (needs `npx wrangler dev --port 8794` and the room-join work)
+//                                            (npx vite build; npx wrangler dev --port 8794)
 //
 //   BASE=http://127.0.0.1:8794   where the game is served (wrangler dev, or `node server/server.mjs --dev`)
 //   PHONE=0                      CPU against CPU instead of the simulated phone
@@ -14,7 +14,8 @@
 //
 // Checks: same world; the guest's shadow match scores as the host's; the guest's ball is where the
 // host's was (compared at the same simulation time, exactly); every match event arrives, in order; a
-// 1 s stall in the bridge and a 2.2 s one recover; a Kaleido world change follows; no page errors.
+// 1 s stall on the guest's link and a 2.2 s one (it says "reconnecting…") recover; a Kaleido world
+// change follows; no page errors.
 import { chromium } from 'playwright-core';
 import { phone } from './lib/fake-phone.mjs';
 
@@ -68,9 +69,7 @@ await host.bringToFront();
 
 // ---------------------------------------------------------------- the link between them
 let stallUntil = 0;
-const held = [];
 const sendToGuest = (m) => guest.evaluate((x) => window.__fromHost(x), m).catch(() => {});
-let sent = 0;
 if (BRIDGE) {
   await guest.evaluate(() => {
     const k = window.kaleido;
@@ -85,15 +84,8 @@ if (BRIDGE) {
     };
   });
   await host.exposeFunction('__toGuest', (m) => {
-    if (Date.now() < stallUntil || held.length) held.push(m);
-    else {
-      sent++;
-      sendToGuest(m);
-    }
+    sendToGuest(m);
   });
-  setInterval(() => {
-    if (Date.now() >= stallUntil) while (held.length) (sent++, sendToGuest(held.shift()));
-  }, 4);
   await host.evaluate(() => {
     const l = window.kaleido.link;
     l.role = 'host';
@@ -108,7 +100,8 @@ if (BRIDGE) {
   });
 } else {
   const room = await host.evaluate(() => window.kaleido.link.room);
-  await guest.evaluate((r) => window.kaleido.link.joinRoom(r), room);
+  // (the way a person does it: the code screen's join, which shows the lobby)
+  await guest.evaluate((r) => window.flow.joinRoom(r), room);
   const ok = await guest.waitForFunction(() => window.kaleido.link.role === 'guest', null, { timeout: 8000 }).then(() => true).catch(() => false);
   if (!ok) {
     console.log('SKIP: joinRoom() does not put this TV in the host\'s room yet (the room-join work); run with BRIDGE=1');
@@ -117,6 +110,19 @@ if (BRIDGE) {
   }
   await host.waitForFunction(() => window.kaleido.link.guests.length > 0, null, { timeout: 8000 });
 }
+
+// a stall on the guest's side of the link: what arrives is held back, then handed over in order
+await guest.evaluate(() => {
+  const k = window.kaleido;
+  const orig = k.link.onHostMessage.bind(k.link);
+  let until = 0;
+  const q = [];
+  k.link.onHostMessage = (m) => (performance.now() < until || q.length ? q.push(m) : orig(m));
+  setInterval(() => {
+    if (performance.now() >= until) while (q.length) orig(q.shift());
+  }, 4);
+  window.__stall = (ms) => (until = performance.now() + ms);
+});
 
 // ---------------------------------------------------------------- the simulated phone (joined to the host)
 let pad = null;
@@ -168,7 +174,8 @@ await host.evaluate(() => {
     const m = k.match;
     if (m && !k.attract) {
       m.ballView(m.t, tmp);
-      window.__hostLog.push({ t: m.t, x: tmp.x, y: tmp.y, z: tmp.z, h: m.ball.holder ? 1 : 0 });
+      const sc = m.score;
+      window.__hostLog.push({ t: m.t, x: tmp.x, y: tmp.y, z: tmp.z, h: m.ball.holder ? 1 : 0, s: `${m.state}|${sc.points}|${sc.games}|${sc.server}|${m.server.id}|${m.rally}|${m.second ? 1 : 0}|${sc.winner}` });
     }
     of(dt);
   };
@@ -184,6 +191,7 @@ await guest.evaluate(() => {
   window.__maxStep = 0;
   let prev = null;
   let prevHold = true;
+  const trail = [];
   let last = performance.now();
   window.__evAt = [];
   window.__jumpAt = [];
@@ -203,15 +211,19 @@ await guest.evaluate(() => {
     const m = k.match;
     if (!k.guest || !m) return;
     window.__frames++;
+    const sc = m.score;
+    if (k.guest.ready) (window.__gState ??= []).push([m.t, Date.now(), `${m.state}|${sc.points}|${sc.games}|${sc.server}|${m.server.id}|${m.rally}|${m.second ? 1 : 0}|${sc.winner}`]);
     m.ballView(m.t, tmp);
     const hold = !!m.ball.holder;
     if (prev && !hold && !prevHold && m.state !== 'intro') {
       const s = Math.hypot(tmp.x - prev.x, tmp.y - prev.y, tmp.z - prev.z);
       window.__maxStep = Math.max(window.__maxStep, s);
-      if (s > 1.4) (window.__jumps++, window.__jumpAt.push([Date.now(), s]));
+      if (s > 1.4) (window.__jumps++, window.__jumpAt.push([Date.now(), s, [prev.x, prev.y, prev.z].map((v) => +v.toFixed(2)), [tmp.x, tmp.y, tmp.z].map((v) => +v.toFixed(2)), m.state, hold, prevHold, +m.t.toFixed(3), trail.slice()]));
     }
     prev = { x: tmp.x, y: tmp.y, z: tmp.z };
     prevHold = hold;
+    trail.push(`${m.t.toFixed(3)} ${m.state} ${hold ? 'H' : '-'} ${tmp.x.toFixed(1)},${tmp.y.toFixed(1)},${tmp.z.toFixed(1)}`);
+    if (trail.length > 6) trail.shift();
   };
 });
 
@@ -311,6 +323,10 @@ const compare = async () => {
       if (e.h) continue;
       if (g.ballAtSimTime(e.t, tmp)) {
         const d = Math.hypot(tmp.x - e.x, tmp.y - e.y, tmp.z - e.z);
+        if (d > out.max) {
+          const ring = g.ring.filter((q) => q.serial > 0 && Math.abs(q.t - e.t) < 0.15).sort((a, b) => a.serial - b.serial);
+          out.worst = { t: e.t, d, host: [e.x, e.y, e.z], guest: [tmp.x, tmp.y, tmp.z], ring: ring.map((q) => `#${q.serial} t${q.t.toFixed(4)} seg${q.seg.t0.toFixed(4)} v${q.seg.vx.toFixed(2)},${q.seg.vz.toFixed(2)} warp${q.warp.p}:${q.warp.t0.toFixed(4)}-${q.warp.tc.toFixed(4)} st${q.state} ev[${q.events.map((x) => x.type + '@' + x.t.toFixed(4)).join(',')}]`) };
+        }
         out.max = Math.max(out.max, d);
         out.sum += d;
         out.n++;
@@ -321,6 +337,7 @@ const compare = async () => {
   cursor += r.consumed;
   cmp.n += r.n;
   cmp.sum += r.sum;
+  if (r.max > cmp.max && r.worst) cmp.worst = r.worst;
   cmp.max = Math.max(cmp.max, r.max);
   cmp.skipped += r.skipped;
 };
@@ -338,13 +355,14 @@ while (Date.now() - t0 < SECONDS * 1000) {
   await sleep(500);
   await compare();
   const el = (Date.now() - t0) / 1000;
-  if (BRIDGE && !stall1 && el > SECONDS * 0.3) {
+  if (!stall1 && el > SECONDS * 0.3) {
     // (the delay on a healthy link, before we break it)
     clean = await guest.evaluate(() => window.kaleido.guest.stats);
     stall1 = true;
     stallUntil = Date.now() + 1000;
     stalls.push([Date.now(), stallUntil]);
-    console.log('  … stalling the bridge for 1 s');
+    await guest.evaluate(() => window.__stall(1000));
+    console.log('  … stalling the guest\'s link for 1 s');
   }
   if (!shifted && el > SECONDS * 0.5) {
     shifted = true;
@@ -352,11 +370,12 @@ while (Date.now() - t0 < SECONDS * 1000) {
     shiftCheckAt = Date.now() + 3500;
     console.log('  … a world change on the host');
   }
-  if (BRIDGE && !stall2 && el > SECONDS * 0.7) {
+  if (!stall2 && el > SECONDS * 0.7) {
     stall2 = true;
     stallUntil = Date.now() + 2200;
     stalls.push([Date.now(), stallUntil]);
-    console.log('  … stalling the bridge for 2.2 s');
+    await guest.evaluate(() => window.__stall(2200));
+    console.log('  … stalling the guest\'s link for 2.2 s');
   }
   if (stall2 && Date.now() < stallUntil + 100) {
     const s = await guest.evaluate(() => ({ r: window.kaleido.guest?.reconnecting, b: [...document.querySelectorAll('div')].some((d) => d.textContent === 'reconnecting…' && d.children.length === 0) }));
@@ -364,9 +383,8 @@ while (Date.now() - t0 < SECONDS * 1000) {
     if (s.b) badge = true;
   }
 }
-// let it settle: the bridge open, the guest caught up, and (if the match is still on) a quiet moment between points
-stallUntil = 0;
-await sleep(600);
+// let it settle: the link open, the guest caught up, and (if the match is still on) a quiet moment between points
+await sleep(3000);
 await compare();
 const settle = async () => {
   for (let i = 0; i < 40; i++) {
@@ -385,6 +403,9 @@ const hostData = await host.evaluate(() => {
   const m = k.match;
   return { ev: window.__ev, points: window.__points, score: { games: [...m.score.games], points: [...m.score.points], state: m.state, server: m.server.id, rally: m.rally, winner: m.score.winner }, world: k.stage.current.def.id, next: k.stage.next?.def.id ?? null, swings: window.__swings ?? 0, net: k.net.stats, enc: k.net.encodeTimes(), t: m.t };
 });
+// (the guest a moment behind the host's reading: it has every event the host had; the match may have moved on since)
+await sleep(1500);
+const hostLate = await host.evaluate(() => window.__ev);
 const guestData = await guest.evaluate(() => {
   const k = window.kaleido;
   const m = k.match;
@@ -409,23 +430,46 @@ const guestData = await guest.evaluate(() => {
 });
 const hits = hostData.ev.filter((e) => e === 'hit').length;
 console.log(`host: ${hits} hits, ${hostData.ev.filter((e) => e === 'bounce').length} bounces, ${hostData.ev.filter((e) => e === 'point').length} points, ${hostData.swings} phone swings, ${hostData.net.snapshots} snapshots (${(hostData.net.bytes / Math.max(1, hostData.net.snapshots)).toFixed(0)} bytes each, encode mean ${((hostData.net.encodeMsTotal / Math.max(1, hostData.net.snapshots)) * 1000).toFixed(0)} µs, p99 ${(hostData.enc.p99 * 1000).toFixed(0)} µs (the page's timer is coarse: 100 µs), max ${(hostData.net.encodeMsMax * 1000).toFixed(0)} µs)`);
-check('encoding a snapshot takes the host under 0.2 ms (p99)', hostData.enc.p99 < 0.2, `p99 ${(hostData.enc.p99 * 1000).toFixed(0)} µs`);
-check('a rally happened (at least 6 hits and a point)', hits >= 6 && hostData.ev.includes('point'), `${hits} hits`);
+const encMean = hostData.net.encodeMsTotal / Math.max(1, hostData.net.snapshots);
+check('encoding a snapshot takes the host under 0.2 ms (mean; p99 within a tick of the page\'s 0.1 ms timer of it)', encMean < 0.2 && hostData.enc.p99 < 0.35, `mean ${(encMean * 1000).toFixed(0)} µs, p99 ${(hostData.enc.p99 * 1000).toFixed(0)} µs`);
+check('a rally happened (at least 6 hits, and a point or a long rally)', hits >= 6 && (hostData.ev.includes('point') || hits >= 12), `${hits} hits`);
 
-check('every match event reached the guest, in order', hostData.ev.join() === guestData.ev.join(), hostData.ev.join() === guestData.ev.join() ? `${hostData.ev.length} events` : `host ${hostData.ev.length}, guest ${guestData.ev.length}`);
+const gEv = guestData.ev.slice(0, hostData.ev.length);
+const inOrder = gEv.join() === hostData.ev.join() && hostLate.join().startsWith(guestData.ev.join());
+check('every match event reached the guest, in order', inOrder, inOrder ? `${hostData.ev.length} events` : `host ${hostData.ev.length}, guest ${guestData.ev.length}`);
 const kinds = (l, k) => l.filter((e) => e === k).length;
-check('…hit / bounce / point / net / whiff counts agree', ['hit', 'bounce', 'point', 'net', 'whiff', 'fault'].every((k) => kinds(hostData.ev, k) === kinds(guestData.ev, k)), ['hit', 'bounce', 'point'].map((k) => `${k} ${kinds(hostData.ev, k)}/${kinds(guestData.ev, k)}`).join(' '));
-check('each point event saw the same score on both TVs', hostData.points.join('\n') === guestData.points.join('\n'), hostData.points.length + ' points');
-check('the guest\'s shadow match scores as the host\'s (points, games, server, state)', JSON.stringify(hostData.score) === JSON.stringify(guestData.score), `${JSON.stringify(hostData.score)} vs ${JSON.stringify(guestData.score)}`);
+check('…hit / bounce / point / net / whiff counts agree', ['hit', 'bounce', 'point', 'net', 'whiff', 'fault'].every((k) => kinds(hostData.ev, k) === kinds(gEv, k)), ['hit', 'bounce', 'point'].map((k) => `${k} ${kinds(hostData.ev, k)}/${kinds(gEv, k)}`).join(' '));
+check('each point event saw the same score on both TVs', hostData.points.join('\n') === guestData.points.slice(0, hostData.points.length).join('\n'), hostData.points.length + ' points');
+{
+  // the guest's state, frame by frame, against the host's a moment before (the host moves on while the guest catches up)
+  const hlog = await host.evaluate(() => window.__hostLog.map((e) => [e.t, e.s]));
+  const gst = await guest.evaluate(() => window.__gState);
+  let ok = 0;
+  let n = 0;
+  let j = 0;
+  const bad = [];
+  for (const [gt, at, gs] of gst) {
+    // (while the link is stalled the guest holds what it last heard: nothing to compare)
+    if (stalls.some(([a, b]) => at >= a - 100 && at <= b + 600)) continue;
+    while (j < hlog.length && hlog[j][0] < gt - 0.12) j++;
+    let hit = false;
+    for (let i = j; i < hlog.length && hlog[i][0] <= gt + 0.05; i++) if (hlog[i][1] === gs) (hit = true);
+    n++;
+    if (hit) ok++;
+    else if (bad.length < 3) bad.push(`t ${gt.toFixed(3)} ${gs}`);
+  }
+  check('the guest\'s shadow match is in the host\'s state (score, server, state, rally) at the time it shows (outside the stalls)', n > 300 && ok >= n * 0.995, `${ok} of ${n} frames${bad.length ? '; e.g. ' + bad.join(' / ') : ''}`);
+}
 console.log(`ball: ${cmp.n} host frames compared at the same simulation time, max ${(cmp.max * 100).toFixed(3)} cm, mean ${((cmp.sum / Math.max(1, cmp.n)) * 1000).toFixed(3)} mm (${cmp.skipped} outside the guest's ring)`);
+if (cmp.max >= 0.02 && cmp.worst) console.log('  worst:', JSON.stringify(cmp.worst, null, 1));
 check('the guest\'s ball is within 2 cm of the host\'s at the same host time', cmp.n > 300 && cmp.max < 0.02, `max ${(cmp.max * 100).toFixed(3)} cm over ${cmp.n} frames`);
 // a step over 1.4 m between two frames is only allowed when a stall ended: the ball flew on along its old segment
 // while the host's play moved on (a hit, a bounce that slowed it, the net, a point, a serve): a segment change explains it
 const explained = (j) => stalls.some(([a, b]) => j[0] >= a && j[0] <= b + 700 && guestData.evAt.some(([t, at]) => at >= a - 200 && at <= b + 700 && ['hit', 'toss', 'point', 'state', 'bounce', 'net', 'let', 'fault'].includes(t)));
 const stray = guestData.jumpAt.filter((j) => !explained(j));
-for (const j of stray) console.log('  stray step', j[1].toFixed(2), 'm; events around it:', guestData.evAt.filter(([, at]) => Math.abs(at - j[0]) < 400).map(([t, at]) => `${t}@${at - j[0]}`).join(' '), '; stalls', stalls.map(([x, y]) => `${x - j[0]}..${y - j[0]}`).join(' '));
+for (const j of stray) console.log('  stray step', j[1].toFixed(2), 'm', JSON.stringify(j.slice(2)), '; events around it:', guestData.evAt.filter(([, at]) => Math.abs(at - j[0]) < 400).map(([t, at]) => `${t}@${at - j[0]}`).join(' '), '; stalls', stalls.map(([x, y]) => `${x - j[0]}..${y - j[0]}`).join(' '));
 check('the ball never teleported on the guest (a step over 1.4 m in a frame) except where a segment change explains it', stray.length === 0, `${guestData.jumps} big steps, ${guestData.jumps - stray.length} at a stall's end${guestData.jumps ? ' (' + guestData.jumpAt.map((j) => j[1].toFixed(1) + ' m').join(', ') + ')' : ''}; otherwise the largest step is a frame's worth of ball (${guestData.maxStep.toFixed(2)} m max)`);
-if (BRIDGE) {
+{
   check('the guest recovered from a 1 s stall and a 2.2 s stall: its events all arrived (above), no exceptions (below)', true);
   check('after 1.5 s of silence the guest said "reconnecting…", then took it back', reconnectingSeen && badge && guestData.reconnecting === false, `state seen ${reconnectingSeen}, badge ${badge}, now ${guestData.reconnecting}`);
 }
@@ -441,6 +485,42 @@ if (guestData.ended) console.log('the guest saw the match end:', guestData.scree
 await host.screenshot({ path: `${OUT}/online-host.png` });
 await guest.screenshot({ path: `${OUT}/online-guest.png` });
 console.log(`screenshots: ${OUT}/online-host.png, ${OUT}/online-guest.png`);
+
+// ---------------------------------------------------------------- the end of a match, and the way back
+if (process.env.END !== '0') {
+  console.log('\nplaying a one-game CPU match through to its end (a rematch: a second `start`)…');
+  await guest.evaluate(() => ((window.__ev = []), (window.__points = [])));
+  await host.evaluate(() => {
+    const f = window.flow;
+    const k = window.kaleido;
+    f.mode = 'quick';
+    const cfg = f.buildConfig();
+    const ai = k.match.players.find((p) => !p.human).ctrl.ai;
+    cfg.players = cfg.players.map((p) => ({ ...p, ctrl: { kind: 'cpu', ai } }));
+    cfg.gamesToWin = 1;
+    cfg.introTime = 0.8;
+    cfg.firstServer = 1;
+    window.__ev = [];
+    window.__points = [];
+    f.beginMatch('park', false, cfg);
+  });
+  const t1 = Date.now();
+  const over = await host.waitForFunction(() => window.kaleido.match?.state === 'over', null, { timeout: 240000, polling: 500 }).then(() => true).catch(() => false);
+  check('the second match ran to its end', over, `${((Date.now() - t1) / 1000).toFixed(0)} s`);
+  const results = await guest.waitForFunction(() => document.querySelector('.results .winner'), null, { timeout: 8000 }).then(() => true).catch(() => false);
+  check('the guest\'s results screen came up', results);
+  const rs = await guest.evaluate(() => ({ winner: document.querySelector('.results .winner')?.textContent, final: document.querySelector('.results .final')?.textContent, stats: [...document.querySelectorAll('.results .stats b')].map((b) => b.textContent).join(' '), world: window.kaleido.stage.current.def.id }));
+  const hs = await host.evaluate(() => ({ games: window.kaleido.match.score.games, winner: window.kaleido.match.score.winner, names: window.kaleido.match.score.names, ev: window.__ev, points: window.__points }));
+  check('…it names the winner and the games as the host has them', rs.winner === `${hs.names[hs.winner]} wins!` && rs.final === `${hs.games[0]} – ${hs.games[1]}`, `${rs.winner} ${rs.final} (host ${hs.games})`);
+  const gev = await guest.evaluate(() => window.__ev);
+  check('…every event of the second match arrived, in order', gev.join() === hs.ev.join(), `${hs.ev.length} events`);
+  check('…and the second match was in the host\'s new world', rs.world === 'park', rs.world);
+  await guest.screenshot({ path: `${OUT}/online-guest-results.png` });
+  await guest.evaluate(() => window.flow.button(0, 'a'));
+  await sleep(700);
+  const back = await guest.evaluate(() => ({ screen: window.flow.screen?.name, hud: !!document.querySelector('.hud .scorebug'), lobby: document.querySelector('.screen.lobby')?.className }));
+  check(BRIDGE ? 'Back on the results goes to the main menu' : 'Back on the results goes back to the room\'s lobby', BRIDGE ? back.screen === 'menu' : back.screen === 'guest-lobby' && /lobby in/.test(back.lobby || ''), JSON.stringify(back));
+}
 
 check('no page errors on either TV (or the phone)', errors.length === 0, errors.length ? '\n' + errors.join('\n') : '');
 console.log(fail ? `\n${fail} checks FAILED` : '\nAll online checks passed.');

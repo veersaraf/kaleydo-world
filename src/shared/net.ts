@@ -187,7 +187,8 @@ export interface NetSeg {
 }
 
 export type NetEventBody =
-  | { type: 'hit'; p: number; power: number; spin: number; perfect: boolean; kind: string; stroke: string; pos: NetVec; kph: number; rally: number; tau: number; serve: boolean; dtMs?: number; aim?: number; crossed?: boolean; shotSpin: number; rocket?: boolean }
+  /** warp: the swing that made it — the ball was drawn to the racket from t0 to tc (a snapshot in between may have missed it) */
+  | { type: 'hit'; p: number; power: number; spin: number; perfect: boolean; kind: string; stroke: string; pos: NetVec; kph: number; rally: number; tau: number; serve: boolean; dtMs?: number; aim?: number; crossed?: boolean; shotSpin: number; rocket?: boolean; warp?: { t0: number; tc: number } }
   | { type: 'whiff'; p: number; tau: number; dtMs?: number; why?: string }
   | { type: 'athletic'; p: number; move: string }
   | { type: 'land'; p: number; pos: NetVec }
@@ -506,7 +507,7 @@ function wEvent(w: NetWriter, e: NetEvent, snapT: number) {
   switch (e.type) {
     case 'hit': {
       w.u8(pl(e.p));
-      w.u8((e.perfect ? 1 : 0) | (e.serve ? 2 : 0) | (e.rocket ? 4 : 0) | (e.crossed ? 8 : 0) | (e.aim !== undefined ? 16 : 0) | (e.dtMs !== undefined ? 32 : 0));
+      w.u8((e.perfect ? 1 : 0) | (e.serve ? 2 : 0) | (e.rocket ? 4 : 0) | (e.crossed ? 8 : 0) | (e.aim !== undefined ? 16 : 0) | (e.dtMs !== undefined ? 32 : 0) | (e.warp ? 64 : 0));
       w.u8(idx(HIT_KINDS, e.kind));
       w.u8(idx(STROKES, e.stroke));
       wU8(w, e.power, 255);
@@ -518,6 +519,10 @@ function wEvent(w: NetWriter, e: NetEvent, snapT: number) {
       w.i16(clampI16(Math.round(e.tau * TAU_Q)));
       if (e.dtMs !== undefined) w.i16(clampI16(Math.round(e.dtMs)));
       if (e.aim !== undefined) w.i8(Math.max(-127, Math.min(127, Math.round(e.aim * 127))));
+      if (e.warp) {
+        w.u8(clampU8(Math.round((e.t - e.warp.t0) * 1000)));
+        w.u8(clampU8(Math.round((e.t - e.warp.tc) * 1000)));
+      }
       break;
     }
     case 'whiff':
@@ -596,6 +601,11 @@ function rEvent(r: NetReader, snapT: number): NetEvent {
       if (fl & 8) e.crossed = true;
       if (fl & 32) e.dtMs = r.i16();
       if (fl & 16) e.aim = r.i8() / 127;
+      if (fl & 64) {
+        const a = r.u8() / 1000;
+        const c = r.u8() / 1000;
+        e.warp = { t0: t - a, tc: t - c };
+      }
       return e;
     }
     case 'whiff': {
