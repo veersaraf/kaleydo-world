@@ -26,6 +26,7 @@ export class PadLink {
   private closed = false;
   private retryTimer = 0;
   private rtts: number[] = [];
+  private burstTimers: number[] = [];
 
   constructor(
     private pid: string,
@@ -46,6 +47,8 @@ export class PadLink {
     this.closed = true;
     clearInterval(this.pingTimer);
     clearTimeout(this.retryTimer);
+    this.burstTimers.forEach(clearTimeout);
+    this.burstTimers = [];
     this.ws?.close();
     this.es?.close();
     this.ws = null;
@@ -105,7 +108,7 @@ export class PadLink {
       clearTimeout(giveUp);
       this.transport = 'ws';
       this.setStatus('online');
-      this.ping();
+      this.pingBurst();
     };
     ws.onmessage = (ev) => {
       try {
@@ -146,7 +149,7 @@ export class PadLink {
     es.onopen = () => {
       this.setStatus('online');
       this.flush();
-      this.ping();
+      this.pingBurst();
     };
     es.onmessage = (ev) => {
       try {
@@ -185,6 +188,13 @@ export class PadLink {
       this.inflight--;
       if (this.queue.length) this.flush();
     }
+  }
+
+  /** a few quick pings when the link comes up, so `lat` means something within a second or two
+   *  (the 2 s ticker alone would take ~16 s to fill the median); the median of 8 still throws outliers out */
+  private pingBurst() {
+    this.burstTimers.forEach(clearTimeout);
+    this.burstTimers = [0, 300, 700, 1500].map((ms) => window.setTimeout(() => this.ping(), ms));
   }
 
   private ping() {

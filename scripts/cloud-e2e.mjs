@@ -40,14 +40,21 @@ check('a phone opening the QR code link joins the TV', joined);
 if (joined) {
   await tv.evaluate(() => {
     window.__sw = 0;
+    window.__ages = [];
     const prev = window.kaleido.input.onSwing;
-    window.kaleido.input.onSwing = (e) => ((window.__sw++), prev(e));
+    window.kaleido.input.onSwing = (e) => (window.__sw++, window.__ages.push(e.age), prev(e));
     window.flow.beginBaseball({ world: 'park', cpu: -1, pitching: 0.2, pitches: 3 });
   });
   await pad.waitForSelector('.panel.play.bat.on', { timeout: 15000 }).catch(() => null);
   await pad.evaluate(() => window.__phone.tennis({ inMs: 400 }));
   const n = await tv.waitForFunction(() => window.__sw > 0, null, { timeout: 5000 }).then(() => true).catch(() => false);
   check('a phone swing reaches the TV through the room', n);
+  // the TV's ping-measured clock offset, and a swing's age (phone's own age + latency + the relay's transit, all clamped at 0.16 s)
+  await tv.waitForTimeout(3000);
+  const off = await tv.evaluate(() => window.kaleido.link.serverOffset);
+  check('the TV measured a finite clock offset to the room', Number.isFinite(off), `${off} ms`);
+  const ages = await tv.evaluate(() => window.__ages);
+  check('the swing arrived with an age in (0, 0.16] s', ages.length > 0 && ages.every((a) => a > 0 && a <= 0.16), ages.map((a) => a.toFixed(3)).join(' '));
 }
 
 // no room: asked for the code

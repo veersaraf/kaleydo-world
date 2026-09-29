@@ -117,10 +117,15 @@ export class Room {
     const padUrl = `${this.origin}/c?room=${this.room}`;
     this.send(ws, { type: 'hello', joinUrl: padUrl, padUrl, caUrl: null, ips: [], dev: false, pads: this.padList(), room: this.room });
     ws.addEventListener('message', (ev) => {
-      let m: { type?: string; pid?: string; msg?: unknown } | null = null;
+      let m: { type?: string; pid?: string; msg?: unknown; t?: number } | null = null;
       try {
         m = JSON.parse(String(ev.data));
       } catch {
+        return;
+      }
+      // the TV's clock check: our clock, stamped as the ping is read
+      if (m?.type === 'ping') {
+        this.send(ws, { type: 'pong', t: m.t, st: Date.now() });
         return;
       }
       if (m?.type !== 'to-pad') return;

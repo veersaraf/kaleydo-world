@@ -29,6 +29,8 @@ export class TVLink {
   private stopped = false;
   private key = '';
   private mode: Promise<void> | null = null;
+  private pingTimers: number[] = [];
+  private clock: { rtt: number; off: number }[] = [];
 
   connect() {
     this.mode ??= this.detect();
@@ -70,6 +72,7 @@ export class TVLink {
     ws.onopen = () => {
       this.online = true;
       this.retry = 0;
+      this.startPings(ws);
       this.onStatus(true);
     };
     ws.onmessage = (ev) => {
@@ -77,6 +80,11 @@ export class TVLink {
       try {
         m = JSON.parse(ev.data);
       } catch {
+        return;
+      }
+      // our own ping's answer: the clock offset, not the game's business
+      if (m.type === 'pong') {
+        this.clockSample(m.t, m.st);
         return;
       }
       if (m.type === 'hello' || m.type === 'net') {
@@ -90,12 +98,44 @@ export class TVLink {
       this.onMessage(m);
     };
     ws.onclose = () => {
+      this.stopPings();
       this.online = false;
       this.onStatus(false);
       if (this.stopped) return;
       this.retry = Math.min(this.retry + 1, 6);
       setTimeout(() => this.open(), 400 * this.retry);
     };
+  }
+
+  /** pings the server to learn its clock: a quick burst at connect (the first messages are timed against
+   *  a guess until then), then every 2 s */
+  private startPings(ws: WebSocket) {
+    this.stopPings();
+    const ping = () => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping', t: Date.now() }));
+    };
+    for (const ms of [0, 300, 700, 1500]) this.pingTimers.push(window.setTimeout(ping, ms));
+    this.pingTimers.push(window.setTimeout(() => this.pingTimers.push(window.setInterval(ping, 2000)), 1500));
+  }
+
+  private stopPings() {
+    for (const t of this.pingTimers) {
+      clearTimeout(t);
+      clearInterval(t);
+    }
+    this.pingTimers = [];
+  }
+
+  /** one pong: the server stamped `st` somewhere between our send (`t`) and now, taken as the middle.
+   *  Of the last 8, the half with the shortest round trips (least queueing, so the truest middle) votes: the median offset */
+  private clockSample(t: number, st: number) {
+    const rtt = Date.now() - t;
+    if (!(rtt >= 0) || !Number.isFinite(st)) return;
+    this.clock.push({ rtt, off: st - (t + rtt / 2) });
+    if (this.clock.length > 8) this.clock.shift();
+    const best = [...this.clock].sort((a, b) => a.rtt - b.rtt).slice(0, Math.ceil(this.clock.length / 2));
+    const offs = best.map((c) => c.off).sort((a, b) => a - b);
+    this.serverOffset = offs[Math.floor(offs.length / 2)];
   }
 
   toPad(pid: string, msg: TVMsg) {

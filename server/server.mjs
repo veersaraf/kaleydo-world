@@ -109,8 +109,13 @@ function fromPad(pad, msg) {
   sendTV({ type: 'pad', pid: pad.pid, rt: Date.now(), msg });
 }
 
-function fromTV(msg) {
+function fromTV(msg, ws) {
   if (!msg) return;
+  // the TV's clock check: our clock, stamped as the ping is read (the TV works out the offset)
+  if (msg.type === 'ping') {
+    if (ws.readyState === 1) ws.send(`{"type":"pong","t":${Number(msg.t) || 0},"st":${Date.now()}}`);
+    return;
+  }
   if (msg.type === 'to-pad') {
     if (msg.pid === '*') for (const p of hub.pads.values()) p.send(msg.msg);
     else hub.pads.get(msg.pid)?.send(msg.msg);
@@ -131,7 +136,7 @@ function cleanPid(s) {
 
 // ---------------------------------------------------------------- websockets
 
-const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024, perMessageDeflate: false });
 
 function isLoopback(addr) {
   return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
@@ -185,7 +190,7 @@ function attachTV(ws) {
   );
   ws.on('message', (data) => {
     try {
-      fromTV(JSON.parse(data.toString()));
+      fromTV(JSON.parse(data.toString()), ws);
     } catch {}
   });
   ws.on('close', () => {
@@ -574,7 +579,10 @@ async function main() {
   });
   const httpsServer = https.createServer({ key: certs.key, cert: certs.cert }, handle);
   httpsServer.on('upgrade', onUpgrade);
+  // (the phone's POSTs ride one kept-alive connection; headersTimeout must outlast keepAliveTimeout, or Node
+  // can cut an idle connection just as the next POST is sent on it, which costs that swing a retry)
   httpServer.keepAliveTimeout = httpsServer.keepAliveTimeout = 65000;
+  httpServer.headersTimeout = httpsServer.headersTimeout = 66000;
 
   // all interfaces: phones reach /join on it (handleLan keeps the rest to this Mac)
   await listen(httpServer, HTTP_PORT, '0.0.0.0', 'screen');
