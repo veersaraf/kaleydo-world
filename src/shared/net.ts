@@ -114,7 +114,10 @@ export interface NetWorld {
   wall: number;
   world: string;
   transition: boolean;
+  /** where the world shatters from, on the HOST's screen (0..1, y down) */
   origin?: { x: number; y: number };
+  /** …and the same spot in the court (the shot that shattered it): a guest looking from the other end projects it with its own camera */
+  at?: { x: number; y: number; z: number };
 }
 
 /** host → guests: a caption for the HUD that isn't derivable from a match event */

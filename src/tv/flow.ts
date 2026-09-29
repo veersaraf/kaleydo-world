@@ -30,7 +30,7 @@ import { RANGE } from './archery/range';
 const RANGE_FULL = RANGE.fullSpeed;
 import type { DuelEvent, Duelist } from './duel/types';
 import type { BowlEvent } from './bowling/game';
-import type { PadMode } from '../shared/protocol';
+import type { PadMode, PadMsg } from '../shared/protocol';
 import type { NetEnd, NetStart } from '../shared/net';
 
 type Level = 'rookie' | 'club' | 'pro' | 'ace';
@@ -149,6 +149,8 @@ export class Flow {
   private guestRun: NetStart | null = null;
   private guestPrevMode: 'quick' | 'kaleido' = 'quick';
   private guestBadge: HTMLElement | null = null;
+  /** guest: the team this TV's own phones play for (whose end of the court the camera looks from); −1 = none of its phones is playing */
+  private guestTeam = -1;
 
   constructor(private app: App) {
     this.root = document.getElementById('ui')!;
@@ -272,6 +274,7 @@ export class Flow {
     const roomMsg = app.link.onMessage;
     app.link.onMessage = (m) => {
       roomMsg(m);
+      if (m.type === 'pad-echo') this.padEcho(m.msg);
       if (this.guestRun && (m.type === 'host-gone' || m.type === 'no-room')) {
         this.toast('The host left the room');
         this.leaveGuestMatch();
@@ -1174,7 +1177,11 @@ export class Flow {
     this.tossHintShown = true;
     this.teams = [{ ...start.teams[0] }, { ...start.teams[1] }];
     this.app.paused = false;
-    this.app.startGuestMatch(start);
+    // the camera looks from the end of the team this TV's own phones play for (from the far end, as split screen's second half does);
+    // with none of them playing, from team 0's end
+    this.guestTeam = -1;
+    for (const p of start.players) if (this.guestTeam < 0 && p.human && this.guestOwns(p.slot)) this.guestTeam = p.team;
+    this.app.startGuestMatch(start, this.guestTeam === 1 ? 1 : 0);
     this.hud?.el.remove();
     this.hud = new Hud(this.teams, this.app.rig);
     this.hudLayer.append(this.hud.el);
@@ -1186,6 +1193,56 @@ export class Flow {
       this.audio.playSong(def.song);
       this.audio.music.setIntensity(2);
       this.audio.sfx.cheer(0.5);
+    }
+  }
+
+  /** guest: is this seat on the host one of the phones opened from THIS TV's QR code? (the host's roster says: PadInfo.via + slot) */
+  private guestOwns(slot: number) {
+    const link = this.app.link;
+    const pads = link.roster?.pads;
+    if (!pads || slot < 0) return false;
+    const gid = link.guestId();
+    for (let i = 0; i < pads.length; i++) if (pads[i].via === gid && pads[i].slot === slot) return true;
+    return false;
+  }
+
+  /** guest: does this TV have any phone playing in the host's match? */
+  private guestHasPlayers() {
+    const g = this.guestRun;
+    return !!g && g.players.some((p) => p.human && this.guestOwns(p.slot));
+  }
+
+  /**
+   * "One of ours": a person's player on the host — and, on a guest TV whose own phones are playing, only theirs
+   * (the labels, the good / bad news and the smash flourish are for them). With none of its phones playing, a guest
+   * treats every person as before.
+   */
+  private mine(p: { human: boolean; slot: number }) {
+    if (!p.human) return false;
+    return !this.guestRun || !this.guestHasPlayers() || this.guestOwns(p.slot);
+  }
+
+  /**
+   * A phone that joined through this guest's QR code swung / slashed / bowled / drew (the relay echoes it at once): make
+   * the sound now, not when the host's stream gets around to showing it. The animation comes with the stream.
+   */
+  private padEcho(msg: PadMsg) {
+    if (!this.guestRun) return;
+    const s = this.audio?.sfx;
+    if (!s) return;
+    switch (msg.type) {
+      case 'swing':
+        s.swish(msg.power, 0);
+        break;
+      case 'slash':
+        if (msg.kind === 'slash') s.slash(msg.power, 0);
+        break;
+      case 'bowl':
+        s.swish(0.8, 0);
+        break;
+      case 'draw':
+        if (!msg.down) s.swish(0.5, 0);
+        break;
     }
   }
 
@@ -1203,6 +1260,7 @@ export class Flow {
   /** done with the host's match: the room's lobby again (the main menu if there is none) */
   leaveGuestMatch() {
     this.guestRun = null;
+    this.guestTeam = -1;
     this.mode = this.guestPrevMode;
     this.guestStatus(false);
     if (this.guestLobby) {
@@ -2633,13 +2691,15 @@ export class Flow {
         this.lastHit = { kind: e.kind, kph: e.kph, perfect: e.perfect };
         a?.sfx.hit(e.power, e.perfect, pan(e.pos.x), e.kind === 'smash' || !!e.rocket);
         if (e.kind === 'smash') {
-          a?.sfx.smashCrack(e.perfect && e.p.human, pan(e.pos.x), !e.p.human);
-          this.smashFlight = { team: e.p.team, human: e.p.human, perfect: e.perfect, t: m.t, landed: false };
+          // (a guest TV: "yours" are the players of its own phones)
+          const mine = this.mine(e.p);
+          a?.sfx.smashCrack(e.perfect && mine, pan(e.pos.x), !mine);
+          this.smashFlight = { team: e.p.team, human: mine, perfect: e.perfect, t: m.t, landed: false };
           this.lastSmash = { team: e.p.team, human: e.p.human, t: m.t };
           if (real) {
             // yours: the full works; one coming at you: a lighter version
-            const humanTeam = m.players.find((q) => q.human)?.team ?? 0;
-            this.hud?.smashHit(e.kph, e.perfect, e.pos, e.p.human ? e.p.team : humanTeam, e.p.human);
+            const humanTeam = this.guestRun && this.guestTeam >= 0 ? this.guestTeam : (m.players.find((q) => q.human)?.team ?? 0);
+            this.hud?.smashHit(e.kph, e.perfect, e.pos, mine ? e.p.team : humanTeam, mine);
           }
         } else this.smashFlight = null;
         if (e.rocket) {
@@ -2650,7 +2710,7 @@ export class Flow {
           a?.music.hitNote(e.rally + 1, e.power, pan(e.pos.x));
           this.stats.fastest[e.p.team] = Math.max(this.stats.fastest[e.p.team], e.kph);
           if (e.perfect) this.stats.perfects[e.p.team]++;
-          if (e.p.human) {
+          if (this.mine(e.p)) {
             const seat = this.app.input.seats[e.p.slot];
             const timing = e.rocket ? 'ROCKET SERVE' : e.perfect ? 'PERFECT' : e.tau < -0.55 ? 'EARLY' : e.tau > 0.55 ? 'LATE' : 'GOOD';
             const strokeName = e.serve ? 'Serve' : e.kind === 'smash' ? 'Smash' : e.stroke === 'bh' ? 'Backhand' : e.stroke === 'oh' ? 'Overhead' : 'Forehand';
@@ -2686,7 +2746,7 @@ export class Flow {
       }
       case 'whiff':
         if (this.lab && e.p.human) this.labReadout({ kind: 'whiff', dtMs: e.dtMs, why: e.why });
-        if (real && e.p.human && e.why !== 'noball') {
+        if (real && this.mine(e.p) && e.why !== 'noball') {
           const why = e.why === 'reach' ? 'OUT OF REACH' : e.tau < -1 ? 'TOO EARLY' : e.tau > 1 ? 'TOO LATE' : '';
           this.hud?.float(why ? `MISS · ${why}` : 'MISS', { x: e.p.x, y: 2.1, z: e.p.z }, 'miss', e.p.team);
           const seat = this.app.input.seats[e.p.slot];
@@ -2705,7 +2765,7 @@ export class Flow {
         break;
       case 'athletic':
         if (e.move !== 'lunge') a?.sfx.swish(e.move === 'dive' ? 1 : 0.55, pan(e.p.x));
-        if (real && e.move === 'dive' && e.p.human) this.hud?.float('DIVE!', { x: e.p.x, y: 2.2, z: e.p.z }, 'soft', e.p.team);
+        if (real && e.move === 'dive' && this.mine(e.p)) this.hud?.float('DIVE!', { x: e.p.x, y: 2.2, z: e.p.z }, 'soft', e.p.team);
         break;
       case 'land':
         a?.sfx.thud(pan(e.pos.x));
@@ -2731,7 +2791,7 @@ export class Flow {
         if (real) a?.sfx.ooh();
         break;
       case 'toss':
-        if (real && e.p.human) {
+        if (real && this.mine(e.p)) {
           const seat = this.app.input.seats[e.p.slot];
           if (seat?.pid) this.app.link.toPad(seat.pid, { type: 'fx', fx: 'toss' });
           this.hud?.setHint('<b>SWING!</b>', seat?.color);
@@ -2773,8 +2833,8 @@ export class Flow {
           break;
         }
         const reasonText: Record<string, string> = { ace: 'ACE!', winner: e.rally > 1 ? 'WINNER!' : 'NICE SHOT!', out: 'OUT!', long: 'OUT!', wide: 'WIDE!', net: 'NET!', double: '', unreturned: 'NICE SHOT!' };
-        const humanWon = m.team(w).some((p) => p.human);
-        const humanLost = m.team(loser).some((p) => p.human);
+        const humanWon = m.team(w).some((p) => this.mine(p));
+        const humanLost = m.team(loser).some((p) => this.mine(p));
         const good = humanWon || (!humanLost && true);
         const txt = reasonText[e.reason];
         const call = e.matchWon ? 'Game, set & match' : e.gameWon ? `Game ${this.teams[w].name}` : e.call;
@@ -2868,6 +2928,8 @@ export class Flow {
     const next = this.kaleidoOrder[this.kaleidoIdx];
     this.warmSoon(this.kaleidoOrder[(this.kaleidoIdx + 1) % this.kaleidoOrder.length], 3000);
     const p = this.app.rig.project(at);
+    // (guest TVs shatter the world from the same spot in the court)
+    this.app.net.shiftFrom(at);
     this.app.stage.setWorld(next, { transition: true, origin: { x: p.x, y: p.y } });
     this.audio?.sfx.ui('shift');
     this.app.rig.kick(0.4);
@@ -3014,11 +3076,13 @@ export class Flow {
       const cue = this.app.smashCue;
       if (cue && !this.versusEnd) {
         const seat = this.app.input.seats[cue.p.slot];
-        this.hud.smashFrame({ team: cue.p.team, tl: cue.tl, w: cue.w, ball: m.ballView(m.t, this.cueBall), hint: seat?.local ? 'press SPACE as the ring closes' : 'swing hard as the ring closes' });
+        this.hud.smashFrame({ team: cue.p.team, tl: cue.tl, w: cue.w, ball: m.ballView(m.t, this.cueBall), hint: seat?.local && !this.guestRun ? 'press SPACE as the ring closes' : 'swing hard as the ring closes' });
       } else this.hud.smashFrame(null);
       if (!this.versusEnd) {
+        // (a guest TV's own seats are not the host's: its phones are told by the roster)
         const seat = srv?.human ? this.app.input.seats[srv.slot] : null;
-        this.hud.track(m, dt, !seat ? '' : seat.local ? 'Space to toss' : 'lift your phone to toss');
+        const tossHint = this.guestRun ? (srv && this.mine(srv) && this.guestOwns(srv.slot) ? 'lift your phone to toss' : '') : !seat ? '' : seat.local ? 'Space to toss' : 'lift your phone to toss';
+        this.hud.track(m, dt, tossHint);
       }
       if (m.state === 'serve' && !this.tossHintShown) this.tossHintShown = true;
     }

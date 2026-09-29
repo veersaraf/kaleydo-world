@@ -127,6 +127,8 @@ export interface PadInfo {
   /** (the host's roster for its guests only) the seat this phone holds on the host: its player colour and slot */
   color?: string;
   slot?: number;
+  /** online: the guest TV this phone was opened from (its QR code's `&via=`), when it isn't a phone of the host's own */
+  via?: string;
 }
 
 /** another TV watching (and playing, with its own phones) in this room, online */
@@ -149,7 +151,7 @@ export type ServerToTV =
   /** joinUrl: what the QR code opens (the http join page, which forwards to padUrl, the remote); caUrl: the iOS profile */
   | { type: 'hello'; joinUrl: string | null; padUrl?: string | null; caUrl: string | null; ips: string[]; dev: boolean; pads: PadInfo[]; room?: string }
   | { type: 'net'; joinUrl: string | null; padUrl?: string | null; caUrl: string | null; ips: string[] }
-  | { type: 'pad-join'; pid: string; name: string; transport: string }
+  | { type: 'pad-join'; pid: string; name: string; transport: string; via?: string }
   | { type: 'pad-leave'; pid: string }
   | { type: 'pad'; pid: string; rt: number; msg: PadMsg }
   /** the TV's own ping came back: t = the TV's send time, st = the server's clock (for the clock offset) */
@@ -164,6 +166,9 @@ export type ServerToTV =
   | { type: 'guest'; gid: string; msg: GuestToHost }
   /** to a guest: the host's message (binary snapshot frames arrive as ArrayBuffer, not as this) */
   | { type: 'host'; msg: HostToGuest }
+  /** to a guest: a phone that joined the room through THIS guest's QR code (`via`) just swung / slashed / bowled / drew — the relay's
+   *  copy, sent at once (the host judges it later), so the guest can make the sound now */
+  | { type: 'pad-echo'; pid: string; msg: PadMsg }
   /** to a guest: the host left the room / there's no such room */
   | { type: 'host-gone' }
   | { type: 'no-room' };

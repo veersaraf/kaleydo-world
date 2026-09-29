@@ -340,6 +340,8 @@ export class App {
     this.pendingEvents = [];
     this.match = new Match(cfg);
     this.match.onEvent = (e) => this.event(e);
+    // (a guest TV may have had the main camera at the far end)
+    this.rig.side = 0;
     const humans = (team: number) => this.match!.players.some((p) => p.human && p.team === team);
     this.split = !cfg.attract && !cfg.practice && this.splitPref && humans(0) && humans(1);
     this.anims = this.match.players.map((p) => new Animator(p));
@@ -1315,8 +1317,10 @@ export class App {
    * Show the host's match: build the same world and characters, and a SHADOW match (a Match that is
    * never stepped) for the camera, HUD and worlds to read; the stream (src/tv/net/guest.ts) writes into it.
    * The guest ignores its own keyboard, mouse and phones' swings.
+   * `side`: the end of the court the camera looks from (1 = the far end, the way split screen's second half does):
+   * the end of the team this TV's own phones play for.
    */
-  startGuestMatch(start: NetStart): GuestStream {
+  startGuestMatch(start: NetStart, side: 0 | 1 = 0): GuestStream {
     this.endStreams();
     this.stopBowling();
     this.stopDuel();
@@ -1347,11 +1351,20 @@ export class App {
     this.worldId = start.world;
     this.stage.setWorld(start.world);
     this.stage.setTeamColors(start.halo[0], start.halo[1]);
+    this.rig.side = side;
     this.rig.setMode('menu');
     this.rig.setMode('intro');
     this.guest = new GuestStream(start, {
       event: (e) => this.event(e),
-      world: (id, transition, origin) => this.stage.setWorld(id, { transition, origin }),
+      world: (id, transition, origin, at) => {
+        // (a shift from a spot in the court: seen from this TV's own end, that spot is somewhere else on the screen than on the host's)
+        let o = origin;
+        if (at) {
+          const p = this.rig.project(at);
+          if (!p.behind) o = { x: p.x, y: p.y };
+        }
+        this.stage.setWorld(id, { transition, origin: o });
+      },
       hud: (text, sub, cls) => this.onGuestHud(text, sub, cls),
       end: (e) => this.onGuestEnd(e),
       status: (r) => this.onGuestStatus(r),

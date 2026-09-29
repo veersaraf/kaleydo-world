@@ -15,6 +15,13 @@
 // tells the host who joined, forwards the host's messages to every guest (JSON as
 // {type:'host', msg}; a BINARY frame — the match snapshot, ~30 Hz — as it is, untouched)
 // and a guest's JSON to the host as {type:'guest', gid, msg}.
+//
+// A phone opened from a GUEST's QR code carries &via=<gid>: it still plays on the host (its
+// messages go to the host as any pad's), but the relay remembers which guest it belongs to. The
+// host's roster tells its guests (PadInfo.via) so each can find its own players, and the relay
+// echoes the phone's swing / slash / bowl / draw to that guest as {type:'pad-echo', pid, msg} the
+// moment it arrives — the guest's TV can make the swing's sound at once, before the match stream
+// (which has to go to the host, be judged, and come back) shows anything.
 
 export interface Env {
   ASSETS: { fetch(req: Request): Promise<Response> };
@@ -50,7 +57,12 @@ interface Pad {
   pid: string;
   name: string;
   ws: WebSocket;
+  /** the guest TV whose QR code this phone came from ('' = the host's own) */
+  via: string;
 }
+
+/** what a phone does that its guest TV plays a sound for at once (not 'ori', which streams at 30 Hz) */
+const ECHOED = new Set(['swing', 'slash', 'bowl', 'draw']);
 
 interface Guest {
   gid: string;
@@ -115,7 +127,7 @@ export class Room {
   }
 
   private padList() {
-    return [...this.pads.values()].map((p) => ({ pid: p.pid, name: p.name, transport: 'ws' }));
+    return [...this.pads.values()].map((p) => (p.via ? { pid: p.pid, name: p.name, transport: 'ws', via: p.via } : { pid: p.pid, name: p.name, transport: 'ws' }));
   }
 
   private attachTV(ws: WebSocket, key: string) {
@@ -259,9 +271,9 @@ export class Room {
         prev.ws.close();
       } catch {}
     }
-    const pad: Pad = { pid, name: cleanName(url.searchParams.get('name')), ws };
+    const pad: Pad = { pid, name: cleanName(url.searchParams.get('name')), ws, via: cleanPid(url.searchParams.get('via')) ?? '' };
     this.pads.set(pid, pad);
-    this.send(this.tv, { type: 'pad-join', pid, name: pad.name, transport: 'ws' });
+    this.send(this.tv, pad.via ? { type: 'pad-join', pid, name: pad.name, transport: 'ws', via: pad.via } : { type: 'pad-join', pid, name: pad.name, transport: 'ws' });
     this.send(ws, { type: 'link', transport: 'ws', st: Date.now() });
     ws.addEventListener('message', (ev) => {
       let msg: { type?: string; t?: number; name?: string } | null = null;
@@ -277,6 +289,11 @@ export class Room {
       }
       if (msg.type === 'hello' && typeof msg.name === 'string') pad.name = cleanName(msg.name);
       this.send(this.tv, { type: 'pad', pid, rt: Date.now(), msg });
+      // (a phone that came from a guest's QR code: that guest hears its swing at once)
+      if (pad.via && ECHOED.has(msg.type)) {
+        const g = this.guests.find((q) => q.gid === pad.via);
+        if (g) this.send(g.ws, { type: 'pad-echo', pid, msg });
+      }
     });
     const gone = () => {
       if (this.pads.get(pid) !== pad) return;

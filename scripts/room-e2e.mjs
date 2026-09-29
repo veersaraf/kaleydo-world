@@ -98,6 +98,25 @@ class Sock {
   host.send({ type: 'to-pad', pid: '*', msg: { type: 'score', line: 'x' } });
   check('to-pad still reaches the phone, not the guests', !!(await pad.until((m) => m.type === 'score')) && !g1.msgs.some((m) => m.type === 'score'));
 
+  // a phone opened from guest111's QR code (&via=): the host is told whose it is, and that guest (only) hears its swing at once
+  const vpad = new Sock(`${WS}/ws?role=pad&room=${room}&pid=pad-via001&name=Vi&via=guest111`);
+  await vpad.opened;
+  const vj = await host.until((m) => m.type === 'pad-join' && m.pid === 'pad-via001');
+  check('a phone with &via= is announced to the host with it', vj?.via === 'guest111' && pj?.via === undefined, JSON.stringify(vj));
+  vpad.send({ type: 'ori', s: [0, 1, 0], n: [0, 0, 1] });
+  vpad.send({ type: 'swing', seq: 1, power: 0.7, spin: 0, peak: 9, age: 30, lat: 20 });
+  const echo = await g1.until((m) => m.type === 'pad-echo');
+  const hostSwing = await host.until((m) => m.type === 'pad' && m.pid === 'pad-via001' && m.msg.type === 'swing');
+  check('the guest it came from gets {type:"pad-echo", pid, msg} for its swing, and the host still gets the swing', echo?.pid === 'pad-via001' && echo.msg.type === 'swing' && echo.msg.power === 0.7 && !!hostSwing, JSON.stringify(echo));
+  vpad.send({ type: 'slash', kind: 'slash', dir: 0, power: 0.5, lat: 20 });
+  await sleep(300);
+  check('…a slash is echoed too, but the orientation stream is not; no other guest hears any of it', g1.msgs.filter((m) => m.type === 'pad-echo').map((m) => m.msg.type).join() === 'swing,slash' && !g2.msgs.some((m) => m.type === 'pad-echo'));
+  // (an ordinary phone, and one that names a guest who isn't there, echo nowhere)
+  pad.send({ type: 'swing', seq: 1, power: 0.5, spin: 0, peak: 5, age: 10, lat: 10 });
+  await sleep(200);
+  check('a phone of the host\'s own is echoed to no guest', g1.msgs.filter((m) => m.type === 'pad-echo').length === 2);
+  vpad.ws.close();
+
   // the host drops: guests are told, stay connected; the host comes back and hears of them again
   const before = g1.msgs.length;
   host.ws.close();

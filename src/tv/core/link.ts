@@ -183,7 +183,7 @@ export class TVLink {
       this.pushRoster();
     } else if (m.type === 'pad-join') {
       this.pads = this.pads.filter((p) => p.pid !== m.pid);
-      this.pads.push({ pid: m.pid, name: m.name, transport: m.transport });
+      this.pads.push(m.via ? { pid: m.pid, name: m.name, transport: m.transport, via: m.via } : { pid: m.pid, name: m.name, transport: m.transport });
       if (!this.hostName && !this.guests.length) this.hostName = m.name;
       this.pushRoster();
     } else if (m.type === 'pad-leave') {
@@ -257,7 +257,8 @@ export class TVLink {
     this.room = code;
     this.roster = null;
     this.hostHere = false;
-    this.joinUrl = this.padUrl = `${location.origin}/c?room=${code}`;
+    // (the phones opened from this screen say which TV they belong to: the relay echoes their swings back to it)
+    this.joinUrl = this.padUrl = `${location.origin}/c?room=${code}&via=${this.guestId()}`;
     this.reopen();
   }
 

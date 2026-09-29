@@ -302,7 +302,7 @@ export class GuestLobby {
     const pads = R?.pads ?? [];
     const guests = R?.guests ?? [];
     this.roster.append(
-      h('div', { class: 'lcol' }, h('h4', null, pads.length ? `Phones (${pads.length})` : 'Phones'), ...(pads.length ? pads.map((p) => h('div', { class: 'lp', style: `--c:${p.color ?? '#9aa'}` }, h('i'), h('span', null, p.name), p.slot !== undefined ? h('small', null, `P${p.slot + 1}`) : null)) : [h('div', { class: 'lnone' }, 'None yet — scan the code with your phone')])),
+      h('div', { class: 'lcol' }, h('h4', null, pads.length ? `Phones (${pads.length})` : 'Phones'), ...(pads.length ? pads.map((p) => h('div', { class: 'lp', style: `--c:${p.color ?? '#9aa'}` }, h('i'), h('span', null, p.name), p.slot !== undefined ? h('small', null, `P${p.slot + 1}${p.via === me ? ' · yours' : ''}`) : null)) : [h('div', { class: 'lnone' }, 'None yet — scan the code with your phone')])),
       h('div', { class: 'lcol' }, h('h4', null, `TVs (${guests.length + 1})`), h('div', { class: 'lp tv' }, h('i'), h('span', null, R?.host ? `${R.host}’s TV` : 'Host'), h('small', null, 'host')), ...guests.map((g) => h('div', { class: 'lp tv' }, h('i'), h('span', null, g.name), h('small', null, g.gid === me ? 'you' : '')))),
     );
     this.status.textContent = 'Waiting for the host to start…';

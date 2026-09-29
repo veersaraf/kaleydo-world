@@ -13,8 +13,14 @@
 // ball stays on its segment and, after 1.5 s, the caller is told we are reconnecting.
 //
 // The playback clock runs in the host's wall time (each snapshot carries its stamp): the offset
-// between the host's clock and ours is the least (arrival − stamp) over the last ~4 s, i.e. what
+// between the host's clock and ours is the least (arrival − stamp) over the last ~5 s, i.e. what
 // the fastest snapshot took, and the clock slews (never jumps) towards "host now − buffer".
+// The BUFFER (how far behind the newest snapshot we show) follows the network: a snapshot must have
+// arrived by the time the interpolation needs it, so it is one snapshot interval plus the 95th
+// percentile of how much later than the fastest a snapshot arrived over the last ~5 s (never under
+// 50 ms). It rises at most 60 ms per second and falls at most 20, the clock slowing / quickening by
+// that much (6 % / 2 %) meanwhile: a quiet line shows the match ~50 ms behind, a jittery one buys
+// smoothness with lag, and neither is ever seen as a jump.
 
 import { Match } from '../tennis/match';
 import type { MatchEvent, PointReason } from '../tennis/match';
@@ -37,12 +43,25 @@ const AHEAD = 8;
 const SEG_SLACK = 0.002;
 /** no snapshot for this long: we say we are reconnecting */
 const STALL_MS = 1500;
+/** how far past the newest snapshot the shown time may run, ms: none — a hit or a bounce the news of which is behind a late snapshot would
+ *  put the ball back on another line when it arrived, and even 20 ms of that is a metre */
+const HOLD_MS = 0;
+/** the buffer never goes below this, ms (a snapshot interval and a little) */
+const BUF_MIN = 50;
+/** …nor above this */
+const BUF_MAX = 400;
+/** the arrival jitter is measured over the snapshots of this many last ms, and re-measured this often */
+const JIT_WINDOW_MS = 5000;
+const JIT_EVERY_MS = 250;
+/** how fast the buffer may grow / shrink, ms per second */
+const BUF_UP = 60;
+const BUF_DOWN = 20;
 
 /** what the guest needs from the app around it */
 export interface GuestHooks {
   /** an event, at its moment (the same thing App.event does for the host's own match) */
   event(e: MatchEvent): void;
-  world(id: string, transition: boolean, origin?: { x: number; y: number }): void;
+  world(id: string, transition: boolean, origin?: { x: number; y: number }, at?: { x: number; y: number; z: number }): void;
   hud(text: string, sub?: string, cls?: string): void;
   end(e: NetEnd): void;
   status(reconnecting: boolean): void;
@@ -62,6 +81,9 @@ export interface GuestStats {
   lateEvents: number;
   snapshots: number;
   resyncs: number;
+  /** times the shown time had to wait for a late snapshot (the picture froze for a moment), and for how long in all, ms */
+  holds: number;
+  heldMs: number;
   /** one-way delay (p50) + buffer: how far behind the host what we show is, ms */
   renderLag: number;
   reconnecting: boolean;
@@ -159,7 +181,13 @@ export class GuestStream {
   private started = false;
   private offW = 0;
   private slack = 0;
-  buffer = 50;
+  buffer = BUF_MIN;
+  /** what the network says the buffer should be (the buffer follows it, slewing), ms */
+  private want = BUF_MIN;
+  /** 95th percentile of the snapshots' arrival − the fastest's, over the last few seconds, ms */
+  private jit95 = 0;
+  private jitAt = -1e9;
+  private jitBuf = new Float64Array(RING);
   private gaps: number[] = [];
   private lastRegularWall = -1;
   private oneWay: number[] = [];
@@ -167,6 +195,9 @@ export class GuestStream {
   private dropped = 0;
   private late = 0;
   private resyncs = 0;
+  private holds = 0;
+  private heldMs = 0;
+  private holding = false;
 
   constructor(
     start: NetStart,
@@ -225,13 +256,9 @@ export class GuestStream {
     // how long it took (both clocks in the room's time)
     const d = this.clock.date() + this.hooks.clockOffset() - (this.start.hostT0 + s.wall);
     this.oneWay[this.nOne++ % 600] = d;
-    // host wall → our clock: the fastest recent snapshot says what the offset is
-    let off = Infinity;
-    for (let i = Math.max(1, this.serial - RING + 1); i <= this.serial; i++) {
-      const q = this.at(i);
-      if (q.arrived - q.wall < off) off = q.arrived - q.wall;
-    }
-    this.offW = off;
+    // host wall → our clock: the fastest recent snapshot says what the offset is (re-measured here until the first
+    // few seconds have been seen, so playback starts on something; then every JIT_EVERY_MS in advance())
+    if (this.serial <= 3 || s.arrived - s.wall < this.offW) this.offW = s.arrived - s.wall;
     return true;
   }
 
@@ -252,6 +279,30 @@ export class GuestStream {
     return g[g.length >> 1];
   }
 
+  /**
+   * How late snapshots arrive over the last JIT_WINDOW_MS, against the fastest one: the fastest is the offset between the host's
+   * clock and ours (the true delay, when the line is quiet), the 95th percentile of the rest is what a buffer has to cover.
+   */
+  private measureJitter(now: number) {
+    this.jitAt = now;
+    const lo = Math.max(1, this.serial - RING + 1);
+    const v = this.jitBuf;
+    let n = 0;
+    let off = Infinity;
+    for (let i = lo; i <= this.serial; i++) {
+      const q = this.at(i);
+      if (now - q.arrived > JIT_WINDOW_MS) continue;
+      const d = q.arrived - q.wall;
+      v[n++] = d;
+      if (d < off) off = d;
+    }
+    if (n < 8) return;
+    for (let i = 0; i < n; i++) v[i] -= off;
+    const s = v.subarray(0, n).sort();
+    this.jit95 = s[Math.min(n - 1, Math.floor(0.95 * n))];
+    this.offW = off;
+  }
+
   // ---------------------------------------------------------------- per frame
 
   /** Move the shown time on by `realDt` s, fire what it passes, and write the moment into the shadow match and `poses`. */
@@ -261,20 +312,40 @@ export class GuestStream {
     const lo = Math.max(1, this.serial - RING + 1);
     const newest = this.at(this.serial);
     // ---- the playback clock (host wall ms)
-    const under = this.wR - newest.wall;
-    if (this.started && under > 0 && under < 150) this.slack = Math.max(this.slack, under);
-    this.slack = Math.max(0, this.slack - 30 * realDt);
-    this.buffer = Math.min(300, 1.5 * this.interval() + this.slack);
+    if (now - this.jitAt >= JIT_EVERY_MS) this.measureJitter(now);
+    // the clock never runs past the newest snapshot: when the data runs out (a late snapshot: a TCP stall), the clock
+    // waits for it. Carrying on would take the ball along its old segment past a hit it has not heard of, and put it back on the new
+    // one when the news arrived (a teleport), and throw the players (a pop). Waiting freezes the picture for a moment instead, and the
+    // buffer grows by what was missing, so the next one is covered.
+    // (a control message says the host's clock had got that far: its `end` waits for the results screen's moment, after the last snapshot)
+    let limit = this.ended ? Infinity : newest.wall + HOLD_MS;
+    for (let i = 0; i < this.timeline.length; i++) if (this.timeline[i].wall > limit) limit = this.timeline[i].wall;
+    const wanted = now - this.offW - this.buffer;
+    const short = wanted - limit;
+    if (this.started && short > 0) {
+      this.slack = Math.max(this.slack, Math.min(BUF_MAX, this.buffer + short));
+      if (this.wR >= limit - 1) {
+        if (!this.holding) this.holds++;
+        this.heldMs += realDt * 1000;
+        this.holding = true;
+      }
+    } else this.holding = false;
+    this.slack = Math.max(0, this.slack - 20 * realDt);
+    this.want = Math.min(BUF_MAX, Math.max(BUF_MIN, this.interval() + this.jit95, this.slack));
+    if (!this.started) this.buffer = this.want;
+    else this.buffer += Math.max(-BUF_DOWN * realDt, Math.min(BUF_UP * realDt, this.want - this.buffer));
     const target = now - this.offW - this.buffer;
     if (!this.started) {
-      this.wR = target;
+      this.wR = Math.min(target, limit);
       this.started = true;
     } else {
       const err = target - this.wR;
       if (Math.abs(err) > 500) {
-        this.wR = target;
-        this.resyncs++;
-      } else this.wR += realDt * 1000 * (1 + Math.max(-0.08, Math.min(0.08, err / 250)));
+        // (a long stall is over, or the clocks moved: catching up 500 ms takes too long to watch)
+        const to = Math.min(target, limit);
+        if (Math.abs(to - this.wR) > 100) this.resyncs++;
+        this.wR = to;
+      } else this.wR = Math.min(limit, this.wR + realDt * 1000 * (1 + Math.max(-0.08, Math.min(0.08, err / 250))));
     }
     // ---- the two snapshots around it
     let a = this.serial;
@@ -432,7 +503,7 @@ export class GuestStream {
     const q = this.timeline;
     while (q.length && q[0].wall <= this.wR) {
       const { msg } = q.shift()!;
-      if (msg.type === 'world') this.hooks.world(msg.world, msg.transition, msg.origin);
+      if (msg.type === 'world') this.hooks.world(msg.world, msg.transition, msg.origin, msg.at);
       else if (msg.type === 'hud') this.hooks.hud(msg.text, msg.sub, msg.cls);
       else {
         this.ended = true;
@@ -547,6 +618,8 @@ export class GuestStream {
       lateEvents: this.late,
       snapshots: this.serial,
       resyncs: this.resyncs,
+      holds: this.holds,
+      heldMs: this.heldMs,
       renderLag: p50 + this.buffer,
       reconnecting: this.reconnecting,
     };

@@ -42,6 +42,8 @@ export class NetHost {
   private guestKey = '';
   private world = '';
   private startMsg: NetStart | null = null;
+  /** the flow's Kaleido shift, as it begins: the spot in the court the world shatters from (the next `world` message carries it) */
+  private shiftAt: { at: { x: number; y: number; z: number }; ms: number } | null = null;
 
   constructor(private app: App) {}
 
@@ -94,6 +96,7 @@ export class NetHost {
     this.world = worldId;
     this.guestKey = '';
     this.startMsg = null;
+    this.shiftAt = null;
   }
 
   /** The match is over here (a rematch, quitting to the menu, another sport): tell the guests if it was still going. */
@@ -158,6 +161,11 @@ export class NetHost {
       kaleido: this.kaleido(),
       players,
     };
+  }
+
+  /** A Kaleido shift is about to begin from this spot in the court (Flow.shiftWorld): the guests' shatter starts from it too. */
+  shiftFrom(at: { x: number; y: number; z: number }) {
+    this.shiftAt = { at: { x: at.x, y: at.y, z: at.z }, ms: this.clock.perf() };
   }
 
   /** a caption for the guests' HUD that no match event carries */
@@ -255,6 +263,14 @@ export class NetHost {
     if (target !== this.world) {
       this.world = target;
       const msg: NetWorld = { type: 'world', id: this.id, wall: this.wall(), world: target, transition: !!st.next };
+      // (a shift the flow just began says where from; a world change of any other kind shatters from the middle)
+      const sa = this.shiftAt;
+      if (sa && st.next && this.clock.perf() - sa.ms < 1500) {
+        const p = this.app.rig.project(sa.at);
+        msg.at = sa.at;
+        msg.origin = { x: +p.x.toFixed(4), y: +p.y.toFixed(4) };
+      }
+      this.shiftAt = null;
       this.sendMsg(msg);
     }
     const ended = m.state === 'over';

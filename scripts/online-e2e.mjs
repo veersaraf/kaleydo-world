@@ -218,7 +218,9 @@ await guest.evaluate(() => {
     if (prev && !hold && !prevHold && m.state !== 'intro') {
       const s = Math.hypot(tmp.x - prev.x, tmp.y - prev.y, tmp.z - prev.z);
       window.__maxStep = Math.max(window.__maxStep, s);
-      if (s > 1.4) (window.__jumps++, window.__jumpAt.push([Date.now(), s, [prev.x, prev.y, prev.z].map((v) => +v.toFixed(2)), [tmp.x, tmp.y, tmp.z].map((v) => +v.toFixed(2)), m.state, hold, prevHold, +m.t.toFixed(3), trail.slice()]));
+      // (a jump is a step no ball could make in the time the frame covered — 130 m/s; a slow frame or a stall's catching up is a long step
+      // in a long time. A ball moves 0.8 m in a 60 Hz frame at 50 m/s.)
+      if (s > 1.4 && s / Math.max(1e-3, k.guest.dt) > 130) (window.__jumps++, window.__jumpAt.push([Date.now(), s, [prev.x, prev.y, prev.z].map((v) => +v.toFixed(2)), [tmp.x, tmp.y, tmp.z].map((v) => +v.toFixed(2)), m.state, hold, prevHold, +m.t.toFixed(3), trail.slice()]));
     }
     prev = { x: tmp.x, y: tmp.y, z: tmp.z };
     prevHold = hold;
@@ -269,6 +271,14 @@ if (USE_PHONE) {
     let stage = '';
     let lastPlan = null;
     window.__swings = 0;
+    // (a smash chance runs the last second before contact in slow motion: sim seconds to contact -> real ms)
+    const smooth = (t) => t * t * (3 - 2 * t);
+    const realMs = (tl) => {
+      if (!k.smashCue) return tl * 1000;
+      let ms = 0;
+      for (let t = tl; t > 0; t -= 0.01) ms += 10 / (0.36 + 0.64 * smooth(Math.max(0, Math.min(1, (t - 0.3) / 0.95))));
+      return ms;
+    };
     setInterval(() => {
       const m = k.match;
       if (!m || k.attract || k.guest) return;
@@ -294,8 +304,11 @@ if (USE_PHONE) {
           }
         }
       } else if (m.state === 'play' && me.plan && me.plan !== lastPlan && !me.swing) {
-        const at = now + (me.plan.t - m.t) * 1000;
-        if (at - now > 300) {
+        // (as late as the phone can manage: a smash chance's slow motion can begin after the plan is made and stretch a swing planned
+        // further ahead into an early one)
+        const lead = realMs(me.plan.t - m.t);
+        const at = now + lead;
+        if (lead <= 480 && lead > 300) {
           lastPlan = me.plan;
           window.__swingAt(at);
           window.__swings++;
@@ -463,12 +476,14 @@ check('each point event saw the same score on both TVs', hostData.points.join('\
 console.log(`ball: ${cmp.n} host frames compared at the same simulation time, max ${(cmp.max * 100).toFixed(3)} cm, mean ${((cmp.sum / Math.max(1, cmp.n)) * 1000).toFixed(3)} mm (${cmp.skipped} outside the guest's ring)`);
 if (cmp.max >= 0.02 && cmp.worst) console.log('  worst:', JSON.stringify(cmp.worst, null, 1));
 check('the guest\'s ball is within 2 cm of the host\'s at the same host time', cmp.n > 300 && cmp.max < 0.02, `max ${(cmp.max * 100).toFixed(3)} cm over ${cmp.n} frames`);
-// a step over 1.4 m between two frames is only allowed when a stall ended: the ball flew on along its old segment
-// while the host's play moved on (a hit, a bounce that slowed it, the net, a point, a serve): a segment change explains it
-const explained = (j) => stalls.some(([a, b]) => j[0] >= a && j[0] <= b + 700 && guestData.evAt.some(([t, at]) => at >= a - 200 && at <= b + 700 && ['hit', 'toss', 'point', 'state', 'bounce', 'net', 'let', 'fault'].includes(t)));
+// a step over 1.4 m between two frames is only allowed at a hit or a bounce (the ball changes line there, on the host too), or when a long
+// stall ended: the guest's picture stood still while the link was down and, past half a second, catches up in one jump
+const explained = (j) =>
+  stalls.some(([a, b]) => j[0] >= a && j[0] <= b + 700) ||
+  guestData.evAt.some(([t, at]) => Math.abs(at - j[0]) < 80 && ['hit', 'toss', 'point', 'state', 'bounce', 'net', 'let', 'fault'].includes(t));
 const stray = guestData.jumpAt.filter((j) => !explained(j));
 for (const j of stray) console.log('  stray step', j[1].toFixed(2), 'm', JSON.stringify(j.slice(2)), '; events around it:', guestData.evAt.filter(([, at]) => Math.abs(at - j[0]) < 400).map(([t, at]) => `${t}@${at - j[0]}`).join(' '), '; stalls', stalls.map(([x, y]) => `${x - j[0]}..${y - j[0]}`).join(' '));
-check('the ball never teleported on the guest (a step over 1.4 m in a frame) except where a segment change explains it', stray.length === 0, `${guestData.jumps} big steps, ${guestData.jumps - stray.length} at a stall's end${guestData.jumps ? ' (' + guestData.jumpAt.map((j) => j[1].toFixed(1) + ' m').join(', ') + ')' : ''}; otherwise the largest step is a frame's worth of ball (${guestData.maxStep.toFixed(2)} m max)`);
+check('the ball never teleported on the guest (a step over 1.4 m in a frame) except at a hit or a bounce, or where a long stall ended', stray.length === 0, `${guestData.jumps} big steps, ${guestData.jumps - stray.length} at a stall's end${guestData.jumps ? ' (' + guestData.jumpAt.map((j) => j[1].toFixed(1) + ' m').join(', ') + ')' : ''}; otherwise the largest step is a frame's worth of ball (${guestData.maxStep.toFixed(2)} m max)`);
 {
   check('the guest recovered from a 1 s stall and a 2.2 s stall: its events all arrived (above), no exceptions (below)', true);
   check('after 1.5 s of silence the guest said "reconnecting…", then took it back', reconnectingSeen && badge && guestData.reconnecting === false, `state seen ${reconnectingSeen}, badge ${badge}, now ${guestData.reconnecting}`);

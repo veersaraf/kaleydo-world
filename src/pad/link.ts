@@ -75,9 +75,13 @@ export class PadLink {
   /** in the cloud: the TV's room (from the QR code's link) */
   readonly room = (new URLSearchParams(location.search).get('room') || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
+  /** in the cloud: the guest TV whose QR code opened this remote (`&via=`): the relay echoes this phone's swings to it at once */
+  readonly via = (new URLSearchParams(location.search).get('via') || '').replace(/[^a-zA-Z0-9-]/g, '').slice(0, 40);
+
   private qs() {
     const r = this.room ? `&room=${this.room}` : '';
-    return `pid=${encodeURIComponent(this.pid)}&name=${encodeURIComponent(this.getName())}${r}`;
+    const v = this.room && this.via ? `&via=${this.via}` : '';
+    return `pid=${encodeURIComponent(this.pid)}&name=${encodeURIComponent(this.getName())}${r}${v}`;
   }
 
   private tryWS() {

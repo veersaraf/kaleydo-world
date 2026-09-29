@@ -204,6 +204,24 @@ streams the match to theirs. B / Esc leaves. `node scripts/room-e2e.mjs`
 (against `npx wrangler dev --port 8792`) checks all of it. The Mac's own server
 has no rooms.
 
+**What to expect over the internet.** The host never waits for the network: it plays
+at full speed, and a phone's swing is timed by when it *happened* (the phone reports
+how old the swing is, plus its delay to the relay, plus the relay's to the host), not by
+when it arrived — so a friend 100 ms away swings as accurately as you do (the accuracy
+is the line's jitter: ±10–30 ms). What a guest *sees* is the match about `one-way delay
++ buffer` behind the host. The guest measures how late snapshots arrive over the last few
+seconds and buffers that much (one snapshot interval + the 95th percentile of the lateness,
+never under 50 ms; it grows ≤ 60 ms/s and shrinks ≤ 20 ms/s, so it is never seen as a jump):
+measured, ~110 ms behind for a friend 40 ± 8 ms away, ~190 ms at 90 ± 15 ms, ~330–400 ms at
+150 ± 30 ms with lost packets. A snapshot that still comes late freezes the picture for a
+moment (never a teleport: the ball and players wait, the buffer grows by what was missing).
+A guest's phones are opened from the guest's own QR code, so the guest hears each swing the
+instant the relay gets it (the whoosh doesn't wait for the host), looks at the court from
+its own players' end, and sees the host's Kaleido shifts shatter from the same spot in
+the court. `node scripts/online-lag-e2e.mjs` proves it at those three delays, and with the
+host itself 60 ms from the relay, through a lag proxy (`scripts/lib/lag-proxy.mjs`: delay,
+jitter and spikes on every WebSocket frame, order kept) in front of `wrangler dev`.
+
 ## Development
 
 ```bash
