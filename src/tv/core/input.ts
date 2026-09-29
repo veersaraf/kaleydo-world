@@ -46,21 +46,21 @@ export class Input {
   onWave: (slot: number) => void = () => {};
   onPrep: (slot: number, side: 'fh' | 'bh') => void = () => {};
   /** bowling: the grip went down / up, the ball was released, the arm's live angle */
-  onGrip: (slot: number, down: boolean) => void = () => {};
-  onBowl: (slot: number, r: { speed: number; angle: number; spin: number }) => void = () => {};
+  onGrip: (slot: number, down: boolean, age?: number) => void = () => {};
+  onBowl: (slot: number, r: { speed: number; angle: number; spin: number }, age?: number) => void = () => {};
   onArm: (slot: number, arm: number) => void = () => {};
   /** set by the app while bowling: Space/mouse bowl instead of swinging */
   bowlMode = false;
   /** sword duel: guard held / let go, and an attack (slash or thrust) */
-  onGuard: (slot: number, down: boolean) => void = () => {};
-  onSlash: (slot: number, a: SlashInput) => void = () => {};
+  onGuard: (slot: number, down: boolean, age?: number) => void = () => {};
+  onSlash: (slot: number, a: SlashInput, age?: number) => void = () => {};
   /** set by the app while duelling: Space guards, X thrusts, mouse drags slash */
   duelMode = false;
   /** the local player's guard angle from the mouse (radians across their view, 0 = level,
    *  π/2 = upright), or null to let the game pick one */
   localGuardAngle: number | null = null;
   /** archery: DRAW went down (pull the string) / up (shoot) */
-  onDraw: (slot: number, down: boolean) => void = () => {};
+  onDraw: (slot: number, down: boolean, age?: number) => void = () => {};
   /** set by the app while shooting: the mouse aims, holding the button draws, Space draws too */
   archeryMode = false;
   /** the cursor in normalised device coordinates (−1..1, y up) — the archery aim */
@@ -214,6 +214,18 @@ export class Input {
     this.onSeatsChanged();
   }
 
+  /**
+   * How old a phone's message is when it's handled here, seconds: what the phone
+   * measured before sending (`age`), its one-way trip to the server (`lat`, the
+   * phone's estimate) and the relay's trip to us (`rt`, the server's clock at the
+   * relay, against ours corrected by the link's measured offset). Clamped: a stale
+   * one is compensated up to `max`, never further back.
+   */
+  private ageOf(rt: number, lat: number, age = 0, max = 0.25): number {
+    const transit = Math.max(0, Date.now() + this.link.serverOffset - rt);
+    return Math.min(max, Math.max(0, (age + lat + transit) / 1000));
+  }
+
   padMsg(pid: string, rt: number, m: PadMsg) {
     const seat = this.seatOfPid(pid);
     if (!seat) return;
@@ -232,12 +244,9 @@ export class Input {
         if (m.look) seat.look = m.look;
         this.onSeatsChanged();
         break;
-      case 'swing': {
-        const transit = Math.max(0, Date.now() - rt);
-        const ageMs = Math.min(160, Math.max(0, m.age + m.lat + transit));
-        this.onSwing({ slot: seat.slot, power: m.power, spin: m.spin, age: ageMs / 1000, source: 'pad', side: m.side, path: m.path, attack: m.attack });
+      case 'swing':
+        this.onSwing({ slot: seat.slot, power: m.power, spin: m.spin, age: this.ageOf(rt, m.lat, m.age, 0.16), source: 'pad', side: m.side, path: m.path, attack: m.attack });
         break;
-      }
       case 'toss':
         this.onToss(seat.slot);
         break;
@@ -255,19 +264,19 @@ export class Input {
         if (m.arm !== undefined) this.onArm(seat.slot, m.arm);
         break;
       case 'grip':
-        this.onGrip(seat.slot, m.down);
+        this.onGrip(seat.slot, m.down, this.ageOf(rt, m.lat));
         break;
       case 'bowl':
-        this.onBowl(seat.slot, { speed: m.speed, angle: m.angle, spin: m.spin });
+        this.onBowl(seat.slot, { speed: m.speed, angle: m.angle, spin: m.spin }, this.ageOf(rt, m.lat, m.age));
         break;
       case 'guard':
-        this.onGuard(seat.slot, m.down);
+        this.onGuard(seat.slot, m.down, this.ageOf(rt, m.lat));
         break;
       case 'slash':
-        this.onSlash(seat.slot, { kind: m.kind, dir: m.dir, power: m.power });
+        this.onSlash(seat.slot, { kind: m.kind, dir: m.dir, power: m.power }, this.ageOf(rt, m.lat, m.age));
         break;
       case 'draw':
-        this.onDraw(seat.slot, m.down);
+        this.onDraw(seat.slot, m.down, this.ageOf(rt, m.lat));
         break;
     }
   }

@@ -66,7 +66,7 @@ export type PadMsg =
    *  speed m/s; spin −1..1 (+ hooks left); angle radians (+ right), ±0.2: the swing's line
    *  against the player's own backswing (a straight pendulum = 0, a push right / pull left
    *  across the body = ±), or against the calibrated screen when there was no real backswing */
-  | { type: 'bowl'; speed: number; angle: number; spin: number; lat: number; touch?: boolean }
+  | { type: 'bowl'; speed: number; angle: number; spin: number; lat: number; touch?: boolean; /** ms between the release and the message being sent */ age?: number }
   /** sword duel: the guard button went down / was let go. While it's held the
    *  sword guards at whatever angle the phone is held (from the 'ori' stream; one
    *  goes just before each 'guard' with the angle it went up / came down at) */
@@ -78,7 +78,7 @@ export type PadMsg =
    *  swipe (a tap is a thrust). Sent ~35 ms after the swing's peak (a thrust: as the
    *  arm is half-way out), just after an 'ori' with the pose it struck in; never
    *  while the guard is held — let go of it to attack */
-  | { type: 'slash'; kind: 'slash' | 'thrust'; dir: number; power: number; lat: number; touch?: boolean }
+  | { type: 'slash'; kind: 'slash' | 'thrust'; dir: number; power: number; lat: number; touch?: boolean; /** ms between the swing's peak and the message being sent */ age?: number }
   /** archery: the DRAW pad went down (start pulling the string) / was let go (shoot).
    *  The aim is the 'ori' stream: the TV turns the phone's movement since the draw
    *  began into the aim, so drift doesn't matter. An 'ori' is sent just before each */
@@ -133,6 +133,8 @@ export type ServerToTV =
   | { type: 'pad-join'; pid: string; name: string; transport: string }
   | { type: 'pad-leave'; pid: string }
   | { type: 'pad'; pid: string; rt: number; msg: PadMsg }
+  /** the TV's own ping came back: t = the TV's send time, st = the server's clock (for the clock offset) */
+  | { type: 'pong'; t: number; st: number }
   | { type: 'replaced' }
   /** the cloud: this room code belongs to another TV (pick another) */
   | { type: 'room-taken' };

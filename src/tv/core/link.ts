@@ -20,6 +20,9 @@ export class TVLink {
   /** the remote itself (https), where the join page sends a phone */
   padUrl: string | null = null;
   caUrl: string | null = null;
+  /** the server's clock minus this page's Date.now(), ms (0 = the same clock: the Mac's own server).
+   *  Measured from the TV's own pings; input.ts uses it to turn a message's relay stamp into a transit time */
+  serverOffset = 0;
   onMessage: (m: ServerToTV) => void = () => {};
   onStatus: (online: boolean) => void = () => {};
   private retry = 0;
