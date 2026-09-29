@@ -81,7 +81,7 @@ for (const s of [...segs, loose]) {
   if (flag('trace'))
     for (const j of s.judged)
       console.log(
-        `      ${((j.t - s.t0) / 1000).toFixed(2)}s ${j.verdict.padEnd(9)} ${arrow(j.dir)} ${deg(j.dir).padStart(5)} peak ${j.peak.toFixed(1)} need ${j.need.toFixed(1)} (base ${j.base.toFixed(1)}) sweep ${j.sweep.toFixed(2)} across ${j.across.toFixed(2)} one-way ${j.coherent.toFixed(2)} wound ${j.wound.toFixed(2)}${j.ready ? ` ready ${j.ready.map((v) => v.toFixed(2)).join(',')}` : ''}`,
+        `      ${((j.t - s.t0) / 1000).toFixed(2)}s ${j.verdict.padEnd(9)} ${arrow(j.dir)} ${deg(j.dir).padStart(5)} peak ${j.peak.toFixed(1)} need ${j.need.toFixed(1)} (base ${j.base.toFixed(1)}) sweep ${j.sweep.toFixed(2)} across ${j.across.toFixed(2)} one-way ${j.coherent.toFixed(2)} wound ${j.wound.toFixed(2)}`,
       );
   if (s.tennis.length) console.log(`    (as tennis: ${s.tennis.map((e) => `${e.side} ${Math.round(e.power * 100)}%`).join(', ')})`);
 }

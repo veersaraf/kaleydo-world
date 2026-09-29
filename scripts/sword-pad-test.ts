@@ -11,7 +11,7 @@
 // integration + the OS's fused orientation arriving a little late.
 //
 //   npx tsx scripts/sword-pad-test.ts
-import { SwordDetector, swipeStrike, slashPower, guardLine, type SwordStrike } from '../src/pad/sword';
+import { SwordDetector, swingRead, swipeStrike, slashPower, guardLine, type SwordStrike } from '../src/pad/sword';
 import type { SwipePoint } from '../src/pad/bowl';
 import { Orientation, quatFromEuler } from '../src/pad/orient';
 
@@ -208,12 +208,20 @@ function path(sc: Scene) {
   return { pose, omega };
 }
 
-/** the true slash direction at time t: the tip's travel (ω × blade) across the view */
-function trueDir(sc: Scene, t: number) {
+/** the tip's travel (ω × blade) across the view at time t, as the physics has it */
+function physDir(sc: Scene, t: number) {
   const { pose, omega } = path(sc);
   const s = qrotV(pose(t), [0, 1, 0]);
   const v = cross(omega(t), s);
   return Math.atan2(v[2], v[0]);
+}
+/**
+ * The slash direction the detector should read at time t: the tip's travel, as a person's swing
+ * reads (a real hand's cuts lean and dip: sword.ts DIR_ROLL / DIR_DIP, fitted on a real capture,
+ * scripts/sword-capture-test.ts).
+ */
+function trueDir(sc: Scene, t: number) {
+  return swingRead(physDir(sc, t));
 }
 
 function simulate(sc: Scene, su: Setup): Fired[] {
@@ -422,12 +430,12 @@ console.log('\n— where the blow starts');
   const chop = blow(g, -Math.PI / 2, 15, 0.11, 0.06);
   const f1 = simulate(chop, su);
   const b0 = qrotV(path(chop).pose(0.2), [0, 1, 0]);
-  check(`overhead chop from behind the head (blade starts ${b0.map((v) => v.toFixed(2)).join(', ')})`, f1.length === 1 && Math.abs(wrap(f1[0].dir + Math.PI / 2)) < 0.2, fmt(f1));
+  check(`overhead chop from behind the head (blade starts ${b0.map((v) => v.toFixed(2)).join(', ')})`, f1.length === 1 && Math.abs(wrap(f1[0].dir - swingRead(-Math.PI / 2))) < 0.2, fmt(f1));
   // a big horizontal slash from behind the right shoulder, sweeping right to left
   const hs = blow(GRIPS[2], Math.PI, 16, 0.11, 0.06);
   const f2 = simulate(hs, { ...su, seed: 12 });
   const h0 = qrotV(path(hs).pose(0.2), [0, 1, 0]);
-  check(`horizontal slash from behind the shoulder (blade starts ${h0.map((v) => v.toFixed(2)).join(', ')})`, f2.length === 1 && Math.abs(wrap(f2[0].dir - Math.PI)) < 0.2, fmt(f2));
+  check(`horizontal slash from behind the shoulder (blade starts ${h0.map((v) => v.toFixed(2)).join(', ')})`, f2.length === 1 && Math.abs(wrap(f2[0].dir - swingRead(Math.PI))) < 0.2, fmt(f2));
   // a diagonal from over the right shoulder down to the left hip (kesa-giri)
   const kd = blow(GRIPS[0], (-3 * Math.PI) / 4, 14, 0.1, 0.06);
   const f3 = simulate(kd, { ...su, seed: 13 });
@@ -437,7 +445,7 @@ console.log('\n— where the blow starts');
   const wu = blow(g, -Math.PI / 2, 14, 0.07, 0.05);
   wu.rots.push({ kind: 'blow', axis: scale(wu.rots[0].axis, -1), tp: 0.25, peak: 4, rise: 0.12, fall: 0.1 });
   const f4 = simulate(wu, { ...su, seed: 14 });
-  check('windup (sword raised at 4 rad/s) then a chop: one slash, down', f4.length === 1 && Math.abs(wrap(f4[0].dir + Math.PI / 2)) < 0.2, fmt(f4));
+  check('windup (sword raised at 4 rad/s) then a chop: one slash, down', f4.length === 1 && Math.abs(wrap(f4[0].dir - swingRead(-Math.PI / 2))) < 0.2, fmt(f4));
   // a curving stroke: starts across, ends down
   const cv = blow(GRIPS[2], -Math.PI / 4, 13, 0.07, 0.05);
   cv.rots.push({ kind: 'blow', axis: axisFor(GRIPS[2].blade, Math.PI * 0.05), tp: 0.55, peak: 5, rise: 0.05, fall: 0.03 });
@@ -744,7 +752,7 @@ console.log('\n— thrusts');
     end: 1.8,
   };
   const f = simulate(ts, su(4700));
-  check('a thrust, then a chop 500 ms later: both', f.length === 2 && f[0].kind === 'thrust' && f[1].kind === 'slash' && Math.abs(wrap(f[1].dir + Math.PI / 2)) < 0.3, fmt(f));
+  check('a thrust, then a chop 500 ms later: both', f.length === 2 && f[0].kind === 'thrust' && f[1].kind === 'slash' && Math.abs(wrap(f[1].dir - swingRead(-Math.PI / 2))) < 0.3, fmt(f));
   const na = simulate({ rots: [], pushes: [{ dir: [0, 1, -0.05], t0: 0.5, dur: 0.24, dist: 0.35, hold: 0.1, back: 0.35 }], pose: remote, tref: 0, end: 1.5 }, { ...su(4701), accel: 'none' });
   check('no accelerometer: no thrusts (and nothing else)', na.length === 0, fmt(na));
 }
@@ -823,7 +831,7 @@ console.log('\n— test harness sanity');
   check('quaternion → alpha/beta/gamma → quaternion round-trips', worst < 1e-9, `worst 1−|dot| = ${worst.toExponential(1)}`);
   // the designed direction is the one at the peak
   let dw = 0;
-  for (const g of GRIPS) for (const d of DIRS) dw = Math.max(dw, Math.abs(wrap(trueDir(blow(g, d, 10), 0.6) - d)));
+  for (const g of GRIPS) for (const d of DIRS) dw = Math.max(dw, Math.abs(wrap(physDir(blow(g, d, 10), 0.6) - d)));
   check('axisFor(): the tip travels the way it was asked to at the peak', dw < 1e-3, `worst ${(dw * R2D).toFixed(3)}°`);
 }
 
