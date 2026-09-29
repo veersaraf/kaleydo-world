@@ -95,18 +95,10 @@ function randSnap(n: number, nEvents: number): Snap {
   return s;
 }
 
-let worst = 0;
-let worstWhat = '';
-const near = (what: string, a: number, b: number, tol: number) => {
-  const e = Math.abs(a - b);
-  if (e > worst / 1) {
-    /* tracked per tolerance below */
-  }
-  if (e > tol + 1e-9) {
-    bad.push(`${what}: ${a} vs ${b} (tol ${tol})`);
-  }
-};
 const bad: string[] = [];
+const near = (what: string, a: number, b: number, tol: number) => {
+  if (Math.abs(a - b) > tol + 1e-9) bad.push(`${what}: ${a} vs ${b} (tol ${tol})`);
+};
 const eqv = (what: string, a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }, tol: number) => {
   near(what + '.x', a.x, b.x, tol);
   near(what + '.y', a.y, b.y, tol);
@@ -166,7 +158,6 @@ function compareEvent(w: string, a: NetEvent, b: NetEvent) {
     if (len > 4000) bad.push('too long');
   }
   check(`${n} random snapshots (2 and 4 players, 0-5 events) round-trip within their quantisation`, bad.length === 0, bad.slice(0, 5).join(' | '));
-  void worst; void worstWhat;
   // garbage is refused, not thrown at
   const junk = new Uint8Array(40).fill(7).buffer;
   check('a foreign or truncated frame is refused', !decodeSnap(junk, out) && !decodeSnap(w.buf.slice(0, 30), out));
