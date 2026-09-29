@@ -443,17 +443,31 @@ export class Sfx {
     const e = this.e;
     const t0 = e.now;
     const n = Math.floor(40 + intensity * 120);
-    for (let i = 0; i < n; i++) {
-      const t = t0 + Math.pow(Math.random(), 1.6) * dur;
-      e.noise(t, 0.02 + Math.random() * 0.02, {
-        type: 'bandpass',
+    // Every clap is a few audio nodes; 160 of them made in one go cost the frame 4–6 ms (the
+    // point being won is exactly when a frame must not be late). The claps are drawn now, in
+    // the order they happen, but each is only built shortly before it sounds.
+    const claps: { t: number; len: number; f0: number; gain: number; pan: number }[] = [];
+    for (let i = 0; i < n; i++)
+      claps.push({
+        t: t0 + Math.pow(Math.random(), 1.6) * dur,
+        len: 0.02 + Math.random() * 0.02,
         f0: 900 + Math.random() * 2400,
-        q: 1.5,
         gain: (0.05 + Math.random() * 0.06) * (0.4 + intensity),
-        bus: e.crowd,
         pan: Math.random() * 1.6 - 0.8,
       });
-    }
+    claps.sort((a, b) => a.t - b.t);
+    let next = 0;
+    let pumps = 0;
+    const pump = () => {
+      const until = e.now + 0.15;
+      while (next < claps.length && claps[next].t < until) {
+        const c = claps[next++];
+        e.noise(c.t, c.len, { type: 'bandpass', f0: c.f0, q: 1.5, gain: c.gain, bus: e.crowd, pan: c.pan });
+      }
+      // (a suspended context's clock doesn't move: give up after a while)
+      if (next < claps.length && ++pumps < 200) window.setTimeout(pump, 40);
+    };
+    window.setTimeout(pump, 0);
     // swell of voices
     this.voices(intensity, dur * 0.8, 'ah');
   }

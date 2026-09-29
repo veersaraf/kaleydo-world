@@ -1,6 +1,7 @@
 // A realistic session: one player vs CPU for N seconds (auto-swings), with points,
 // callouts and instant replays. Reports frame gaps over the whole session.
 import { chromium } from 'playwright-core';
+import { programProbe, programReport } from './lib/perf-probe.mjs';
 const BASE = process.env.BASE || 'http://localhost:3200';
 const world = process.argv[2] || 'plaza';
 const secs = +(process.argv[3] || 40);
@@ -17,6 +18,7 @@ await tv.waitForTimeout(800);
 await tv.mouse.click(640, 370); // unlock audio like a real player
 await tv.waitForTimeout(300);
 await tv.evaluate(([w, mode]) => { const f = window.flow; f.mode = mode; f.beginMatch(w); }, [world, process.env.MODE || 'quick']);
+await tv.evaluate(programProbe);
 const res = await tv.evaluate((secs) => new Promise((done) => {
   const k = window.kaleido;
   const rows = [];
@@ -85,4 +87,5 @@ const js = res.rows.map((r) => r[1]).sort((a, b) => a - b);
 console.log(`js p50 ${js[js.length >> 1].toFixed(1)} p99 ${js[Math.floor(js.length * 0.99)].toFixed(1)} max ${js[js.length - 1].toFixed(1)}`);
 console.log('slow JS frames:\n  ' + res.slow.join('\n  '));
 console.log(logs.join('\n'));
+console.log('shader programs built during play:', JSON.stringify(await tv.evaluate(programReport)));
 await browser.close();

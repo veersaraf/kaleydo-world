@@ -169,9 +169,9 @@ export class Stage {
   async prime(id: string, cam: THREE.PerspectiveCamera) {
     if (this.primed.has(id)) return;
     const w = this.get(id);
-    const r = this.renderer as THREE.WebGLRenderer & { compileAsync?: (s: THREE.Object3D, c: THREE.Camera) => Promise<unknown> };
+    const r = this.renderer;
     w.setPlayers(this.looks, this.lookKey);
-    if (r.compileAsync) await r.compileAsync(w.scene, cam).catch(() => {});
+    await w.compileAsync(cam);
     if (this.primed.has(id)) return;
     this.primed.add(id);
     const onScreen = w === this.current || w === this.next;
@@ -354,6 +354,7 @@ export class Stage {
   /** Render one camera full screen, or one camera per view side by side. */
   render(cams: THREE.PerspectiveCamera | THREE.PerspectiveCamera[]) {
     if (!this.current) return;
+    this.pinPrograms();
     const list = Array.isArray(cams) ? cams : [cams];
     if (this.views === 1 || list.length < 2) {
       this.current.setView(0);
@@ -378,6 +379,26 @@ export class Stage {
     this.next?.setView(0);
     r.setScissorTest(false);
     r.setViewport(0, 0, W, H);
+  }
+
+  private pinned = new WeakSet<object>();
+  private pinnedCount = 0;
+
+  /**
+   * Keep every shader program the renderer has built. It frees a program when the
+   * last material using it is disposed — a rematch or a change of players rebuilds
+   * the characters, a duel its swords — and the same program would then compile
+   * again in the middle of the next game.
+   */
+  private pinPrograms() {
+    const ps = this.renderer.info.programs;
+    if (!ps || ps.length === this.pinnedCount) return;
+    for (const p of ps)
+      if (!this.pinned.has(p)) {
+        this.pinned.add(p);
+        p.usedTimes++;
+      }
+    this.pinnedCount = ps.length;
   }
 
   private renderView(cam: THREE.PerspectiveCamera) {

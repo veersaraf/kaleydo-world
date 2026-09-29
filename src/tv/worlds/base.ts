@@ -65,6 +65,12 @@ const SHOT_TINT: Record<string, THREE.Color> = {
 
 const GOLD = new THREE.Color('#ffc21a');
 
+/** a camera for compiling before anything has been drawn */
+const PROBE_CAM = new THREE.PerspectiveCamera();
+/** a 1×1 buffer to have bound while compiling: what matters is that it isn't the screen */
+let compileTarget: THREE.WebGLRenderTarget | null = null;
+const compileRT = () => (compileTarget ??= makeRT(1, 1, { type: THREE.UnsignedByteType }));
+
 /** ?nobatch in the URL turns static batching off (for A/B checks) */
 const NO_BATCH = typeof location !== 'undefined' && new URLSearchParams(location.search).has('nobatch');
 import { makeRT, finalPass, Pass, Bloom, BLACK } from '../render/post';
@@ -578,6 +584,8 @@ export abstract class World {
       this.scene.add(r.root, r.shadow);
       return r;
     });
+    // (now, when nothing is at stake, rather than in the first frame they are drawn)
+    this.watchMaterials();
   }
 
   // ---------------------------------------------------------------- render targets
@@ -626,6 +634,7 @@ export abstract class World {
 
   update(v: FrameView) {
     this.time = v.realT;
+    this.watchMaterials();
     for (let i = 0; i < this.rigs.length && i < v.poses.length; i++) this.rigs[i].apply(v.poses[i]);
     this.contact?.update(this.rigs, v.poses);
     // ball
@@ -715,19 +724,26 @@ export abstract class World {
   setSport(sport: 'baseball', make?: (kit: MaterialKit) => FieldVenueLike): void;
   setSport(sport: Sport, make?: (kit: MaterialKit) => BowlVenueLike | DuelVenueLike | RangeVenueLike | FieldVenueLike) {
     this.sport = sport;
+    let built = false;
     if (sport === 'bowling' && !this.bowlVenue && make) {
       this.bowlVenue = make(this.kit) as BowlVenueLike;
       this.scene.add(this.bowlVenue.group);
+      built = true;
     } else if (sport === 'duel' && !this.duelVenue && make) {
       this.duelVenue = make(this.kit) as DuelVenueLike;
       this.scene.add(this.duelVenue.group);
+      built = true;
     } else if (sport === 'archery' && !this.rangeVenue && make) {
       this.rangeVenue = make(this.kit) as RangeVenueLike;
       this.scene.add(this.rangeVenue.group);
+      built = true;
     } else if (sport === 'baseball' && !this.fieldVenue && make) {
       this.fieldVenue = make(this.kit) as FieldVenueLike;
       this.scene.add(this.fieldVenue.group);
+      built = true;
     }
+    // the venue's trails, ripples, stars… only draw mid-game: compile them now, not then
+    if (built) this.watchMaterials(true);
     if (this.bowlVenue) this.bowlVenue.group.visible = sport === 'bowling';
     if (this.duelVenue) this.duelVenue.group.visible = sport === 'duel';
     if (this.rangeVenue) this.rangeVenue.group.visible = sport === 'archery';
@@ -888,6 +904,7 @@ export abstract class World {
   /** Render the world into `target` (null = screen). */
   render(cam: THREE.PerspectiveCamera, target: THREE.WebGLRenderTarget | null) {
     const r = this.renderer;
+    this.lastCam = cam;
     // resolving the MSAA depth costs as much as a full-screen pass: only when an effect reads it
     this.sceneRT.resolveDepthBuffer = !!this.post?.plan(cam);
     r.setRenderTarget(this.sceneRT);
@@ -903,9 +920,95 @@ export abstract class World {
     this.final.render(r, target);
   }
 
-  /** Warm up shaders so the first frame doesn't hitch. */
-  compile(cam: THREE.Camera) {
-    this.renderer.compile(this.scene, cam);
+  private seen = new WeakSet<THREE.Material>();
+
+  /**
+   * Whatever the game adds to the scene — a duel's swords and their trails, a
+   * ballpark's fireworks — may only draw mid-game, and a program compiled at its
+   * first draw stalls that frame. Every frame (a walk over a few hundred objects),
+   * compile any material that hasn't been seen yet (`now`: whatever was just built).
+   */
+  private watchMaterials(now = false) {
+    this.tidyMaterials();
+    if (now) {
+      // the venue's whole scene (sync: the programs are needed before the sport starts)
+      const casters = this.freshObjs.filter((o) => o.castShadow);
+      void this.compileAsync().then(() => this.warmDraw(casters));
+    } else if (this.freshObjs.length) {
+      this.compileObjects(this.freshObjs);
+      this.warmDraw(this.freshObjs.filter((o) => o.castShadow && !o.visible));
+    }
+  }
+
+  /**
+   * The sun's shadow pass builds its own depth programs the first time a caster of some
+   * kind is drawn — for things that only appear mid-game that is a stall then. Draw the
+   * scene once into a 1×1 buffer with those casters switched on.
+   */
+  private warmDraw(casters: THREE.Object3D[]) {
+    if (!casters.length || !this.effects.shadow) return;
+    const r = this.renderer;
+    const was = casters.map((o) => o.visible);
+    for (const o of casters) o.visible = true;
+    const prev = r.getRenderTarget();
+    r.setRenderTarget(compileRT());
+    r.render(this.scene, this.lastCam ?? PROBE_CAM);
+    r.setRenderTarget(prev);
+    casters.forEach((o, i) => (o.visible = was[i]));
+  }
+
+  /** Note the materials not seen before (and settle them): the objects that carry them go to `freshObjs`. */
+  private tidyMaterials() {
+    this.freshObjs.length = 0;
+    this.scene.traverse(this.tidyOne);
+  }
+  private freshObjs: THREE.Object3D[] = [];
+  private tidyOne = (o: THREE.Object3D) => {
+    const m = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+    if (!m) return;
+    if (Array.isArray(m)) for (let i = 0; i < m.length; i++) this.tidyMat(m[i], o);
+    else this.tidyMat(m, o);
+  };
+  private tidyMat(x: THREE.Material, o: THREE.Object3D) {
+    if (this.seen.has(x)) return;
+    this.seen.add(x);
+    if (this.freshObjs[this.freshObjs.length - 1] !== o) this.freshObjs.push(o);
+    // A transparent double-sided material is drawn twice (back faces, then front) and
+    // three re-derives its program every frame to do it. A flat disc or quad has no
+    // back face to sort: one pass draws exactly the same.
+    const type = (o as THREE.Mesh).geometry?.type;
+    if (x.transparent && x.side === THREE.DoubleSide && (type === 'PlaneGeometry' || type === 'CircleGeometry')) x.forceSinglePass = true;
+  }
+
+  /** Have just these objects' programs built (they are found in the scene, whose lights they are drawn under). */
+  private compileObjects(objs: THREE.Object3D[]) {
+    // (a whole world's worth, e.g. one that was never primed: one pass over the scene, not one per object)
+    if (objs.length > 24) return void this.compileAsync();
+    const r = this.renderer;
+    const cam = this.lastCam ?? PROBE_CAM;
+    const prev = r.getRenderTarget();
+    r.setRenderTarget(compileRT());
+    for (const o of objs) r.compile(o, cam, this.scene);
+    r.setRenderTarget(prev);
+  }
+
+  /** the camera this world last drew with (lights are gathered per camera when compiling) */
+  private lastCam: THREE.PerspectiveCamera | null = null;
+
+  /**
+   * Compile every material in the scene — visible or not: the smash's craters, a
+   * venue's trails and sparks only draw mid-game, and the first draw of a new
+   * program stalls the frame — the way they will be drawn (into a buffer, not
+   * the screen: the output colour space is part of a program's key).
+   */
+  compileAsync(cam: THREE.PerspectiveCamera | null = this.lastCam): Promise<unknown> {
+    const r = this.renderer;
+    this.tidyMaterials();
+    const prev = r.getRenderTarget();
+    r.setRenderTarget(compileRT());
+    const done = r.compileAsync(this.scene, cam ?? PROBE_CAM).catch(() => {});
+    r.setRenderTarget(prev);
+    return done;
   }
 
   dispose() {
