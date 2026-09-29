@@ -932,7 +932,19 @@ section {
   animation: pop 0.4s var(--spring);
 }
 
+.ptitle.pop2,
+.wtitle.pop2 {
+  animation: pop2 0.4s var(--spring);
+}
+
 @keyframes pop {
+  from {
+    transform: scale(0.88);
+  }
+}
+
+/* (the same animation under another name: main.ts flips between the two to play it again without a forced layout) */
+@keyframes pop2 {
   from {
     transform: scale(0.88);
   }
@@ -968,6 +980,10 @@ section {
   visibility: hidden;
   padding: 7px 0;
   min-height: calc(1.2em + 14px);
+}
+
+.tvline.pop2 {
+  animation: pop2 0.4s var(--spring);
 }
 
 .tvline.pop {
@@ -1010,18 +1026,50 @@ section {
   }
 }
 
+/* A held grip / guard pulses a halo. The halo used to animate a big blurred box-shadow, which the
+   page has to repaint every frame — while the player is mid-swing. Now two static halos (the pulse's
+   two ends) sit on the pad's ::before / ::after and trade places by opacity, which the compositor
+   does on its own. */
+.grip.held,
+.guard.held {
+  animation: none;
+  box-shadow: inset 0 -8px 0 rgba(0, 0, 0, 0.14);
+}
+
+.grip.held::before,
+.grip.held::after,
+.guard.held::before,
+.guard.held::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  animation: glow 0.9s ease-in-out infinite alternate;
+  will-change: opacity;
+}
+
+.grip.held::before,
+.guard.held::before {
+  animation-direction: alternate-reverse;
+  box-shadow:
+    0 0 0 5px color-mix(in oklab, var(--pc) 40%, transparent),
+    0 0 24px 6px color-mix(in oklab, var(--pc) 65%, transparent);
+}
+
+.grip.held::after,
+.guard.held::after {
+  box-shadow:
+    0 0 0 9px color-mix(in oklab, var(--pc) 28%, transparent),
+    0 0 46px 16px color-mix(in oklab, var(--pc) 80%, transparent);
+}
+
 @keyframes glow {
   from {
-    box-shadow:
-      inset 0 -8px 0 rgba(0, 0, 0, 0.14),
-      0 0 0 5px color-mix(in oklab, var(--pc) 40%, transparent),
-      0 0 24px 6px color-mix(in oklab, var(--pc) 65%, transparent);
+    opacity: 0;
   }
   to {
-    box-shadow:
-      inset 0 -8px 0 rgba(0, 0, 0, 0.14),
-      0 0 0 9px color-mix(in oklab, var(--pc) 28%, transparent),
-      0 0 46px 16px color-mix(in oklab, var(--pc) 80%, transparent);
+    opacity: 1;
   }
 }
 
@@ -1053,6 +1101,10 @@ section {
 
 .ring.pop {
   animation: pop 0.35s var(--spring);
+}
+
+.ring.pop2 {
+  animation: pop2 0.35s var(--spring);
 }
 
 .live {
@@ -1577,6 +1629,10 @@ section {
   animation: pop 0.35s var(--spring);
 }
 
+.grip-wrap.pop2 .grip-meter {
+  animation: pop2 0.35s var(--spring);
+}
+
 /* the grip: a bowling ball in the player's colour */
 .grip {
   position: relative;
@@ -1652,7 +1708,6 @@ section {
 .grip.held {
   cursor: grabbing;
   transform: scale(0.95);
-  animation: glow 0.9s ease-in-out infinite alternate;
 }
 
 .grip.thrown {
@@ -1731,6 +1786,10 @@ section {
 
 .guard-wrap.pop .guard-meter {
   animation: pop 0.35s var(--spring);
+}
+
+.guard-wrap.pop2 .guard-meter {
+  animation: pop2 0.35s var(--spring);
 }
 
 /* blades met: the shield takes the knock */
@@ -1821,7 +1880,6 @@ section {
     radial-gradient(circle, transparent 59.5%, rgba(255, 255, 255, 0.85) 60.5%, rgba(255, 255, 255, 0.85) 65%, transparent 66%),
     radial-gradient(30% 22% at 32% 22%, rgba(255, 255, 255, 0.55), transparent 72%),
     radial-gradient(circle at 50% 36%, color-mix(in oklab, var(--pc) 60%, white), var(--pc) 58%, color-mix(in oklab, var(--pc) 70%, black));
-  animation: glow 0.9s ease-in-out infinite alternate;
 }
 
 /* no motion sensor: swipe the pad to slash, tap it to thrust; the toggle sets the guard's angle */
@@ -2192,11 +2250,12 @@ section {
 .panel.play.smash .ring {
   background:
     radial-gradient(closest-side, #fff7e0 74%, transparent 75%),
-    conic-gradient(from var(--smash-a), #ffc21a, #ff3d2e, #ffc21a, #ff6a1f, #ffc21a);
+    conic-gradient(#ffc21a, #ff3d2e, #ffc21a, #ff6a1f, #ffc21a);
   box-shadow:
     0 0 0 6px rgba(255, 194, 26, 0.35),
     0 0 40px 10px rgba(255, 90, 30, 0.55);
   animation: smash-ring 0.9s linear infinite;
+  will-change: transform;
 }
 
 .panel.play.smash .live {
@@ -2216,15 +2275,11 @@ section {
   transition: box-shadow 1.2s ease-out;
 }
 
-@property --smash-a {
-  syntax: '<angle>';
-  inherits: false;
-  initial-value: 0deg;
-}
-
+/* (the ring's colours turn by turning the ring: a transform, which the compositor does; animating the
+   gradient's angle repainted the ring, its glow and its shadows on every frame of the smash) */
 @keyframes smash-ring {
   to {
-    --smash-a: 360deg;
+    transform: rotate(360deg);
   }
 }
 

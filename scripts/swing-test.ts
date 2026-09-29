@@ -1,9 +1,9 @@
 // Synthetic motion → SwingDetector: power, side (forehand/backhand/overhead),
 // spin (angle of attack) and backswing "prep" — on both the W3C and the
 // inverted iOS sign conventions.
-import { SwingDetector, type MotionSample, type SwingEvent } from '../src/pad/swing';
+import { SwingDetector, type MotionSample, type Side, type SwingEvent } from '../src/pad/swing';
 
-type Opts = { peak: number; dur: number; vUp: number; ios: boolean; yaw: number; backswing?: number; handed?: number };
+type Opts = { peak: number; dur: number; vUp: number; ios: boolean; yaw: number; backswing?: number; handed?: number; hz?: number; noise?: number; seed?: number };
 const R = (d: number) => (d * Math.PI) / 180;
 
 function makeSwing(o: Opts): MotionSample[] {
@@ -20,12 +20,23 @@ function makeSwing(o: Opts): MotionSample[] {
   const axis = (a: number) => u.map((x, i) => a * x + Math.sqrt(1 - a * a) * hz[i]);
   const main = axis(o.yaw);
   const back = axis(-o.yaw);
-  for (let i = 0; i < 1.2 * 60; i++) {
-    const t = i / 60;
+  const rate = o.hz ?? 60;
+  // (a small deterministic noise generator: sensors are not smooth)
+  let seed = (o.seed ?? 1) >>> 0;
+  const gauss = () => {
+    let a = 0;
+    for (let k = 0; k < 6; k++) {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      a += seed / 4294967296;
+    }
+    return a - 3;
+  };
+  for (let i = 0; i < 1.2 * rate; i++) {
+    const t = i / rate;
     const ts = 0.62;
     const wMain = o.peak * Math.exp(-(((t - ts) / (o.dur / 2.4)) ** 2));
     const wBack = (o.backswing ?? 0) * Math.exp(-(((t - 0.3) / 0.07) ** 2));
-    const rot = main.map((x, k) => x * wMain + back[k] * wBack);
+    const rot = main.map((x, k) => x * wMain + back[k] * wBack + (o.noise ? o.noise * gauss() : 0));
     // vertical acceleration shaped so that vertical speed at contact ≈ vUp
     const aUp = (o.vUp / 0.12) * Math.exp(-(((t - (ts - 0.06)) / 0.05) ** 2));
     const side = 12 * Math.sin((t - ts) * 20) * Math.exp(-(((t - ts) / 0.12) ** 2));
@@ -38,15 +49,24 @@ function makeSwing(o: Opts): MotionSample[] {
 }
 
 let ok = true;
+/** ms from each swing's true peak to the sample that fired it (60 Hz runs only) */
+const delays: number[] = [];
 function run(name: string, o: Opts, check: (e: SwingEvent[], preps: string[]) => boolean) {
   const d = new SwingDetector();
   d.upSign = o.ios ? -1 : 1;
   d.handed = o.handed ?? 1;
   const evs: SwingEvent[] = [];
   const preps: string[] = [];
-  d.onSwing = (e) => evs.push(e);
+  let clock = 0;
+  d.onSwing = (e) => {
+    evs.push(e);
+    if (!o.hz) delays.push(clock - e.t);
+  };
   d.onPrep = (s) => preps.push(s);
-  for (const s of makeSwing(o)) d.push(s);
+  for (const s of makeSwing(o)) {
+    clock = s.t;
+    d.push(s);
+  }
   const pass = check(evs, preps);
   if (!pass) ok = false;
   const desc = evs.map((e) => `${e.side} p${e.power.toFixed(2)} spin${e.spin >= 0 ? '+' : ''}${e.spin.toFixed(2)} (${e.attack.toFixed(0)}°) yaw${e.yaw.toFixed(2)}`).join(' | ');
@@ -66,5 +86,29 @@ for (const ios of [false, true]) {
   run(`${T} slow backswing → forehand`, { peak: R(1000), dur: 0.2, vUp: 0.3, ios, yaw: 0.85, backswing: R(260) }, (e, p) => e.length === 1 && e[0].side === 'fh' && p.includes('fh'));
   run(`${T} fast backswing → forehand`, { peak: R(1100), dur: 0.2, vUp: 0.3, ios, yaw: 0.85, backswing: R(520) }, (e) => e.length >= 1 && e[e.length - 1].side === 'fh' && e[e.length - 1].power > 0.6);
   run(`${T} resting phone`, { peak: R(40), dur: 0.3, vUp: 0, ios, yaw: 0.5 }, (e) => e.length === 0);
+}
+// other sensors: 30 Hz phones, 100 and 200 Hz ones, with noise on the gyro — the same swing reads the
+// same (one event, the same side, about the same power), so a peak isn't called early on a fast sensor's ripple
+for (const hz of [30, 100, 200]) {
+  for (const [name, o, side] of [
+    ['forehand, flat', { peak: R(950), dur: 0.2, vUp: 0, yaw: 0.85 }, 'fh'],
+    ['backhand slice', { peak: R(950), dur: 0.2, vUp: -2.2, yaw: -0.85 }, 'bh'],
+    ['gentle topspin', { peak: R(520), dur: 0.24, vUp: 1.1, yaw: 0.85 }, 'fh'],
+    ['hard flat', { peak: R(1300), dur: 0.18, vUp: 0.2, yaw: 0.85 }, 'fh'],
+  ] as [string, Omit<Opts, 'ios'>, Side][]) {
+    const ref = new SwingDetector();
+    ref.upSign = -1;
+    const refEv: SwingEvent[] = [];
+    ref.onSwing = (e) => refEv.push(e);
+    for (const s of makeSwing({ ...o, ios: true })) ref.push(s);
+    for (const noise of [0, 0.15, 0.4]) {
+      run(`[${hz} Hz, noise ${noise}] ${name}`, { ...o, ios: true, hz, noise, seed: hz + Math.round(noise * 100) }, (e) => e.length === 1 && e[0].side === side && refEv.length === 1 && Math.abs(e[0].power - refEv[0].power) < 0.1);
+    }
+  }
+}
+{
+  const a = [...delays].sort((x, y) => x - y);
+  const q = (f: number) => a[Math.min(a.length - 1, Math.floor(f * (a.length - 1) + 0.5))];
+  console.log(`\ndetection delay after the true peak (${a.length} swings, 60 Hz): p50 ${q(0.5).toFixed(0)} ms, p90 ${q(0.9).toFixed(0)} ms, max ${a[a.length - 1].toFixed(0)} ms`);
 }
 console.log(ok ? '\nAll swing checks passed.' : '\nSome swing checks FAILED.');

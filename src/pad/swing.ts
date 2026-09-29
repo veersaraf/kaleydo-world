@@ -57,6 +57,14 @@ export interface SwingEvent {
 
 const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
 const N = 96;
+/**
+ * A swing's peak is past once its speed is below 80% of it, or 70 ms have gone by — or, for a swing
+ * that counts, once the speed has fallen FALLS samples running over at least FALL_MS (the second
+ * fall comes a sample sooner than the 80% mark does, ~17 ms at 60 Hz; the time keeps a fast sensor's
+ * noise, or samples handed over in a bunch, from calling a peak early).
+ */
+const FALLS = 2;
+const FALL_MS = 25;
 
 export class SwingDetector {
   /** 0.7 = needs big swings … 1.4 = very light swings trigger */
@@ -92,6 +100,8 @@ export class SwingDetector {
   private prevW = 0;
   private lastPeak = 0;
   private minSince = 0;
+  /** consecutive samples the speed has fallen since its peak */
+  private falls = 0;
   // wind-up tracking
   private windPeak = 0;
   private windYaw = 0;
@@ -113,6 +123,7 @@ export class SwingDetector {
     const raw = Math.hypot(s.rx, s.ry, s.rz);
     const w = 0.6 * raw + 0.4 * this.prevW;
     this.prevW = raw;
+    const falling = w < this.live;
     this.live = w;
 
     const gl = Math.hypot(s.gx, s.gy, s.gz);
@@ -169,6 +180,7 @@ export class SwingDetector {
         this.peak = w;
         this.peakT = s.t;
         this.peakIdx = i;
+        this.falls = 0;
       }
       return;
     }
@@ -178,11 +190,16 @@ export class SwingDetector {
         this.peak = w;
         this.peakT = s.t;
         this.peakIdx = i;
-      } else if (w < this.peak * 0.8 || s.t - this.peakT > 70) {
+        this.falls = 0;
+      } else if (
+        (falling ? ++this.falls : (this.falls = 0)) >= FALLS && s.t - this.peakT >= FALL_MS && this.peak >= MIN_PEAK ||
+        w < this.peak * 0.8 ||
+        s.t - this.peakT > 70
+      ) {
         if (this.peak >= MIN_PEAK) {
           this.emit(MIN_PEAK, FULL);
           this.state = 2;
-          this.followUntil = s.t + 380;
+          this.followUntil = Math.max(s.t, this.peakT + 50) + 380;
           this.lastPeak = this.peak;
           this.minSince = this.peak;
           this.windPeak = this.windYaw = this.windW = 0;
@@ -205,6 +222,7 @@ export class SwingDetector {
       this.peak = w;
       this.peakT = s.t;
       this.peakIdx = i;
+      this.falls = 0;
       return;
     }
     if ((w < END && s.t > this.peakT + 140) || s.t > this.followUntil) {

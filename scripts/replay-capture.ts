@@ -16,7 +16,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { SwordStrike } from '../src/pad/sword';
-import { loadCapture, replay, score, arrow, R2D, type Line } from './lib/replay';
+import { loadCapture, replay, score, arrow, R2D, fmtDelay, type Line } from './lib/replay';
 
 const args = process.argv.slice(2);
 const opt = (k: string) => args.find((a) => a.startsWith(`--${k}=`))?.split('=')[1];
@@ -85,6 +85,8 @@ for (const s of [...segs, loose]) {
       );
   if (s.tennis.length) console.log(`    (as tennis: ${s.tennis.map((e) => `${e.side} ${Math.round(e.power * 100)}%`).join(', ')})`);
 }
+
+console.log(`\ndetection delay after the true peak — sword strikes: ${fmtDelay(R.swordDelay)}; tennis swings: ${fmtDelay(R.tennisDelay)}`);
 
 if (wantCsv) {
   fs.writeFileSync(wantCsv, csv.join('\n') + '\n');

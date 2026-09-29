@@ -634,6 +634,18 @@ function sendPrefs() {
   if (joined) link.send({ type: 'prefs', name: prefs.name || 'Player', handed: prefs.handed, ...(prefs.look ? { look: prefs.look } : {}) });
 }
 
+/**
+ * Play an element's one-shot "pop" again. Taking the class off and putting it back needs a forced
+ * layout between (`void el.offsetWidth`), which holds the main thread — and with it the motion
+ * events — for a moment, right when a swing is being read out. Flipping between two class names that
+ * run the same animation under different names restarts it with no layout at all.
+ */
+function popAgain(el: HTMLElement) {
+  const was = el.classList.contains('pop');
+  el.classList.toggle('pop', !was);
+  el.classList.toggle('pop2', was);
+}
+
 let toastTimer = 0;
 function showToast(text: string, ms = 1400) {
   toast.textContent = text;
@@ -688,11 +700,7 @@ function setMode(m: PadMode, title?: string, hint?: string, lock = false) {
   // a new mode, or new words on it: the heading pops (the panel slides in when it changes)
   const sig = `${m === 'watch' ? 'wait' : m === 'bat' ? 'play' : m}|${title ?? ''}|${hint ?? ''}`;
   if (sig !== modeSig && panels[m].classList.contains('on')) {
-    for (const el of panels[m].querySelectorAll('.ptitle, .wtitle')) {
-      el.classList.remove('pop');
-      void (el as HTMLElement).offsetWidth;
-      el.classList.add('pop');
-    }
+    for (const el of panels[m].querySelectorAll<HTMLElement>('.ptitle, .wtitle')) popAgain(el);
   }
   modeSig = sig;
   setTimeout(fitTitles);
@@ -779,7 +787,12 @@ function setMode(m: PadMode, title?: string, hint?: string, lock = false) {
   }
   if (m === 'sword') {
     // a fresh duel: the motion so far was something else
-    if (prev !== 'sword') sword.reset();
+    if (prev !== 'sword') {
+      sword.reset();
+      // (the ring on the guard rests; it isn't animated while another panel is up)
+      meterHoldUntil = 0;
+      setSwordMeter(0);
+    }
     // (a new round: the last one's blow is old news)
     if (prev !== 'sword' || (title || 'Duel!') !== swordTitle.textContent) swordShot.textContent = '';
     swordTitle.textContent = title || 'Duel!';
@@ -789,6 +802,7 @@ function setMode(m: PadMode, title?: string, hint?: string, lock = false) {
   }
   swipeZone.classList.toggle('on', !motionOK && (m === 'play' || m === 'serve' || m === 'bat'));
   servePanel.classList.toggle('swipe', !motionOK);
+  wakeLive();
 }
 
 function setStatus(s: LinkStatus) {
@@ -842,9 +856,7 @@ function onMessage(m: ServerToPad) {
       if (bowling && line) {
         const tv = sport === 'bowl' ? bowlTv : bowTv;
         tv.textContent = line;
-        tv.classList.remove('pop');
-        void tv.offsetWidth;
-        tv.classList.add('pop');
+        popAgain(tv);
         // on 'watch' while the ball rolls (the arrow flies) the panel isn't showing: say it anyway
         if ((mode !== 'bowl' && mode !== 'bow') || m.fx === 'perfect') showToast(m.label || line, 1800);
       }
@@ -914,9 +926,7 @@ function batFx(m: Extract<ServerToPad, { type: 'fx' }>) {
   const line = [m.label, m.detail].filter(Boolean).join(' · ');
   if (line) {
     tvLine.textContent = line;
-    tvLine.classList.remove('pop');
-    void tvLine.offsetWidth;
-    tvLine.classList.add('pop');
+    popAgain(tvLine);
     // between turns the bat panel isn't showing: say it anyway
     if (mode !== 'bat' && m.fx !== 'select' && m.fx !== 'move' && m.fx !== 'back') showToast(m.label || line, 1800);
   }
@@ -968,9 +978,7 @@ function duelFx(m: Extract<ServerToPad, { type: 'fx' }>) {
   const line = [word, m.detail].filter(Boolean).join(' · ');
   if (line) {
     swordTv.textContent = line;
-    swordTv.classList.remove('pop');
-    void swordTv.offsetWidth;
-    swordTv.classList.add('pop');
+    popAgain(swordTv);
     // between rounds the sword panel isn't showing: say it anyway
     if (mode !== 'sword' && m.fx !== 'select' && m.fx !== 'move' && m.fx !== 'back') showToast(word || line, 1800);
   }
@@ -1052,6 +1060,7 @@ for (const el of root.querySelectorAll<HTMLButtonElement>('.pb')) {
     try {
       el.setPointerCapture?.(e.pointerId);
     } catch {}
+    link.send({ type: 'btn', b, down: true }); // (first: the sound and the look come after)
     el.classList.add('down');
     audio.tick();
     // pressing A in a menu means you're looking at the phone, facing the screen:
@@ -1059,7 +1068,6 @@ for (const el of root.querySelectorAll<HTMLButtonElement>('.pb')) {
     // the bowling buttons, if the phone is held to be looked at)
     if (b === 'a' && mode === 'menu') orient.calibrate();
     if (rep && lookingAtPhone()) orient.calibrate();
-    link.send({ type: 'btn', b, down: true });
     if (rep) {
       repTimer = window.setTimeout(() => {
         repTimer = window.setInterval(() => {
@@ -1105,9 +1113,9 @@ function liftCheck(now: number, aUp: number, w: number, dt: number) {
 
 skipBtn.addEventListener('pointerdown', (e) => {
   e.preventDefault();
-  audio.select();
   link.send({ type: 'btn', b: 'a', down: true });
   link.send({ type: 'btn', b: 'a', down: false });
+  audio.select();
 });
 
 joinFace.addEventListener('click', () => gearBtn.click());
@@ -1153,16 +1161,17 @@ function emitSwing(sw: SwingEvent, touch = false) {
   // bowling: the arm swing is a throw, not a racket swing; the duel has its own
   if (mode === 'bowl' || mode === 'sword' || mode === 'bow') return;
   if (!touch && sw.t < noSwingUntil) return;
-  const age = Math.max(0, performance.now() - sw.t);
   const path = touch ? null : swingPath(sw);
   pathOk = path !== null;
+  // (the message leaves first; the sound and the screen come after it. Its age is read as late as
+  // possible: the TV puts the contact that long ago)
   link.send({
     type: 'swing',
     seq: ++seq,
     power: +sw.power.toFixed(3),
     spin: +sw.spin.toFixed(3),
     peak: +sw.peak.toFixed(2),
-    age: Math.round(age),
+    age: Math.round(Math.max(0, performance.now() - sw.t)),
     lat: Math.round(link.lat),
     touch,
     side: sw.side,
@@ -1176,9 +1185,7 @@ function emitSwing(sw: SwingEvent, touch = false) {
 function showSwing(sw: SwingEvent, path: number | null) {
   const pct = Math.round(sw.power * 100);
   gaugeRing.style.setProperty('--p', String(Math.max(0.04, sw.power)));
-  gaugeRing.classList.remove('pop');
-  void gaugeRing.offsetWidth;
-  gaugeRing.classList.add('pop');
+  popAgain(gaugeRing);
   if (mode === 'bat') {
     // a bat: how hard, and the swing's plane (the TV judges the timing)
     const a = Math.round(sw.attack);
@@ -1201,12 +1208,32 @@ detector.onPrep = (side) => {
   if (mode !== 'bowl' && mode !== 'sword' && mode !== 'bow') link.send({ type: 'prep', side, lat: Math.round(link.lat) });
 };
 
-// Live motion meter — reassures players that the sensor works.
+// Live motion meter — reassures players that the sensor works. It only runs while something on the
+// panel moves with the phone (the tennis / bat gauge, the ball being held, the sword's blade and
+// ring) and the page is showing: anywhere else, a frame loop is main-thread time the motion events
+// could have had.
 let liveRaf = 0;
+let liveScale = '';
+let liveOpacity = '';
+function liveWanted() {
+  if (!joined || document.hidden) return false;
+  return mode === 'play' || mode === 'bat' || mode === 'sword' || (mode === 'bowl' && gripId !== null && motionOK);
+}
+/** (re)start the loop if it's needed and isn't going */
+function wakeLive() {
+  if (!liveRaf && liveWanted()) liveRaf = requestAnimationFrame(liveLoop);
+}
 function liveLoop() {
-  const v = Math.min(1, detector.live / 20);
-  gaugeLive.style.transform = `scale(${0.72 + v * 0.45})`;
-  gaugeLive.style.opacity = String(0.15 + v * 0.7);
+  liveRaf = 0;
+  if (!liveWanted()) return;
+  if (mode === 'play' || mode === 'bat') {
+    const v = Math.min(1, detector.live / 20);
+    // (only what changed: the same value written again is still work for the style system)
+    const scale = `scale(${(0.72 + v * 0.45).toFixed(3)})`,
+      opacity = (0.15 + v * 0.7).toFixed(3);
+    if (scale !== liveScale) gaugeLive.style.transform = liveScale = scale;
+    if (opacity !== liveOpacity) gaugeLive.style.opacity = liveOpacity = opacity;
+  }
   // bowling: the ring round the ball fills with the swing (and falls back slowly)
   if (mode === 'bowl' && gripId !== null && motionOK) setMeter(Math.max(Math.min(1, bowl.live / 14), gripMeter * 0.94));
   // the duel: how the blade lies, and the ring round the guard fills with the swing
@@ -1231,12 +1258,12 @@ function onOrient(e: DeviceOrientationEvent) {
 // and while bowling with the ball in the hand, the arm's swing, so the bowler
 // on screen mirrors that. In the duel it's the sword (without motion sensors,
 // held the way the guard toggle says).
-function sendOri() {
-  if (link.status !== 'online') return;
+function sendOri(): boolean {
+  if (link.status !== 'online') return false;
   if (mode === 'sword' && !motionOK) {
     const p = touchPose();
     link.send({ type: 'ori', s: p.s, n: p.n });
-    return;
+    return true;
   }
   if (mode === 'bow' && !motionOK) {
     // no motion sensor: the drag on the DRAW pad turns an imaginary phone pointed at the screen
@@ -1246,32 +1273,52 @@ function sendOri() {
     const s: [number, number, number] = [r2(-Math.sin(a) * Math.cos(b)), r2(Math.cos(a) * Math.cos(b)), r2(Math.sin(b))];
     const n: [number, number, number] = [r2(Math.sin(a) * Math.sin(b)), r2(-Math.cos(a) * Math.sin(b)), r2(Math.cos(b))];
     link.send({ type: 'ori', s, n });
-    return;
+    return true;
   }
-  if (!orient.have || orient.heading === null) return;
+  if (!orient.have || orient.heading === null) return false;
   const r2 = (v: [number, number, number]) => v.map((x) => Math.round(x * 100) / 100) as [number, number, number];
   const msg: Extract<PadMsg, { type: 'ori' }> = { type: 'ori', s: r2(orient.devToPlayer([0, 1, 0])), n: r2(orient.devToPlayer([0, 0, 1])) };
   if (mode === 'bowl' && gripId !== null && motionOK) msg.arm = Math.round(bowl.arm * 100) / 100;
   link.send(msg);
+  return true;
+}
+
+// How often the pose goes out: the sword follows the phone 1:1 and the guard's angle decides blocks,
+// so the duel and the bow are a little quicker; the HTTP fallback is slow.
+const oriFast = () => mode === 'sword' || mode === 'bow';
+const oriSlow = () => mode === 'play' || mode === 'serve' || mode === 'menu' || mode === 'bowl';
+const oriPeriod = (fast: boolean) => (link.transport === 'http' ? 100 : fast ? 33 : 50);
+// The pose is sent from the motion handler, every Nth sample (60 Hz sensors: every 2nd for the duel,
+// every 3rd for the rest, every 6th over HTTP): the freshest pose there is, at a steady beat — a timer
+// fires between two samples, so it sent a pose up to a sample old, at an uneven pace. (N follows the
+// sensor's own pace, which not every phone keeps to 60 Hz.)
+let oriCount = 0;
+let oriDt = 1000 / 60;
+/** when the motion handler last sent the pose: the timers below only step in when it hasn't (no motion events) */
+let motionOriAt = -1e9;
+function motionOri(now: number, dtMs: number) {
+  if (dtMs > 0 && dtMs < 60) oriDt += (dtMs - oriDt) * 0.05;
+  const fast = oriFast();
+  if (!motionOK || (!fast && !oriSlow())) return;
+  const period = oriPeriod(fast);
+  // (a bunch of samples delivered together doesn't send a bunch of poses)
+  if (++oriCount < Math.max(1, Math.round(period / oriDt)) || now - motionOriAt < 0.5 * period) return;
+  oriCount = 0;
+  if (sendOri()) motionOriAt = now;
 }
 let oriTimer = 0;
 let swordOriTimer = 0;
+/** a timer's beat, for when no motion is arriving (touch-only modes, a desktop, a sensor that stopped) */
+function timerOri(fast: boolean) {
+  if (fast ? !oriFast() : !oriSlow()) return;
+  if (motionOK && performance.now() - motionOriAt < 2.5 * oriPeriod(fast)) return;
+  sendOri();
+}
 function startOriStream() {
   clearInterval(oriTimer);
   clearInterval(swordOriTimer);
-  oriTimer = window.setInterval(
-    () => {
-      if (mode === 'play' || mode === 'serve' || mode === 'menu' || mode === 'bowl') sendOri();
-    },
-    link.transport === 'http' ? 100 : 50,
-  );
-  // the sword follows the phone 1:1 and the guard's angle decides blocks: a little quicker
-  swordOriTimer = window.setInterval(
-    () => {
-      if (mode === 'sword' || mode === 'bow') sendOri();
-    },
-    link.transport === 'http' ? 100 : 33,
-  );
+  oriTimer = window.setInterval(() => timerOri(false), link.transport === 'http' ? 100 : 50);
+  swordOriTimer = window.setInterval(() => timerOri(true), link.transport === 'http' ? 100 : 33);
 }
 
 function onMotion(e: DeviceMotionEvent) {
@@ -1302,6 +1349,8 @@ function onMotion(e: DeviceMotionEvent) {
   });
   // the duel: "towards the screen" keeps itself honest while the sword is held still facing it
   if (mode === 'sword') orient.autoCenter(dt);
+  // (the pose goes out before the detectors think: nothing they do may hold it back)
+  motionOri(now, dt * 1000);
   sword.heading = orient.heading;
   sword.push(swordSample(m));
   detector.push(swingSample(m, orient));
@@ -1407,6 +1456,7 @@ gripBall.addEventListener('pointerdown', (e) => {
   gripLabels(motionOK ? 'SWING' : 'DRAG UP', 'let go to bowl');
   bowlTv.textContent = '';
   setMeter(0);
+  wakeLive();
 });
 
 gripBall.addEventListener('pointermove', (e) => {
@@ -1420,16 +1470,18 @@ gripBall.addEventListener('pointermove', (e) => {
 
 const gripUp = (e: PointerEvent) => {
   if (e.pointerId !== gripId) return;
+  // (the finger left the glass when the event says, which a busy main thread may make well before now)
+  const released = stamp(e);
   if (e.type === 'pointerup') gripPts.push({ t: performance.now(), ...at(e) });
-  throwBall();
+  throwBall(released);
 };
 gripBall.addEventListener('pointerup', gripUp);
 gripBall.addEventListener('pointercancel', gripUp);
 gripBall.addEventListener('lostpointercapture', gripUp);
 gripBall.addEventListener('contextmenu', (e) => e.preventDefault());
 
-/** The grip was let go: the throw. */
-function throwBall() {
+/** The grip was let go (at `released`, ms): the throw. */
+function throwBall(released = performance.now()) {
   const touch = !motionOK;
   const lat = Math.round(link.lat);
   if (!touch) sendOri(); // the pose (and arm) it left the hand in
@@ -1439,7 +1491,7 @@ function throwBall() {
   link.send({ type: 'grip', down: false, lat });
   const r = touch ? swipeThrow(gripPts) : bowl.release(performance.now());
   bowl.cancel();
-  link.send({ type: 'bowl', speed: +r.speed.toFixed(2), angle: +r.angle.toFixed(3), spin: +r.spin.toFixed(2), lat, touch });
+  link.send({ type: 'bowl', speed: +r.speed.toFixed(2), angle: +r.angle.toFixed(3), spin: +r.spin.toFixed(2), lat, touch, age: Math.round(Math.max(0, performance.now() - released)) });
   showThrow(r);
 }
 
@@ -1463,9 +1515,7 @@ function showThrow(r: BowlThrow) {
   gripLabels(r.speed.toFixed(1), 'm/s');
   const p = (r.speed - MIN_SPEED) / (MAX_SPEED - MIN_SPEED);
   setMeter(Math.max(0.02, p));
-  gripWrap.classList.remove('pop');
-  void gripWrap.offsetWidth;
-  gripWrap.classList.add('pop');
+  popAgain(gripWrap);
   const deg = Math.round((Math.abs(r.angle) * 180) / Math.PI);
   const line = deg < 1 ? 'straight' : `${deg}° ${r.angle > 0 ? 'right' : 'left'}`;
   const hook = Math.abs(r.spin) < 0.15 ? 'no hook' : `${Math.abs(r.spin) > 0.6 ? 'big hook' : 'hook'} ${r.spin > 0 ? '←' : '→'}`;
@@ -1556,9 +1606,9 @@ function guardDown() {
   guarding = true;
   for (const up of lockedBtnUps) up(); // the palm on pause as the thumb lands isn't a press
   sword.guard(true, performance.now());
-  rec?.event('guard', { down: true });
   sendOri(); // the angle it went up at
   link.send({ type: 'guard', down: true, lat: Math.round(link.lat) });
+  rec?.event('guard', { down: true });
   guardPad.classList.add('held');
   audio.guard();
 }
@@ -1567,9 +1617,9 @@ function guardUp() {
   guarding = false;
   const now = performance.now();
   sword.guard(false, now);
-  rec?.event('guard', { down: false });
   sendOri();
   link.send({ type: 'guard', down: false, lat: Math.round(link.lat) });
+  rec?.event('guard', { down: false });
   guardPad.classList.remove('held');
   lockUntil = Math.max(lockUntil, now + 300);
 }
@@ -1588,10 +1638,15 @@ function guardCancel() {
 
 /** A slash or a thrust — from the motion, or a swipe on the pad. Never with the guard held. */
 function attack(s: SwordStrike, touch: boolean) {
-  rec?.event('strike', { kind: s.kind, dir: +s.dir.toFixed(3), power: +s.power.toFixed(3), peak: +s.peak.toFixed(2), at: +s.t.toFixed(1), touch, sent: mode === 'sword' && joined && !guarding });
-  if (mode !== 'sword' || !joined || guarding) return;
-  sendOri(); // the pose it struck in
-  link.send({ type: 'slash', kind: s.kind, dir: +s.dir.toFixed(3), power: +s.power.toFixed(2), lat: Math.round(link.lat), touch });
+  const sent = mode === 'sword' && joined && !guarding;
+  if (sent) {
+    sendOri(); // the pose it struck in
+    // (the message leaves before anything else is done; its age — the peak was that long ago — is read
+    // as late as possible, and the TV puts the strike that far back)
+    link.send({ type: 'slash', kind: s.kind, dir: +s.dir.toFixed(3), power: +s.power.toFixed(2), lat: Math.round(link.lat), touch, age: Math.round(Math.max(0, performance.now() - s.t)) });
+  }
+  rec?.event('strike', { kind: s.kind, dir: +s.dir.toFixed(3), power: +s.power.toFixed(3), peak: +s.peak.toFixed(2), at: +s.t.toFixed(1), touch, sent });
+  if (!sent) return;
   // a hand flailing after a blow isn't pressing pause
   lockUntil = Math.max(lockUntil, performance.now() + 400);
   showStrike(s);
@@ -1623,9 +1678,7 @@ function showStrike(s: SwordStrike) {
   swordTv.textContent = '';
   setSwordMeter(Math.max(0.04, s.power));
   meterHoldUntil = performance.now() + 600;
-  guardWrap.classList.remove('pop');
-  void guardWrap.offsetWidth;
-  guardWrap.classList.add('pop');
+  popAgain(guardWrap);
   if (s.kind === 'thrust') audio.thrust(s.power);
   else audio.slash(s.power);
   haptic(0.3 + 0.5 * s.power); // (Android: every swing the phone saw, you feel)
@@ -1759,9 +1812,7 @@ const drawLift = (e: PointerEvent) => {
   if (held > DRAW_T * 0.25) {
     audio.twang(Math.min(1, held / DRAW_T));
     bowShot.textContent = held >= DRAW_T ? 'LOOSED · full draw' : `LOOSED · ${Math.round((held / DRAW_T) * 100)}% draw`;
-    drawWrap.classList.remove('pop');
-    void drawWrap.offsetWidth;
-    drawWrap.classList.add('pop');
+    popAgain(drawWrap);
   } else bowShot.textContent = 'hold DRAW longer to shoot';
   drawIdle();
 };
@@ -1794,6 +1845,7 @@ async function keepAwake() {
 }
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && joined) void keepAwake();
+  wakeLive();
 });
 
 joinBtn.addEventListener('click', () => {
@@ -1817,7 +1869,8 @@ joinBtn.addEventListener('click', () => {
       link.send({ type: 'hello', name: prefs.name || 'Player', handed: prefs.handed, ver: 1, motion: motionOK, ...(prefs.look ? { look: prefs.look } : {}) });
     }
     cancelAnimationFrame(liveRaf);
-    liveLoop();
+    liveRaf = 0;
+    wakeLive();
     startOriStream();
   });
 });
