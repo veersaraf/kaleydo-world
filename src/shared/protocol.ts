@@ -126,6 +126,19 @@ export interface PadInfo {
   transport: string;
 }
 
+/** another TV watching (and playing, with its own phones) in this room, online */
+export interface GuestInfo {
+  gid: string;
+  name: string;
+}
+
+/** a guest TV → the host TV (relayed as ServerToTV 'guest') */
+export type GuestToHost = { type: 'hello'; name: string };
+
+/** the host TV → its guest TVs (relayed as ServerToTV 'host'). The match stream's own messages
+ *  (src/shared/net.ts) ride in 'net'; its per-frame snapshots go as binary WebSocket frames, forwarded as they are */
+export type HostToGuest = { type: 'room'; code: string; pads: PadInfo[]; guests: GuestInfo[] } | { type: 'net'; msg: unknown };
+
 export type ServerToTV =
   /** joinUrl: what the QR code opens (the http join page, which forwards to padUrl, the remote); caUrl: the iOS profile */
   | { type: 'hello'; joinUrl: string | null; padUrl?: string | null; caUrl: string | null; ips: string[]; dev: boolean; pads: PadInfo[]; room?: string }
@@ -137,7 +150,17 @@ export type ServerToTV =
   | { type: 'pong'; t: number; st: number }
   | { type: 'replaced' }
   /** the cloud: this room code belongs to another TV (pick another) */
-  | { type: 'room-taken' };
+  | { type: 'room-taken' }
+  // ---- online rooms: guest TVs (the cloud only)
+  /** to the host: a guest TV joined / left; a guest's message */
+  | { type: 'guest-join'; gid: string; name: string }
+  | { type: 'guest-leave'; gid: string }
+  | { type: 'guest'; gid: string; msg: GuestToHost }
+  /** to a guest: the host's message (binary snapshot frames arrive as ArrayBuffer, not as this) */
+  | { type: 'host'; msg: HostToGuest }
+  /** to a guest: the host left the room / there's no such room */
+  | { type: 'host-gone' }
+  | { type: 'no-room' };
 
 export type ServerToPad =
   | TVMsg

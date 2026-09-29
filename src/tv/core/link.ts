@@ -5,7 +5,7 @@
 // up a room code, shows it with a QR code, and its phones join that room. Which one
 // the page was served from says which (/api/info).
 
-import type { ServerToTV, TVMsg } from '../../shared/protocol';
+import type { GuestInfo, GuestToHost, HostToGuest, ServerToTV, TVMsg } from '../../shared/protocol';
 
 const ROOM_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -23,6 +23,13 @@ export class TVLink {
   /** the server's clock minus this page's Date.now(), ms (0 = the same clock: the Mac's own server).
    *  Measured from the TV's own pings; input.ts uses it to turn a message's relay stamp into a transit time */
   serverOffset = 0;
+  // ---- online rooms (the cloud): this TV hosts its room, or is a guest in another TV's
+  /** 'host': this TV's own room (the cloud's default; locally there are no rooms, 'local'); 'guest': joined another TV's room by its code */
+  role: 'local' | 'host' | 'guest' = 'local';
+  /** host: the guest TVs in the room */
+  guests: GuestInfo[] = [];
+  /** guest: the host's messages, and its binary snapshot frames */
+  onHostMessage: (m: HostToGuest | ArrayBuffer) => void = () => {};
   onMessage: (m: ServerToTV) => void = () => {};
   onStatus: (online: boolean) => void = () => {};
   private retry = 0;
@@ -144,5 +151,20 @@ export class TVLink {
 
   toAll(msg: TVMsg) {
     this.toPad('*', msg);
+  }
+
+  /** guest: leave whatever this TV is doing and join room `code` as a guest (its phones join that room too) */
+  joinRoom(code: string) {
+    void code; // (the room-join agent implements this)
+  }
+
+  /** host: to every guest TV — a JSON message, or a binary snapshot frame sent as it is */
+  toGuests(data: HostToGuest | ArrayBuffer) {
+    void data; // (the room-join agent implements this)
+  }
+
+  /** guest: to the host TV */
+  toHost(msg: GuestToHost) {
+    void msg; // (the room-join agent implements this)
   }
 }
