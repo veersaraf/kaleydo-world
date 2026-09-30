@@ -42,7 +42,7 @@ function page({ httpsPort, caName }) {
 <meta name="theme-color" content="#0c0b12">
 <meta name="color-scheme" content="dark">
 <meta name="referrer" content="no-referrer">
-<title>Join KALEIDO</title>
+<title>Join Kaleydo World</title>
 <link rel="icon" href="data:image/svg+xml,${encodeURIComponent(ICON)}">
 <style>${CSS}</style>
 </head>

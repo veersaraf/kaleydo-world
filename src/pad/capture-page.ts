@@ -49,7 +49,7 @@ const who = new URLSearchParams(location.search).get('name') || 'swings';
 
 // ---- the page
 const recEl = h('span', {}, '');
-const top = h('div', { class: 'top' }, h('span', {}, 'KALEIDO motion capture'), recEl);
+const top = h('div', { class: 'top' }, h('span', {}, 'Kaleydo World motion capture'), recEl);
 const stepN = h('div', { class: 'step-n' }, '');
 const title = h('h1', {}, 'Record your swings');
 const text = h('p', {}, 'This records how your phone moves while you swing it, so the sword duel can be tuned to real hands. It takes about 5 minutes. Stand where you play, facing the TV.');
@@ -89,7 +89,7 @@ function show() {
   if (step >= STEPS.length) {
     stepN.textContent = 'All done';
     title.textContent = 'Thank you!';
-    text.textContent = `Saved as captures/${rec?.file}.jsonl on the computer running KALEIDO. You can close this page.`;
+    text.textContent = `Saved as captures/${rec?.file}.jsonl on the computer running Kaleydo World. You can close this page.`;
     row.replaceChildren();
     live.textContent = '';
     return;

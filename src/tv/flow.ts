@@ -540,7 +540,7 @@ export class Flow {
   private kaleidoRow(onChange?: () => void) {
     const S = this.settings;
     const v = h('span');
-    const r = h('div', { class: 'row kal' }, h('span', { class: 'k' }, h('i', { class: 'kgem' }), 'Kaleido mode'), h('span', { class: 'v' }, h('span', { class: 'arrow' }, '◀'), v, h('span', { class: 'arrow' }, '▶')));
+    const r = h('div', { class: 'row kal' }, h('span', { class: 'k' }, h('i', { class: 'kgem' }), 'Kaleydo mode'), h('span', { class: 'v' }, h('span', { class: 'arrow' }, '◀'), v, h('span', { class: 'arrow' }, '▶')));
     const refresh = () => {
       v.textContent = S.kaleido ? 'On — big moments shatter the world' : 'Off';
       r.classList.toggle('on', S.kaleido);
@@ -638,7 +638,7 @@ export class Flow {
       'div',
       { class: 'ocard' },
       h('h3', null, 'Host a room'),
-      h('p', null, 'Friends open KALEIDO on their own TV, choose Play online → Join a room, and type'),
+      h('p', null, 'Friends open Kaleydo World on their own TV, choose Play online → Join a room, and type'),
       code,
       friends,
       h('div', { class: 'ogo' }, 'A — pick a sport'),
@@ -990,7 +990,7 @@ export class Flow {
     const sheet = h('div', { class: 'sheet panel' });
     void mode;
     const title = h('h2', null, 'Tennis');
-    const desc = h('div', { class: 'hintline' }, 'Choose your match, then pick a world. In Kaleido mode every couple of points — or a PERFECT shot in a long rally — shatters the court into the next world.');
+    const desc = h('div', { class: 'hintline' }, 'Choose your match, then pick a world. In Kaleydo mode every couple of points — or a PERFECT shot in a long rally — shatters the court into the next world.');
     const kal = this.kaleidoRow();
     const teamsView = h('div', { class: 'teams' });
     const row = (k: string) => {
@@ -1148,7 +1148,7 @@ export class Flow {
           tip('💨', 'Speed = power', 'A fast swing hits hard and deep. A gentle swing floats it softly.'),
           tip('🌀', 'Spin', 'Brush upward for topspin (dips and kicks). Chop downward for slice. A soft upward swing lobs; a soft chop drops it short.'),
           tip('🎾', 'Serving', 'Lift your phone (or tap) to toss, then swing as the ball peaks. Perfect timing = a rocket serve.'),
-          tip('◆', 'Kaleido Rally', 'Long rallies build the music. Hit PERFECT shots and the whole world shatters into the next one.'),
+          tip('◆', 'Kaleydo Rally', 'Long rallies build the music. Hit PERFECT shots and the whole world shatters into the next one.'),
         ],
         keys: kbd('No phone? Flick the mouse to swing (up = topspin, down = slice) · ', ['Space'], ' toss & swing · ', ['J'], ' ', ['K'], ' ', ['L'], ' flat / topspin / slice · ', ['Esc'], ' pause'),
       },
@@ -1295,7 +1295,7 @@ export class Flow {
     // (a quick match: Play again with the same opponent, or Leave)
     const mmHost = this.mm?.role === 'host' && this.mm.phase === 'play';
     const again = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, mmHost ? 'Play again' : 'Rematch')));
-    const other = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, this.mode === 'kaleido' ? 'New Kaleido Rally' : 'Another world')));
+    const other = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, this.mode === 'kaleido' ? 'New Kaleydo Rally' : 'Another world')));
     const menu = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, mmHost ? 'Leave' : 'Main menu')));
     const nav = new Nav(
       mmHost
@@ -1729,7 +1729,7 @@ export class Flow {
       cpuRow.v.textContent = cpuLevels[cpu].label;
       pitchRow.v.textContent = pitchers[pi].label;
       countRow.v.textContent = `${counts[ci]} each`;
-      worldRow.v.textContent = this.settings.kaleido ? 'Random — Kaleido picks' : WORLDS[wi].name;
+      worldRow.v.textContent = this.settings.kaleido ? 'Random — Kaleydo picks' : WORLDS[wi].name;
     };
     const cycle = (d: number) => {
       wi = (wi + d + WORLDS.length) % WORLDS.length;
@@ -2016,7 +2016,7 @@ export class Flow {
       const names = this.app.input.activeSeats.map((st) => st.name);
       who.textContent = names.length ? `Archers: ${names.join(', ')}` : 'Archer: Player 1';
       cpuRow.v.textContent = cpuLevels[cpu].label;
-      worldRow.v.textContent = this.settings.kaleido ? 'Random — Kaleido picks' : WORLDS[wi].name;
+      worldRow.v.textContent = this.settings.kaleido ? 'Random — Kaleydo picks' : WORLDS[wi].name;
     };
     const cycle = (d: number) => {
       wi = (wi + d + WORLDS.length) % WORLDS.length;
@@ -2247,7 +2247,7 @@ export class Flow {
     const go = h('div', { class: 'row go' }, 'Fight!');
     const refresh = () => {
       oppRow.v.textContent = opp[oi].label;
-      worldRow.v.textContent = this.settings.kaleido ? 'Random — Kaleido picks' : WORLDS[wi].name;
+      worldRow.v.textContent = this.settings.kaleido ? 'Random — Kaleydo picks' : WORLDS[wi].name;
     };
     const cycle = (d: number) => {
       wi = (wi + d + WORLDS.length) % WORLDS.length;
@@ -2502,7 +2502,7 @@ export class Flow {
       const names = this.app.input.activeSeats.map((st) => st.name);
       who.textContent = names.length ? `Bowlers: ${names.join(', ')}` : 'Bowler: Player 1';
       cpuRow.v.textContent = cpuLevels[cpu].label;
-      worldRow.v.textContent = this.settings.kaleido ? 'Random — Kaleido picks' : WORLDS[wi].name;
+      worldRow.v.textContent = this.settings.kaleido ? 'Random — Kaleydo picks' : WORLDS[wi].name;
     };
     const cycle = (d: number) => {
       wi = (wi + d + WORLDS.length) % WORLDS.length;
@@ -2947,7 +2947,7 @@ export class Flow {
       { class: 'screen ending' },
       h('h1', null, 'The Prism is whole'),
       h('p', null, 'Eight worlds, eight champions, one ball. The Kaleidoscope turns again — and every world remembers your rallies.'),
-      h('div', { class: 'credits' }, 'KALEIDO · World Sports', h('br'), 'Designed & built by Claude for Veer', h('br'), 'Every model, shader, song and sound made from code'),
+      h('div', { class: 'credits' }, 'KALEYDO WORLD', h('br'), 'Designed & built by Claude for Veer', h('br'), 'Every model, shader, song and sound made from code'),
       h('div', { class: 'menu' }, back),
     );
     return this.navScreen('ending', el, nav, () => this.quitToMenu(), { title: 'Champion!', hint: 'A to continue' });
@@ -3223,7 +3223,7 @@ export class Flow {
     const w = this.app.stage.current as unknown as { setScoreboard?: (n: [string, string], g: [string, string], p: [string, string]) => void };
     if (!w?.setScoreboard) return;
     if (!m || this.app.attract) {
-      w.setScoreboard(['KALEIDO', 'WORLD SPORTS'], ['', ''], ['', '']);
+      w.setScoreboard(['KALEYDO', 'WORLD'], ['', ''], ['', '']);
       return;
     }
     w.setScoreboard([this.teams[0].name, this.teams[1].name], [String(m.score.games[0]), String(m.score.games[1])], [m.score.pointText(0), m.score.pointText(1)]);

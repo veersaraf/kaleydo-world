@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// KALEIDO server
+// Kaleydo World server
 //
 //   http://localhost:3000        the "TV" (your Mac's browser)
 //   http://<lan-ip>:3000/join    what the TV's QR code opens: checks whether the
@@ -550,7 +550,7 @@ function listen(server, port, host, label) {
   return new Promise((resolve, reject) => {
     server.once('error', (e) => {
       if (e.code === 'EADDRINUSE') {
-        console.error(`\n  Port ${port} (${label}) is already in use. Is KALEIDO already running?\n`);
+        console.error(`\n  Port ${port} (${label}) is already in use. Is Kaleydo World already running?\n`);
       }
       reject(e);
     });
@@ -590,7 +590,7 @@ async function main() {
 
   const b = '\x1b[1m', r = '\x1b[0m', c = '\x1b[36m', m = '\x1b[35m', y = '\x1b[33m', d = '\x1b[2m';
   console.log(`
-  ${m}${b}K A L E I D O${r}   ${d}${DEV ? 'dev server' : 'ready'}${r}
+  ${m}${b}K A L E Y D O   W O R L D${r}   ${d}${DEV ? 'dev server' : 'ready'}${r}
 
   ${b}Screen${r}   ${c}http://localhost:${HTTP_PORT}${r}   ${d}open on this Mac${r}
   ${b}Phones${r}   ${c}${joinUrl() || '(no Wi-Fi address found — connect to a network)'}${r}
@@ -611,7 +611,7 @@ async function main() {
     const now = lanIPs();
     if (now.join() !== ips.join()) {
       ips = now;
-      log(`network changed → ${joinUrl() || 'offline'} (restart KALEIDO to refresh the certificate)`);
+      log(`network changed → ${joinUrl() || 'offline'} (restart Kaleydo World to refresh the certificate)`);
       sendTV({ type: 'net', joinUrl: joinUrl(), padUrl: padUrl(), caUrl: caUrl(), ips });
     }
   }, 5000).unref();

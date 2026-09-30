@@ -1,4 +1,4 @@
-# KALEIDO — World Sports
+# KALEYDO WORLD
 
 Motion-controlled **tennis**, **bowling**, **sword duels**, **archery** and **baseball** in the spirit of Wii Sports,
 played across nine worlds that each look like a different medium: a Switch
@@ -54,7 +54,7 @@ like the Wii Remote did.
 
 **Optional — faster connection, no warning:** on the phone's join screen open
 *"Optional: remove the security warning"* and follow the three steps to trust
-the KALEIDO certificate. This lets the remote use WebSockets (lower latency).
+the Kaleydo World certificate (it appears as "KALEIDO Local CA"). This lets the remote use WebSockets (lower latency).
 
 ### Tennis controls
 
@@ -139,7 +139,7 @@ After each swing a meter shows how early or late you were.
   each, with an optional CPU slugger. Most home runs wins.
 - **World Tour** — the Great Prism shattered into eight worlds. Beat each
   world's champion to restore its shard, then face the Prism King.
-- **Kaleido Rally** — every couple of points, or any PERFECT shot deep in a
+- **Kaleydo Rally** — every couple of points, or any PERFECT shot deep in a
   rally, the court shatters like a kaleidoscope into the next world.
 
 ## Worlds
@@ -164,7 +164,7 @@ of the song, and the arrangement builds as the rally gets longer.
 - **The phone can't reach the game** — same Wi‑Fi? No VPN on either device?
   macOS firewall allowed `node`? The address is printed in the terminal.
 - **No sound on the Mac** — click the game window once.
-- **No sound on the phone** — turn the volume up; KALEIDO plays through the
+- **No sound on the phone** — turn the volume up; Kaleydo World plays through the
   silent switch on iOS 17+.
 - **Swings aren't detected** — allow Motion & Orientation access when asked.
   If you denied it: Settings → Apps → Safari → Advanced → Website Data, remove
@@ -313,4 +313,4 @@ node scripts/baseball-phone-e2e.mjs   # a simulated phone bats on the real TV (n
 - `src/tv/worlds/` — one file per world: scenery, materials and its own
   post-processing pipeline.
 - `src/tv/audio/` — synthesised instruments, sequencer, songs, SFX, crowd.
-- `src/tv/flow.ts` — menus, match lifecycle, World Tour, Kaleido Rally.
+- `src/tv/flow.ts` — menus, match lifecycle, World Tour, Kaleydo Rally.

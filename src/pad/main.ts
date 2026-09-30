@@ -739,7 +739,7 @@ function setMode(m: PadMode, title?: string, hint?: string, lock = false) {
     waitPanel.classList.toggle('busy', link.status !== 'online' || slot < 0);
   }
   if (m === 'menu') {
-    menuTitle.textContent = title || 'KALEIDO';
+    menuTitle.textContent = title || 'KALEYDO';
     menuHint.textContent = hint || 'Use the pad · A to choose';
   }
   if (m === 'play') {
@@ -814,7 +814,7 @@ function setStatus(s: LinkStatus) {
   remoteScreen.classList.toggle('lost', s !== 'online' && slot >= 0);
   if (mode === 'wait' || mode === 'watch') waitPanel.classList.toggle('busy', s !== 'online' || slot < 0);
   if (s === 'offline' || s === 'connecting') {
-    if (slot < 0) setMode('wait', s === 'connecting' ? 'Connecting…' : 'Disconnected', 'Make sure KALEIDO is running on your Mac');
+    if (slot < 0) setMode('wait', s === 'connecting' ? 'Connecting…' : 'Disconnected', 'Make sure Kaleydo World is running on your Mac');
   } else if (joined) {
     link.send({ type: 'hello', name: prefs.name || 'Player', handed: prefs.handed, ver: 1, motion: motionOK, ...(prefs.look ? { look: prefs.look } : {}) });
   }
