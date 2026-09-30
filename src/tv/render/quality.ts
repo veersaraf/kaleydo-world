@@ -3,7 +3,8 @@
 //
 //  • Each level is a render scale and an effects tier (render/effects.ts). At a
 //    given scale the effects go first: from the top, a step down drops the tier
-//    before the resolution.
+//    before the resolution. The bottom tiers are cheap for real: no AO or shafts, a
+//    1024 shadow map, a short bloom (none where it isn't the look) and thinner scenery.
 //  • Anti-aliasing is FXAA in the final pass, not MSAA: on WebGL/ANGLE-Metal an
 //    MSAA buffer is stored and blitted every frame (three.js can't invalidate it
 //    on Chrome), which cost more than rendering at a higher scale — pr 1.75 with
@@ -48,8 +49,13 @@ const START_1X = 3;
 
 // (a new key: the levels' meaning changed with the effects tiers)
 const STORE = 'kaleido.quality.v2';
-/** relative GPU cost of an effects tier (AO, shafts…) on top of the scene */
-const FX_COST = [1, 1.05, 1.15, 1.25];
+/**
+ * Relative GPU cost of an effects tier at one render scale (scripts/perf-rungs.mjs, park, plaza,
+ * neon and cosmic at pr 1: tier 0 ≈ 0.55–0.85 of tier 3, tier 1 ≈ 0.65–0.95). The low tiers also
+ * drop the bloom (or shorten it), shrink the shadow map and thin the scenery (FX_TIERS), so
+ * they are well under the top: the governor's step-up prediction has to see that.
+ */
+const FX_COST = [0.8, 1, 1.15, 1.25];
 const cost = (l: QLevel) => l.pr * l.pr * (1 + l.msaa * 0.4) * FX_COST[l.fx];
 
 export class Quality {

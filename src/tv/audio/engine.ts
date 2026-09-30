@@ -22,6 +22,27 @@ export type DrumName = 'kick' | 'snare' | 'hat' | 'ohat' | 'clap' | 'taiko' | 's
 
 const midiHz = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
 
+/** a plucked string the music is going to need: the instrument, the pitch, the note's length */
+export interface StringNeed {
+  inst: InstName;
+  midi: number;
+  dur: number;
+}
+
+/** a string being rendered, possibly over several slices of time */
+interface KsJob {
+  key: string;
+  b: AudioBuffer;
+  d: Float32Array;
+  n: number;
+  line: Float32Array;
+  period: number;
+  idx: number;
+  i: number;
+  sBlend: number;
+  decay: number;
+}
+
 export class AudioEngine {
   ctx: AudioContext;
   master: GainNode;
@@ -211,34 +232,131 @@ export class AudioEngine {
     o.stop(t + dur + 0.05);
   }
 
-  /** Karplus–Strong plucked string, rendered once per pitch and cached. */
-  private ks(midi: number, bright: number, dur: number) {
-    const key = `${midi}|${bright}|${dur}`;
-    let b = this.ksCache.get(key);
-    if (b) return b;
+  /**
+   * Karplus–Strong plucked string, rendered once per pitch and cached. A string is rendered
+   * in steps of half a second and a longer one serves a shorter request (the note stops the
+   * source at the length it asked for, `ksLen`), so a pitch played at several lengths is one
+   * buffer, not one each.
+   */
+  private ks(midi: number, bright: number, len: number) {
+    const key = `${midi}|${bright}`;
+    // (one being rendered in slices is finished now if a note wants it)
+    if (this.ksJob && this.ksJob.key === key && this.ksJob.n >= this.ksFrames(len)) {
+      const job = this.ksJob;
+      this.ksRun(job, Infinity);
+      return job.b;
+    }
+    const job = this.ksBegin(midi, bright, len);
+    if (!job) return this.ksCache.get(key)!;
+    this.ksRun(job, Infinity);
+    return job.b;
+  }
+
+  /** samples in a string of `len` seconds */
+  private ksFrames(len: number) {
+    return Math.floor(this.ctx.sampleRate * len);
+  }
+
+  /** Is a string that covers this note already rendered? */
+  private ksHas(midi: number, bright: number, len: number) {
+    const b = this.ksCache.get(`${midi}|${bright}`);
+    return !!b && b.length >= this.ksFrames(len);
+  }
+
+  /** the start of a string's rendering, or null if the cache already has one long enough */
+  private ksBegin(midi: number, bright: number, len: number): KsJob | null {
+    if (this.ksHas(midi, bright, len)) return null;
+    const key = `${midi}|${bright}`;
+    const old = this.ksCache.get(key);
     const sr = this.ctx.sampleRate;
-    const f = midiHz(midi);
-    const n = Math.floor(sr * dur);
-    b = this.ctx.createBuffer(1, n, sr);
-    const d = b.getChannelData(0);
-    const period = Math.max(2, Math.round(sr / f));
+    const n = Math.floor(sr * Math.max(Math.ceil(len * 2) / 2, old ? old.duration : 0));
+    const b = this.ctx.createBuffer(1, n, sr);
+    const period = Math.max(2, Math.round(sr / midiHz(midi)));
     const line = new Float32Array(period);
     for (let i = 0; i < period; i++) line[i] = Math.random() * 2 - 1;
-    let idx = 0;
     // s: 0.5 = classic averaging; lower keeps more high harmonics (brighter)
-    const sBlend = 0.5 - bright * 0.28;
-    const decay = 0.9985 - Math.max(0, midi - 60) * 0.00002;
-    for (let i = 0; i < n; i++) {
-      const cur = line[idx];
-      const nxt = line[(idx + 1) % period];
-      d[i] = cur;
-      line[idx] = decay * ((1 - sBlend) * cur + sBlend * nxt);
-      idx = (idx + 1) % period;
+    return { key, b, d: b.getChannelData(0), n, line, period, idx: 0, i: 0, sBlend: 0.5 - bright * 0.28, decay: 0.9985 - Math.max(0, midi - 60) * 0.00002 };
+  }
+
+  /** Render a string until it is done or `until` (performance.now) passes. Returns whether it is done. */
+  private ksRun(job: KsJob, until: number) {
+    const { d, n, line, period, sBlend, decay } = job;
+    let idx = job.idx;
+    let i = job.i;
+    while (i < n) {
+      const stop = Math.min(n, i + 4096);
+      for (; i < stop; i++) {
+        const cur = line[idx];
+        const nx = idx + 1 === period ? 0 : idx + 1;
+        d[i] = cur;
+        line[idx] = decay * ((1 - sBlend) * cur + sBlend * line[nx]);
+        idx = nx;
+      }
+      if (performance.now() >= until) break;
     }
+    job.idx = idx;
+    job.i = i;
+    if (i < n) return false;
     // soften the attack click
-    for (let i = 0; i < Math.min(64, n); i++) d[i] *= i / 64;
-    this.ksCache.set(key, b);
-    return b;
+    for (let k = 0; k < Math.min(64, n); k++) d[k] *= k / 64;
+    this.ksCache.set(job.key, job.b);
+    if (this.ksJob === job) this.ksJob = null;
+    return true;
+  }
+  private ksJob: KsJob | null = null;
+
+  /** How long a plucked note of this duration rings (the string stops there). */
+  ksLen(dur: number) {
+    return Math.min(2.5, dur + 1.2);
+  }
+
+  private static ksBright(inst: InstName) {
+    return inst === 'koto' ? 0.85 : 0.6;
+  }
+
+  /** Are all of these plucked strings rendered? */
+  stringsReady(list: StringNeed[]) {
+    return list.every((s) => (s.inst !== 'pluck' && s.inst !== 'koto') || this.ksHas(s.midi, AudioEngine.ksBright(s.inst), this.ksLen(s.dur)));
+  }
+
+  /**
+   * Render these plucked strings ahead of the notes that need them, in idle time and in
+   * slices of a few milliseconds (a string is a tight loop over up to 2.5 s of samples: done
+   * at a note's first play, it lengthens that frame).
+   */
+  prepareStrings(list: StringNeed[]) {
+    for (const s of list) if ((s.inst === 'pluck' || s.inst === 'koto') && !this.ksQueue.some((q) => q.inst === s.inst && q.midi === s.midi && q.dur >= s.dur)) this.ksQueue.push(s);
+    if (!this.ksBusy && (this.ksQueue.length || this.ksJob)) this.nextStrings();
+  }
+  private ksQueue: StringNeed[] = [];
+  private ksBusy = false;
+
+  private nextStrings() {
+    this.ksBusy = true;
+    type Idle = { timeRemaining(): number; didTimeout?: boolean };
+    const run = (idle?: Idle) => {
+      // a slice of what the browser says it can spare (a few ms at most)
+      const t0 = performance.now();
+      const until = t0 + (idle && !idle.didTimeout ? Math.max(1, Math.min(4, idle.timeRemaining() - 1)) : 2);
+      for (;;) {
+        if (!this.ksJob) {
+          const s = this.ksQueue.shift();
+          if (!s) break;
+          this.ksJob = this.ksBegin(s.midi, AudioEngine.ksBright(s.inst), this.ksLen(s.dur));
+          if (!this.ksJob) continue;
+        }
+        if (!this.ksRun(this.ksJob, until)) break;
+        if (performance.now() >= until) break;
+      }
+      if (this.ksQueue.length || this.ksJob) queue();
+      else this.ksBusy = false;
+    };
+    const queue = () => {
+      const ric = (window as unknown as { requestIdleCallback?: (cb: (d: Idle) => void, o?: { timeout: number }) => number }).requestIdleCallback;
+      if (ric) ric.call(window, run, { timeout: 300 });
+      else setTimeout(() => run(), 20);
+    };
+    queue();
   }
 
   /** Play a pitched instrument note. */
@@ -264,14 +382,16 @@ export class AudioEngine {
       case 'pluck':
       case 'koto': {
         const src = c.createBufferSource();
-        src.buffer = this.ks(midi, inst === 'koto' ? 0.85 : 0.6, Math.min(2.5, dur + 1.2));
+        const ring = this.ksLen(dur);
+        src.buffer = this.ks(midi, AudioEngine.ksBright(inst), ring);
         const lp = c.createBiquadFilter();
         lp.type = 'lowpass';
         lp.frequency.value = inst === 'koto' ? 5200 : 3200;
         src.connect(lp).connect(g);
         g.gain.value = vel * 0.9;
         src.start(t);
-        end = t + (src.buffer.duration || 1);
+        // (a longer string is cut where the note's own would have ended)
+        src.stop(t + this.ksFrames(ring) / this.ctx.sampleRate);
         this.out(g, bus, pan, rev, opts.dly ?? 0);
         return;
       }

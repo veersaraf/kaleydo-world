@@ -71,6 +71,27 @@ const PROBE_CAM = new THREE.PerspectiveCamera();
 let compileTarget: THREE.WebGLRenderTarget | null = null;
 const compileRT = () => (compileTarget ??= makeRT(1, 1, { type: THREE.UnsignedByteType }));
 
+/**
+ * Counts every `Object3D.add` and `attach` (three's attach does not go through add), anywhere: a
+ * scene can only have grown, or gained a material to compile, if this moved (see
+ * World.watchMaterials). Hooking the two themselves covers venues, gear, rigs and effects
+ * wherever they get added, including code that doesn't know about the watch.
+ */
+let sceneAdds = 0;
+{
+  const proto = THREE.Object3D.prototype as THREE.Object3D & { __counted?: boolean };
+  if (!proto.__counted) {
+    for (const name of ['add', 'attach'] as const) {
+      const original = proto[name];
+      proto[name] = function (this: THREE.Object3D, ...objs: THREE.Object3D[]) {
+        sceneAdds++;
+        return original.apply(this, objs as [THREE.Object3D]);
+      } as typeof original;
+    }
+    proto.__counted = true;
+  }
+}
+
 /** ?nobatch in the URL turns static batching off (for A/B checks) */
 const NO_BATCH = typeof location !== 'undefined' && new URLSearchParams(location.search).has('nobatch');
 import { makeRT, finalPass, Pass, Bloom, BLACK } from '../render/post';
@@ -203,6 +224,8 @@ export abstract class World {
   protected sceneRT!: THREE.WebGLRenderTarget;
   protected final: Pass = finalPass();
   protected bloom: Bloom | null = null;
+  /** the bloom is part of this world's look: the lowest effects tier keeps a short glow instead of dropping it */
+  protected bloomIsLook = false;
   protected time = 0;
   private ballSpinAxis = new THREE.Vector3(1, 0, 0);
   private tmp = new THREE.Vector3();
@@ -322,6 +345,7 @@ export abstract class World {
   setFxTier(t: number) {
     if (t === this.fxTier) return;
     this.fxTier = t;
+    this.detail = FX_TIERS[t].detail;
     this.post?.setTier(t);
     this.fitSun();
   }
@@ -913,7 +937,9 @@ export abstract class World {
     const f = this.final.u;
     f.tScene.value = this.sceneRT.texture;
     this.post?.render(r, this.sceneRT, cam);
-    f.tBloom.value = this.bloom ? this.bloom.render(r, this.sceneRT.texture) : BLACK;
+    // (the effects tier thins the bloom out: a short chain, or none where it isn't the look)
+    const bt = FX_TIERS[this.fxTier].bloom;
+    f.tBloom.value = this.bloom && (bt > 0 || this.bloomIsLook) ? this.bloom.render(r, this.sceneRT.texture, bt < 2) : BLACK;
     f.uTime.value = this.time;
     f.uFlash.value = this.flash;
     f.uFlashColor.value.copy(this.flashColor);
@@ -921,14 +947,22 @@ export abstract class World {
   }
 
   private seen = new WeakSet<THREE.Material>();
+  /** the add count at the last walk over the scene, and frames since one */
+  private walkedAt = -1;
+  private sinceWalk = 0;
 
   /**
    * Whatever the game adds to the scene — a duel's swords and their trails, a
    * ballpark's fireworks — may only draw mid-game, and a program compiled at its
-   * first draw stalls that frame. Every frame (a walk over a few hundred objects),
-   * compile any material that hasn't been seen yet (`now`: whatever was just built).
+   * first draw stalls that frame. So compile any material that hasn't been seen yet
+   * (`now`: whatever was just built). The walk over a few hundred objects only runs when
+   * something was added since the last one (nothing else brings a new material into the
+   * scene: none is swapped in place), and about once a second regardless, in case.
    */
-  private watchMaterials(now = false) {
+  watchMaterials(now = false) {
+    if (!now && sceneAdds === this.walkedAt && ++this.sinceWalk < 60) return;
+    this.walkedAt = sceneAdds;
+    this.sinceWalk = 0;
     this.tidyMaterials();
     if (now) {
       // the venue's whole scene (sync: the programs are needed before the sport starts)

@@ -100,6 +100,7 @@ class NeonWorld extends World {
     this.buildPalms();
 
     this.bloom = new Bloom(6);
+    this.bloomIsLook = true;
     this.bloom.threshold = 1.0;
     this.bloom.knee = 0.6;
     const f = this.final.u;

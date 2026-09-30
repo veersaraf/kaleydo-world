@@ -128,18 +128,23 @@ export class Bloom {
     }
   }
 
-  /** Returns the bloom texture (same aspect, half res). */
-  render(r: THREE.WebGLRenderer, src: THREE.Texture): THREE.Texture {
+  /**
+   * Returns the bloom texture (same aspect, half res). `lite` drops the half-resolution
+   * level — the two biggest passes — and starts the chain at quarter resolution, straight
+   * from the scene: a wider, softer glow for a quarter of the work.
+   */
+  render(r: THREE.WebGLRenderer, src: THREE.Texture, lite = false): THREE.Texture {
     const d = this.down.u;
     d.uThreshold.value = this.threshold;
     d.uKnee.value = this.knee;
+    const from = lite && this.levels.length > 2 ? 1 : 0;
     let input: THREE.Texture = src;
     let iw = this.levels[0].width * 2,
       ih = this.levels[0].height * 2;
-    for (let i = 0; i < this.levels.length; i++) {
+    for (let i = from; i < this.levels.length; i++) {
       d.tSrc.value = input;
       d.uTexel.value.set(1 / iw, 1 / ih);
-      d.uFirst.value = i === 0 ? 1 : 0;
+      d.uFirst.value = i === from ? 1 : 0;
       this.down.render(r, this.levels[i]);
       input = this.levels[i].texture;
       iw = this.levels[i].width;
@@ -148,7 +153,7 @@ export class Bloom {
     // upsample chain: ups[i] = up(ups[i+1]) + levels[i]
     const u = this.up.u;
     let prev = this.levels[this.levels.length - 1].texture;
-    for (let i = this.levels.length - 2; i >= 0; i--) {
+    for (let i = this.levels.length - 2; i >= from; i--) {
       u.tSrc.value = prev;
       u.tPrev.value = this.levels[i].texture;
       u.uTexel.value.set(1 / this.levels[i + 1].width, 1 / this.levels[i + 1].height);
