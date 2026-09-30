@@ -4,6 +4,7 @@ import { newPose, type Pose } from './pose';
 import { CHAR_SCALE, RACKET_SWEET, HIP } from './rig';
 import type { TPlayer, SwingState, Athletic } from '../tennis/player';
 import { clamp, lerp, smooth, easeOutCubic, easeInCubic, type V3, Rng, damp } from '../core/math';
+import { hyp2, hyp3 } from '../tennis/hypot';
 
 type Vec = [number, number, number];
 
@@ -13,8 +14,10 @@ const READY_DIR: Vec = [-0.22, 0.62, -0.75];
 const V = (x: number, y: number, z: number): V3 => ({ x, y, z });
 const set = (o: V3, x: number, y: number, z: number) => ((o.x = x), (o.y = y), (o.z = z), o);
 const lerpV = (o: V3, a: V3, b: V3, t: number) => set(o, lerp(a.x, b.x, t), lerp(a.y, b.y, t), lerp(a.z, b.z, t));
+/** o = a → (x, y, z) by t (the target as numbers: no vector made for it) */
+const lerpXYZ = (o: V3, a: V3, x: number, y: number, z: number, t: number) => set(o, lerp(a.x, x, t), lerp(a.y, y, t), lerp(a.z, z, t));
 const norm = (o: V3) => {
-  const l = Math.hypot(o.x, o.y, o.z) || 1;
+  const l = hyp3(o.x, o.y, o.z) || 1;
   o.x /= l;
   o.y /= l;
   o.z /= l;
@@ -27,6 +30,18 @@ interface Key {
   off: V3;
   twist: number;
 }
+
+// scratch vectors: each is used within one call and never kept (the animators run one after another)
+const T_SHAFT = V(0, 0, 0);
+const T_SH = V(0, 0, 0);
+const T_ARM = V(0, 0, 0);
+const T_HAND = V(0, 0, 0);
+const T_HV = V(0, 0, 0);
+const T_FACE = V(0, 0, 0);
+const T_LOCAL = V(0, 0, 0);
+const C_LOCAL = V(0, 0, 0);
+const C_SH = V(0, 0, 0);
+const C_D = V(0, 0, 0);
 
 const key = (): Key => ({ hand: V(0, 0, 0), dir: V(0, 1, 0), off: V(0, 0, 0), twist: 0 });
 
@@ -51,7 +66,7 @@ function lerpKey(o: Key, a: Key, b: Key, t: number) {
 export class Animator {
   pose: Pose = newPose();
   private phase = 0;
-  private prevHand = V(0, 0, 0);
+  private readonly prevHand = V(0, 0, 0);
   private face = V(0, 0, -1);
   private blinkAt = 0;
   private blinkT = 0;
@@ -118,7 +133,7 @@ export class Animator {
 
     // feet
     const stance = 0.14 + 0.05 * ready;
-    const dl = Math.hypot(lvx, lvz) || 1;
+    const dl = hyp2(lvx, lvz) || 1;
     const dx = lvx / dl,
       dz = lvz / dl;
     for (let i = 0; i < 2; i++) {
@@ -194,14 +209,14 @@ export class Animator {
     this.mirror = damp(this.mirror, wantMirror, 10, dt);
     if (this.phone && this.mirror > 0.01) {
       // player frame (x right, y towards screen, z up) → character local (x right, y up, −z forward)
-      const [sx, sy, sz] = this.phone.s;
-      const shaft = V(sx, sz, -sy);
+      const ps = this.phone.s;
+      const shaft = set(T_SHAFT, ps[0], ps[2], -ps[1]);
       norm(shaft);
       // the hand sits out along the racket from the shoulder, like an arm holding it
-      const sh = V(hs * 0.2, 0.95, 0.02);
-      const arm = V(shaft.x, Math.max(-0.6, shaft.y), Math.min(0.2, shaft.z));
+      const sh = set(T_SH, hs * 0.2, 0.95, 0.02);
+      const arm = set(T_ARM, shaft.x, Math.max(-0.6, shaft.y), Math.min(0.2, shaft.z));
       norm(arm);
-      const hand = V(sh.x + arm.x * 0.42, sh.y + arm.y * 0.42, sh.z + arm.z * 0.42);
+      const hand = set(T_HAND, sh.x + arm.x * 0.42, sh.y + arm.y * 0.42, sh.z + arm.z * 0.42);
       const k = this.mirror;
       lerpV(out.hand, out.hand, hand, k);
       lerpV(out.dir, out.dir, shaft, k);
@@ -251,22 +266,22 @@ export class Animator {
     P.bodyYaw = out.twist;
 
     // racket face follows the hand's motion (so it faces the swing direction)
-    const hv = V(P.hands[0].x - this.prevHand.x, P.hands[0].y - this.prevHand.y, P.hands[0].z - this.prevHand.z);
-    const hvl = Math.hypot(hv.x, hv.y, hv.z) / Math.max(dt, 1e-3);
-    this.prevHand = V(P.hands[0].x, P.hands[0].y, P.hands[0].z);
+    const hv = set(T_HV, P.hands[0].x - this.prevHand.x, P.hands[0].y - this.prevHand.y, P.hands[0].z - this.prevHand.z);
+    const hvl = hyp3(hv.x, hv.y, hv.z) / Math.max(dt, 1e-3);
+    set(this.prevHand, P.hands[0].x, P.hands[0].y, P.hands[0].z);
     if (hvl > 1.2 && handAbs) {
       norm(hv);
       lerpV(this.face, this.face, hv, clamp(dt * 25));
     } else if (this.phone && this.mirror > 0.3) {
       // mirror the phone's screen as the racket face
-      const [nx, ny, nz] = this.phone.n;
-      const f = V(nx, nz, -ny);
+      const pn = this.phone.n;
+      const f = set(T_FACE, pn[0], pn[2], -pn[1]);
       norm(f);
       // (the phone's pose arrives already carried on to now: only a light hand on the stepping, not the ~50 ms trail of the old 20/s)
       lerpV(this.face, this.face, f, 1 - Math.exp(-70 * dt * this.mirror));
     } else {
       // at rest the face looks forward / to the side
-      const rest = V(hs * 0.55, 0.05, -0.8);
+      const rest = set(T_FACE, hs * 0.55, 0.05, -0.8);
       norm(rest);
       lerpV(this.face, this.face, rest, clamp(dt * 8));
     }
@@ -274,10 +289,10 @@ export class Animator {
     set(P.racketFace, this.face.x, this.face.y, this.face.z);
 
     // ------------------------------------------------ head looks at the ball
-    const lb = this.toLocal(ball.x, ball.y, ball.z, V(0, 0, 0));
+    const lb = this.toLocal(ball.x, ball.y, ball.z, T_LOCAL);
     const hy = 1.07;
     const wantYaw = clamp(Math.atan2(-lb.x, -lb.z) - out.twist, -1.0, 1.0);
-    const dist = Math.hypot(lb.x, lb.z);
+    const dist = hyp2(lb.x, lb.z);
     const wantPitch = clamp(Math.atan2(lb.y - hy, Math.max(0.3, dist)), -0.5, 0.7);
     const looking = state === 'play' || state === 'toss' || state === 'serve';
     this.headYaw = damp(this.headYaw, looking ? wantYaw : 0, 9, dt);
@@ -363,8 +378,8 @@ export class Animator {
       P.bodyRoll = lerp(P.bodyRoll, -side * 0.3, k);
       P.bodyPitch -= 0.22 * k;
       if (!swinging) {
-        lerpV(out.hand, out.hand, V(side * 0.78, 0.55, -0.22), k);
-        lerpV(out.dir, out.dir, V(side * 0.8, 0.35, -0.45), k);
+        lerpXYZ(out.hand, out.hand, side * 0.78, 0.55, -0.22, k);
+        lerpXYZ(out.dir, out.dir, side * 0.8, 0.35, -0.45, k);
         norm(out.dir);
       }
       return '';
@@ -402,10 +417,10 @@ export class Animator {
     }
     if (!swinging || t > a.tc) {
       // both arms reaching for the ball
-      lerpV(out.hand, out.hand, V(side * 1.08, 0.36, -0.2), lie);
-      lerpV(out.dir, out.dir, V(side, 0.15, -0.3), lie);
+      lerpXYZ(out.hand, out.hand, side * 1.08, 0.36, -0.2, lie);
+      lerpXYZ(out.dir, out.dir, side, 0.15, -0.3, lie);
       norm(out.dir);
-      lerpV(out.off, out.off, V(side * 0.7, 0.24, -0.34), lie);
+      lerpXYZ(out.off, out.off, side * 0.7, 0.24, -0.34, lie);
     }
     return face;
   }
@@ -433,11 +448,11 @@ export class Animator {
 
   /** Contact key: the racket's sweet spot sits exactly on the ball. */
   private contactKey(sw: SwingState, hs: number, k: Key) {
-    const c = this.toLocal(sw.cx, sw.cy, sw.cz, V(0, 0, 0));
+    const c = this.toLocal(sw.cx, sw.cy, sw.cz, C_LOCAL);
     const high = sw.stroke === 'oh' || sw.stroke === 'serve';
-    const sh = V(hs * 0.2, high ? 1.02 : 0.9, 0.02);
-    const d = V(c.x - sh.x, c.y - sh.y, c.z - sh.z);
-    const len = Math.hypot(d.x, d.y, d.z);
+    const sh = set(C_SH, hs * 0.2, high ? 1.02 : 0.9, 0.02);
+    const d = set(C_D, c.x - sh.x, c.y - sh.y, c.z - sh.z);
+    const len = hyp3(d.x, d.y, d.z);
     norm(d);
     if (!high) {
       // keep groundstroke rackets fairly level

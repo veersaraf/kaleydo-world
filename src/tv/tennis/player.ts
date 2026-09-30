@@ -3,11 +3,12 @@
 // decide *when* and *how* to swing.
 
 import { COURT, fwdOf } from './court';
-import type { PathSample } from './ball';
+import type { PathBuf, PathSample } from './ball';
 import type { Stroke, SwingInput } from './shot';
 import type { Look } from '../chars/look';
 import type { AIProfile } from './ai';
 import { clamp } from '../core/math';
+import { hyp2 } from './hypot';
 
 export type Ctrl = { kind: 'cpu'; ai: AIProfile } | { kind: 'human'; slot: number; ai: AIProfile };
 
@@ -174,7 +175,7 @@ export class TPlayer {
   step(dt: number) {
     const dx = this.tx - this.x;
     const dz = this.tz - this.z;
-    const dist = Math.hypot(dx, dz);
+    const dist = hyp2(dx, dz);
     let dvx = 0,
       dvz = 0;
     if (dist > 0.01) {
@@ -185,7 +186,7 @@ export class TPlayer {
     }
     const ax = dvx - this.vx;
     const az = dvz - this.vz;
-    const al = Math.hypot(ax, az);
+    const al = hyp2(ax, az);
     const maxDv = this.accel * dt;
     if (al > maxDv) {
       this.vx += (ax / al) * maxDv;
@@ -203,23 +204,28 @@ export class TPlayer {
   }
 
   speed() {
-    return Math.hypot(this.vx, this.vz);
+    return hyp2(this.vx, this.vz);
   }
 
   /**
    * Choose where and when to meet the ball along a predicted path.
    * `mustBounce` for serve returns; `allowVolley` for players near the net.
+   * (The candidates are weighed in two scratch plans; only the winner is copied out, so a
+   * call makes one object however long the path.)
    */
-  planFrom(path: PathSample[], now: number, react: number, opts: { mustBounce: boolean; doubles: boolean; prefer?: Stroke; smash?: boolean }): HitPlan | null {
+  planFrom(path: PathBuf, now: number, react: number, opts: { mustBounce: boolean; doubles: boolean; prefer?: Stroke; smash?: boolean }): HitPlan | null {
     const fwd = this.fwd;
-    const myHalf = (z: number) => (this.team === 0 ? z > 0.4 : z < -0.4);
-    let best: HitPlan | null = null;
-    let fallback: HitPlan | null = null;
+    const team0 = this.team === 0;
+    const best = SCRATCH_BEST;
+    const fallback = SCRATCH_FALLBACK;
+    let hasBest = false;
+    let hasFallback = false;
     const nearNet = Math.abs(this.z) < 6.5;
-    for (let i = 0; i < path.length; i++) {
-      const s = path[i];
+    const fs = this.fhSign;
+    for (let i = 0; i < path.n; i++) {
+      const s = path.s[i];
       if (s.bounces >= 2) break;
-      if (!myHalf(s.z)) continue;
+      if (!(team0 ? s.z > 0.4 : s.z < -0.4)) continue;
       if (s.t < now + 0.08) continue;
       if (opts.mustBounce && s.bounces === 0) continue;
       if (s.y < 0.22 || s.y > 3.0) continue;
@@ -227,15 +233,25 @@ export class TPlayer {
       const overhead = s.y > 1.95;
 
       // candidate stands for forehand / backhand / overhead
-      const fs = this.fhSign;
-      const cands: [Stroke, number, number][] = overhead
-        ? [['oh', s.x - fs * REACH.ohSide, s.z - fwd * REACH.ohFwd]]
-        : [
-            ['fh', s.x - fs * REACH.fhSide, s.z - fwd * REACH.fhFwd],
-            ['bh', s.x + fs * REACH.bhSide, s.z - fwd * REACH.bhFwd],
-          ];
-      for (const [stroke, sx, sz] of cands) {
-        const d = Math.hypot(sx - this.x, sz - this.z);
+      const nc = overhead ? 1 : 2;
+      for (let ci = 0; ci < nc; ci++) {
+        let stroke: Stroke;
+        let sx: number;
+        let sz: number;
+        if (overhead) {
+          stroke = 'oh';
+          sx = s.x - fs * REACH.ohSide;
+          sz = s.z - fwd * REACH.ohFwd;
+        } else if (ci === 0) {
+          stroke = 'fh';
+          sx = s.x - fs * REACH.fhSide;
+          sz = s.z - fwd * REACH.fhFwd;
+        } else {
+          stroke = 'bh';
+          sx = s.x + fs * REACH.bhSide;
+          sz = s.z - fwd * REACH.bhFwd;
+        }
+        const d = hyp2(sx - this.x, sz - this.z);
         const avail = s.t - now - react;
         const need = this.timeToCover(d);
         const reachable = need <= avail + 0.02;
@@ -250,17 +266,41 @@ export class TPlayer {
         if (volley && overhead) cost += nearNet || opts.smash ? -0.4 : 0.3;
         // prefer taking it earlier (on the rise) rather than drifting back
         cost += 0.22 * (s.t - now);
-        const speed = i > 0 ? Math.hypot(s.x - path[i - 1].x, s.z - path[i - 1].z) / (s.t - path[i - 1].t) : 15;
-        const plan: HitPlan = { t: s.t, bx: s.x, by: s.y, bz: s.z, stroke, volley, sx, sz, reachable, cost, speed };
         if (reachable) {
-          if (!best || cost < best.cost) best = plan;
-        } else {
+          if (!hasBest || cost < best.cost) {
+            fill(best, path, i, s, stroke, volley, sx, sz, true, cost);
+            hasBest = true;
+          }
+        } else if (!hasBest) {
+          // (the fallback only matters while nothing reachable has turned up)
           const miss = need - avail;
           const fcost = miss * 3 + cost;
-          if (!fallback || fcost < fallback.cost) fallback = { ...plan, cost: fcost };
+          if (!hasFallback || fcost < fallback.cost) {
+            fill(fallback, path, i, s, stroke, volley, sx, sz, false, fcost);
+            hasFallback = true;
+          }
         }
       }
     }
-    return best ?? fallback;
+    const pick = hasBest ? best : hasFallback ? fallback : null;
+    return pick ? { ...pick } : null;
   }
+}
+
+const mkPlan = (): HitPlan => ({ t: 0, bx: 0, by: 0, bz: 0, stroke: 'fh', volley: false, sx: 0, sz: 0, reachable: false, cost: 0, speed: 0 });
+const SCRATCH_BEST = mkPlan();
+const SCRATCH_FALLBACK = mkPlan();
+
+function fill(o: HitPlan, path: PathBuf, i: number, s: PathSample, stroke: Stroke, volley: boolean, sx: number, sz: number, reachable: boolean, cost: number) {
+  o.t = s.t;
+  o.bx = s.x;
+  o.by = s.y;
+  o.bz = s.z;
+  o.stroke = stroke;
+  o.volley = volley;
+  o.sx = sx;
+  o.sz = sz;
+  o.reachable = reachable;
+  o.cost = cost;
+  o.speed = i > 0 ? hyp2(s.x - path.s[i - 1].x, s.z - path.s[i - 1].z) / (s.t - path.s[i - 1].t) : 15;
 }
