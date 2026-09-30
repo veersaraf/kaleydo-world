@@ -1,6 +1,6 @@
 // TV ⇄ server connection. Auto-reconnects.
 //
-// Two homes: the KALEIDO server on this Mac (a localhost WebSocket; phones on the
+// Two homes: the Kaleydo World server on this Mac (a localhost WebSocket; phones on the
 // Wi-Fi reach the same server), or the cloud (cloud/worker.ts), where the TV makes
 // up a room code, shows it with a QR code, and its phones join that room. Which one
 // the page was served from says which (/api/info).

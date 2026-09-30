@@ -1,4 +1,4 @@
-/* KALEIDO TV interface */
+/* Kaleydo World TV interface */
 
 #ui {
   --u: min(1vh, 0.56vw);
@@ -2769,7 +2769,7 @@ kbd {
   box-shadow: 0 0 0 calc(var(--u) * 0.4) var(--accent, #3aa8ff);
 }
 
-/* the Kaleido toggle on the setup screens (what it does, under it, while it's on) */
+/* the Kaleydo toggle on the setup screens (what it does, under it, while it's on) */
 .row.kal {
   flex-wrap: wrap;
   row-gap: calc(var(--u) * 0.3);

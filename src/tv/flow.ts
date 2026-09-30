@@ -50,7 +50,7 @@ export interface Settings {
   split: boolean;
   world: string;
   seenTutorial: boolean;
-  /** Kaleido mode: big moments shatter the world into the next one (every sport) */
+  /** Kaleydo mode: big moments shatter the world into the next one (every sport) */
   kaleido: boolean;
   /** the sound button in the corner */
   muted: boolean;
@@ -340,7 +340,7 @@ export class Flow {
   /**
    * Build every world, compile its shaders and upload its data behind a short
    * loading screen, so no world ever hitches the first time it appears (the
-   * attract loop, Kaleido shifts and world picks would otherwise stall 50–200 ms).
+   * attract loop, Kaleydo shifts and world picks would otherwise stall 50–200 ms).
    */
   private async boot() {
     // the intro video plays alongside priming; automated runs (and reduced motion)
@@ -571,7 +571,7 @@ export class Flow {
   }
 
   /**
-   * Kaleido mode in bowling, the duel, archery and baseball: a big moment (a
+   * Kaleydo mode in bowling, the duel, archery and baseball: a big moment (a
    * strike, a round won, a bullseye, a home run) shatters the world into the next
    * one, `delay` ms later. (Tennis has its own: every couple of points, or a
    * PERFECT shot deep in a rally.)
@@ -596,7 +596,7 @@ export class Flow {
     }, delay);
   }
 
-  /** Kaleido mode picks the starting world at random */
+  /** Kaleydo mode picks the starting world at random */
   private pickWorld(w: string) {
     return this.settings.kaleido ? this.shuffledWorlds()[0] : w;
   }
@@ -608,7 +608,7 @@ export class Flow {
     this.app.startAttract(this.app.stage.current?.def.id ?? 'park', sport);
   }
 
-  /** The Kaleido toggle on every setup screen: big moments shatter the world into the next one. */
+  /** The Kaleydo toggle on every setup screen: big moments shatter the world into the next one. */
   private kaleidoRow(onChange?: () => void) {
     const S = this.settings;
     const v = h('span');
@@ -1080,7 +1080,7 @@ export class Flow {
     const rLen = row('Match');
     const go = h('div', { class: 'row go' }, 'Choose a world ▶');
     const refresh = () => {
-      // (Kaleido picks the worlds itself: no world screen to go to)
+      // (Kaleydo picks the worlds itself: no world screen to go to)
       go.textContent = S.kaleido ? 'Play ▶' : 'Choose a world ▶';
       const ps = this.presets();
       S.teamPreset = Math.min(S.teamPreset, ps.length - 1);
@@ -1139,7 +1139,7 @@ export class Flow {
         el: go,
         onSelect: () => {
           this.mode = this.settings.kaleido ? 'kaleido' : 'quick';
-          // Kaleido picks the worlds (and shatters between them): no need to choose one
+          // Kaleydo picks the worlds (and shatters between them): no need to choose one
           if (this.settings.kaleido) this.beginMatch(this.shuffledWorlds()[0]);
           else this.go(this.worldScreen());
         },
@@ -1484,7 +1484,7 @@ export class Flow {
     this.lab = false;
     this.versusEnd = null;
     if (!this.guestRun) this.guestPrevMode = this.mode;
-    // (no Kaleido shifts of our own: the host's `world` messages move the world)
+    // (no Kaleydo shifts of our own: the host's `world` messages move the world)
     this.mode = 'quick';
     this.guestRun = start;
     // (the lobby gives way to the match; it comes back with leaveGuestMatch)
@@ -3057,7 +3057,7 @@ export class Flow {
           if (e.kph > 105 && (e.serve || e.perfect) && e.kind !== 'smash') this.hud?.showSpeed(e.kph);
           this.hud?.setRally(e.rally);
           if (a) a.music.setIntensity(e.rally >= 9 ? 3 : e.rally >= 4 ? 2 : 1);
-          // Kaleido: a perfect shot deep in a rally shatters the world
+          // Kaleydo: a perfect shot deep in a rally shatters the world
           // (once per rally: the next world gets prepared between points)
           if (this.mode === 'kaleido' && e.perfect && e.rally >= 5 && e.p.human && !this.shiftedThisRally && !this.app.stage.transitioning) {
             this.shiftedThisRally = true;

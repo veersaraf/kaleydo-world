@@ -1,5 +1,5 @@
 // Web Audio engine: buses, reverb, and a small library of synthesised voices.
-// Everything you hear in KALEIDO is generated here — there are no samples.
+// Everything you hear in Kaleydo World is generated here — there are no samples.
 
 export type InstName =
   | 'pluck'
