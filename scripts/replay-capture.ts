@@ -100,6 +100,11 @@ console.log(`\ndetection delay after the true peak — sword strikes: ${fmtDelay
   const os = onsetStats(R.tennisStarts, strong);
   const ls = delayStats(os.leads);
   console.log(`  strokes of 12 rad/s and up (${strong.length}, power ≥ 0.33): lead p50 ${ls.p50.toFixed(0)} ms, p90 ${ls.p90.toFixed(0)} ms, missed ${os.missed}; side ${os.side[0]} right, ${os.side[1]} wrong, ${os.side[2]} undecided`);
+  // (a volley is a short punch, 7-12 rad/s: the weak end of the same list)
+  const weak = R.tennisSwings.filter((e) => e.peak < 12);
+  const ow = onsetStats(R.tennisStarts, weak);
+  const lw = delayStats(ow.leads);
+  console.log(`  punch-sized strokes (peak 7-12 rad/s, ${weak.length}): lead p50 ${lw.p50.toFixed(0)} ms, p90 ${lw.p90.toFixed(0)} ms, missed ${ow.missed} (${pct(ow.missed, weak.length)}); side ${ow.side[0]} right, ${ow.side[1]} wrong, ${ow.side[2]} undecided`);
   if (flag('onsets')) {
     for (const e of R.tennisSwings) {
       const s = R.tennisStarts.filter((x) => x.t <= e.t && e.t - x.t <= 350)[0];

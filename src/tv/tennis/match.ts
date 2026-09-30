@@ -139,6 +139,20 @@ const MAX_WINDUP = 0.3;
 const FEINT_AFTER = 0.25;
 const FEINT_EASE = 0.2;
 const RESTART = 0.15;
+/**
+ * A human who takes a ball on their swing's onset (poach) holds it for the swing to be heard: none by POACH_WAIT
+ * after the onset (a twitch, not a swing) and the ball goes back to the partner it was taken from. A heard swing
+ * that takes a ball looks for one within POACH_HEARD_SPREAD s of the swing, that the player could have got to in POACH_HEARD_RUN s.
+ */
+const POACH_WAIT = 0.22;
+const POACH_HEARD_SPREAD = 0.12;
+/** an onset's ball may be this far (m) out of the player's running reach: they are on their feet at the net, and the lunge makes it up (maybeAthletic) */
+const POACH_STRETCH = 1.2;
+/** an onset's ball is taken no sooner than this (s) from now: the drawn ball is held from now, at the ball point this close */
+const POACH_SOON = 0.01;
+/** an onset's ball is taken within this many s of when its swing is expected to land (onset + 0.1): inside the judgement's window with room to spare */
+const POACH_SPREAD = 0.12;
+const POACH_HEARD_RUN = 0.15;
 /** the furthest back in time a heard swing is put (the input clamps an age at 0.25 s; a hitch's slip may add a little) */
 const SWING_BACK_MAX = 0.4;
 /**
@@ -151,12 +165,13 @@ const SWING_BACK_MAX = 0.4;
  *
  *   lead   the drawn clock starts to slow this long before the plan's contact time (s), and stays slow until `hold` after it
  *   slow   the drawn clock's rate while held (1 = real time)
+ *   slowNet  the same for a volley within `netZ` m of the net (the ball there is faster and closer: at 0.25 a 25 m/s volley still travels ~0.8 m in a 130 ms hold)
  *   catchUp  seconds over which a held ball is caught up to the true one if no swing comes
  *   min/max/def  the hold's length (s): the median of the last swing ages, clamped to [min, max]; def before any swing
  *   launch  seconds a hit ball takes from where it was drawn to the true outgoing flight: 1.05 × the swing's age, in [launch, launchMax]
  *           (the gap to close is the age × the ball's speed; over a fixed time a slow phone's ball would cross the screen in a frame or two)
  */
-export const HOLD = { lead: 0.03, slow: 0.25, catchUp: 0.06, min: 0.04, max: 0.18, def: 0.06, launch: 0.07, launchMax: 0.13 };
+export const HOLD = { lead: 0.03, slow: 0.25, slowNet: 0.12, netZ: 5, catchUp: 0.06, min: 0.04, max: 0.18, def: 0.06, launch: 0.07, launchMax: 0.13 };
 
 export class Match {
   cfg: MatchConfig;
@@ -185,6 +200,8 @@ export class Match {
   lastReason: PointReason = 'winner';
   /** swing time for CPUs, per plan */
   private aiSwingAt = new Map<TPlayer, number>();
+  /** humans who took a ball on a swing's onset, awaiting the swing: the plan taken, the partners it was taken from, and when to give up */
+  private poached = new Map<TPlayer, { plan: HitPlan; mates: TPlayer[]; until: number }>();
   private cpuTossAt = 0;
   /** the player whose swing the ball is being drawn towards (public: a guest TV's shadow match is set from the stream) */
   pendingHit: TPlayer | null = null;
@@ -365,6 +382,7 @@ export class Match {
     this.launch = null;
     this.prevSeg = null;
     this.aiSwingAt.clear();
+    this.poached.clear();
     this.rally = 0;
     this.path.n = 0;
   }
@@ -397,10 +415,15 @@ export class Match {
     const serving = (this.state === 'serve' || this.state === 'toss') && this.server.slot === slot;
     // (holding the ball, a swing is the toss)
     if (serving && this.state === 'serve') return;
-    const p = serving ? this.server : (mine.find((q) => q.plan) ?? mine[0]);
+    let p = serving ? this.server : (mine.find((q) => q.plan) ?? mine[0]);
     const cur = p.swing;
     if (cur && !cur.feint && !(cur.provisional && tOnset > cur.t0 + RESTART)) return;
     if (this.t < p.nextSwingOK) return;
+    // a ball they can reach but were not given (their partner's, or a volley's cost lost): a person swinging at it takes it
+    if (!serving && !p.plan) {
+      const q = this.poach(mine, side, tOnset, false);
+      if (q) p = q;
+    }
     const t0 = Math.min(tOnset, this.t);
     const f = p.fhSign;
     const soon = this.t + 0.02;
@@ -511,14 +534,19 @@ export class Match {
       if (!p.swing && this.t >= p.nextSwingOK) this.whiff(p, inp.side === 'bh' ? 'bh' : inp.side === 'oh' ? 'oh' : 'fh', 0, undefined, 'noball');
       return;
     }
-    const p = mine.find((q) => q.plan) ?? mine[0];
+    let p = mine.find((q) => q.plan) ?? mine[0];
+    // (no ball given to them: a swing at a ball they CAN reach takes it — see poach)
+    if (!p.plan) {
+      const q = this.poach(mine, inp.side === 'fh' || inp.side === 'bh' ? inp.side : undefined, tEvent, true);
+      if (q) p = q;
+    }
     // (how old swings are when they're heard: the drawn ball waits about that long at the racket)
     const lj = this.lastJudge;
     lj.n++;
     lj.age = Math.max(0, this.t - tEvent);
     lj.hit = false;
     lj.state = this.state;
-    if (this.state === 'play' && p.plan && !p.swing) {
+    if (this.state === 'play' && !p.swing) {
       const a = this.swingAges;
       a.push(lj.age);
       if (a.length > 8) a.shift();
@@ -549,6 +577,8 @@ export class Match {
     if (tau < -1 || tau > 1) {
       // a big early swing on the other side is usually a backswing: set up for the real stroke
       if (tau < -1 && inp.side && inp.side !== 'oh') this.humanPrep(slot, inp.side === 'fh' ? 'bh' : 'fh');
+      // (a ball taken on the swing's onset that this swing misses: the partner gets it back)
+      this.releasePoach(p);
       this.whiff(p, chosen, tau, Math.round(dt * 1000), tau < 0 ? 'early' : 'late');
       return;
     }
@@ -582,6 +612,108 @@ export class Match {
     // learn slowly; ignore wild outliers
     if (Math.abs(d) < 70) p.pathNeutral[key] = n + d * 0.12;
     return clamp(d / 32, -1, 1);
+  }
+
+  /**
+   * A HUMAN TAKES A BALL THEY CAN REACH. `replan` gives each ball to one receiver by plan cost, so the human at the
+   * net often has no plan (the back player was given it, or a volley's cost lost): their swing would be a whiff
+   * ('noball') while the ball flies past at full speed. When one of `mine` (the slot's players) with NO plan swings
+   * at a live ball they can get to (`heard`: a swing that has been heard, made at `tSwing`; else the ONSET of one,
+   * made at `tSwing`, whose swing is ~100 ms off), the ball is theirs: the plan moves to them and their partners
+   * (CPU or a second phone) step aside to their formation spots, as in `replan`. Then the onset's stroke, the
+   * hold and the judgement work as in singles. Never taken: a ball that is dead (netted, going out, already
+   * bounced twice, or hit by their own team), one they cannot reach, or one whose partner is already swinging or
+   * lunging at it. A player who has a plan keeps it, reachable or not (taking another for an unreachable one cost
+   * a simulated net player a fifth of their points: the swing is timed to the ball they were shown). Only balls on
+   * the player's own side of the net are found (`planFrom`).
+   *   onset  a ball the player can get to from where they stand, with a lunge (POACH_STRETCH), within POACH_SPREAD
+   *          of when the swing will land (`tSwing` + 0.1) and no sooner than POACH_SOON from now. The plan is
+   *          held from now (`holdFrom`): the drawn ball waits at the racket before the swing is heard, without a jump
+   *   heard  a swing already made: a ball within POACH_HEARD_SPREAD of it, that they could have run to in
+   *          POACH_HEARD_RUN, and not further than a stroke's reach from where they stand; the hit is credited as
+   *          of the swing (there is nothing left to hold: `nohold`)
+   * An onset's ball goes back to the partner if no swing follows it or the swing misses its time (releasePoach).
+   */
+  private poach(mine: TPlayer[], side: Stroke | undefined, tSwing: number, heard: boolean): TPlayer | null {
+    const b = this.ball;
+    if (this.state !== 'play' || !b.live || b.netted || this.flightJudged.net || this.flightJudged.out || !this.path.n) return null;
+    let best: TPlayer | null = null;
+    let bestPlan: HitPlan | null = null;
+    const tMin = this.t + POACH_SOON;
+    for (const q of mine) {
+      if (!q.human || q.team === b.lastHitTeam) continue;
+      if ((q.swing && !q.swing.provisional) || this.t < q.nextSwingOK) continue;
+      // (a partner already on the ball — swinging, or a person's stroke going — is not robbed)
+      if (this.team(q.team).some((m) => m !== q && !mine.includes(m) && ((m.swing && !m.swing.feint) || (m.athletic && m.plan)))) continue;
+      const opts = { mustBounce: b.serve, doubles: this.doubles, prefer: side, smash: b.pop, at: heard ? tSwing : Math.max(tSwing + 0.1, tMin), spread: heard ? POACH_HEARD_SPREAD : POACH_SPREAD, stretch: heard ? undefined : POACH_STRETCH };
+      const plan = heard ? q.planFrom(this.path, tSwing - POACH_HEARD_RUN, 0.02, opts) : q.planFrom(this.path, tMin - 0.08, this.t - tMin + 0.1, opts);
+      if (!plan || !plan.reachable) continue;
+      if (heard && hyp2(q.x - plan.sx, q.z - plan.sz) > 1.0) continue;
+      if (!bestPlan || plan.cost < bestPlan.cost) {
+        best = q;
+        bestPlan = plan;
+      }
+    }
+    if (!best || !bestPlan) return null;
+    if (heard) bestPlan.nohold = true;
+    else bestPlan.holdFrom = this.t;
+    best.plan = bestPlan;
+    best.reactUntil = this.t;
+    this.aiSwingAt.delete(best);
+    const mates = this.team(best.team).filter((m) => m !== best && !mine.includes(m));
+    for (const m of mates) {
+      this.aiSwingAt.delete(m);
+      this.stepAside(m, best);
+    }
+    if (!heard) this.poached.set(best, { plan: bestPlan, mates, until: this.t + POACH_WAIT });
+    return best;
+  }
+
+  /** an onset's ball that no swing followed goes back to the partner (if it can still be reached), and the human back to formation */
+  private settlePoaches(t: number) {
+    for (const [p, e] of this.poached) {
+      if (p.plan !== e.plan || (p.swing && !p.swing.provisional)) {
+        this.poached.delete(p);
+        continue;
+      }
+      if (t >= e.until) this.releasePoach(p);
+    }
+  }
+
+  /** a ball taken on an onset that came to nothing (no swing, or one out of time): back to the partner, if it can still be reached, and the human to formation */
+  private releasePoach(p: TPlayer) {
+    const e = this.poached.get(p);
+    if (!e) return;
+    this.poached.delete(p);
+    if (p.plan !== e.plan) return;
+    const t = this.t;
+    let taker: TPlayer | null = null;
+    let takerPlan: HitPlan | null = null;
+    if (this.state === 'play' && this.ball.live && !this.flightJudged.net && !this.flightJudged.out) {
+      for (const m of e.mates) {
+        if (m.plan || m.swing) continue;
+        const plan = m.planFrom(this.path, t, 0.05, { mustBounce: this.ball.serve, doubles: this.doubles, smash: this.ball.pop });
+        if (plan && plan.reachable && (!takerPlan || plan.cost < takerPlan.cost)) {
+          taker = m;
+          takerPlan = plan;
+        }
+      }
+    }
+    this.stepAside(p, taker);
+    if (taker && takerPlan) {
+      taker.plan = takerPlan;
+      taker.reactUntil = t;
+      this.aiSwingAt.delete(taker);
+    }
+  }
+
+  /** a receiver who is not taking the ball holds formation: shaded towards the ball side, level with whoever is */
+  private stepAside(p: TPlayer, taker: TPlayer | null) {
+    p.plan = null;
+    const bx = this.path.n ? this.path.s[Math.min(this.path.n - 1, 60)].x : 0;
+    const rp = recoveryPos(p.team, bx, p.role, this.doubles, taker?.x ?? 0);
+    p.tx = rp.x;
+    p.tz = rp.z;
   }
 
   /** The player wound up on one side (backswing) — move to play that stroke. */
@@ -820,18 +952,12 @@ export class Match {
       if (p === best && bestPlan && !leave) {
         p.plan = bestPlan;
       } else {
-        p.plan = null;
-        // hold formation: shade towards the ball side
-        const bx = this.path.n ? this.path.s[Math.min(this.path.n - 1, 60)].x : 0;
-        const rp = recoveryPos(R, bx, p.role, this.doubles, best?.x ?? 0);
         if (leave && p === best) {
           // watch it go: small step, no chase
+          p.plan = null;
           p.tx = p.x;
           p.tz = p.z;
-        } else {
-          p.tx = rp.x;
-          p.tz = rp.z;
-        }
+        } else this.stepAside(p, best); // hold formation: shade towards the ball side
       }
     }
   }
@@ -910,6 +1036,7 @@ export class Match {
       if (t >= sw.te) p.swing = null;
     }
 
+    if (this.poached.size) this.settlePoaches(t);
     this.stepBall(t0, t);
     this.stepPlayers(dt);
     this.excitement = Math.max(0.15, this.excitement - dt * 0.05);
@@ -1440,7 +1567,12 @@ export class Match {
 
   /** a plan the hold applies to: one a human can reach (a smash chance has bullet time of its own) */
   private holdable(plan: HitPlan): boolean {
-    return plan.reachable && !this.isSmashPlan(plan);
+    return plan.reachable && !plan.nohold && !this.isSmashPlan(plan);
+  }
+
+  /** the drawn clock's rate while a plan's ball is held: slower for a volley at the net (faster, closer ball) */
+  private slowOf(plan: HitPlan): number {
+    return plan.volley && Math.abs(plan.sz) < HOLD.netZ ? HOLD.slowNet : HOLD.slow;
   }
 
   /** how long the drawn ball is held (s): the median of the last swing ages, in [HOLD.min, HOLD.max] */
@@ -1476,23 +1608,25 @@ export class Match {
    * `catchUp` (eased: never a jump).
    */
   holdWarp(plan: HitPlan, hold: number, t: number): number {
-    const ts = plan.t - HOLD.lead;
+    const ts = plan.holdFrom === undefined ? plan.t - HOLD.lead : Math.max(plan.t - HOLD.lead, plan.holdFrom);
     if (t <= ts) return t;
     const u = t - ts;
     // (the clock is slowed until `hold` after the contact time: a swing made on the beat, heard `hold` later, finds the ball at the racket)
-    const w = hold + HOLD.lead;
-    if (u <= w) return ts + u * HOLD.slow;
+    const w = plan.holdFrom === undefined ? hold + HOLD.lead : plan.t + hold - ts;
+    const slow = this.slowOf(plan);
+    if (u <= w) return ts + u * slow;
     const v = (u - w) / HOLD.catchUp;
     if (v >= 1) return t;
-    return t - w * (1 - HOLD.slow) * (1 - smooth(v));
+    return t - w * (1 - slow) * (1 - smooth(v));
   }
 
   /** the sim time at which the drawn ball shows time `d` (the inverse of holdWarp) */
   holdUnwarp(plan: HitPlan, hold: number, d: number): number {
-    const ts = plan.t - HOLD.lead;
+    const ts = plan.holdFrom === undefined ? plan.t - HOLD.lead : Math.max(plan.t - HOLD.lead, plan.holdFrom);
     if (d <= ts) return d;
-    const w = hold + HOLD.lead;
-    if (d <= ts + w * HOLD.slow) return ts + (d - ts) / HOLD.slow;
+    const w = plan.holdFrom === undefined ? hold + HOLD.lead : plan.t + hold - ts;
+    const slow = this.slowOf(plan);
+    if (d <= ts + w * slow) return ts + (d - ts) / slow;
     let lo = ts + w;
     const hi0 = ts + w + HOLD.catchUp;
     let hi = hi0;
