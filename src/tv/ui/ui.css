@@ -55,12 +55,9 @@
 
 /* ------------------------------------------------------------ title */
 
+/* (no darkening behind the lockup: its navy outline carries it over the attract scene) */
 .title {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  background: radial-gradient(ellipse 70% 55% at 50% 42%, rgba(10, 8, 30, 0.35), transparent 70%);
+  display: block;
 }
 
 /* the same frame as the intro video's last one (both cover the screen), so the boot fades out onto it unseen */
@@ -75,7 +72,7 @@
 
 .press {
   position: absolute;
-  bottom: calc(var(--u) * 12);
+  bottom: calc(var(--u) * 2.4);
   left: 50%;
   transform: translateX(-50%);
   font-weight: 600;
