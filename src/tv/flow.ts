@@ -585,9 +585,15 @@ export class Flow {
   private kaleidoRow(onChange?: () => void) {
     const S = this.settings;
     const v = h('span');
-    const r = h('div', { class: 'row kal' }, h('span', { class: 'k' }, h('i', { class: 'kgem' }), 'Kaleido mode'), h('span', { class: 'v' }, h('span', { class: 'arrow' }, '◀'), v, h('span', { class: 'arrow' }, '▶')));
+    const r = h(
+      'div',
+      { class: 'row kal' },
+      h('span', { class: 'k' }, h('i', { class: 'kgem' }), 'Kaleido mode'),
+      h('span', { class: 'v' }, h('span', { class: 'arrow' }, '◀'), v, h('span', { class: 'arrow' }, '▶')),
+      h('span', { class: 'desc' }, 'Big moments shatter the world into the next one'),
+    );
     const refresh = () => {
-      v.textContent = S.kaleido ? 'On — big moments shatter the world' : 'Off';
+      v.textContent = S.kaleido ? 'On' : 'Off';
       r.classList.toggle('on', S.kaleido);
     };
     const toggle = () => {
@@ -1030,10 +1036,10 @@ export class Flow {
     this.mode = mode;
     this.showcase('tennis');
     const S = this.settings;
-    const sheet = h('div', { class: 'sheet panel' });
+    const sheet = h('div', { class: 'sheet' });
     void mode;
     const title = h('h2', null, 'Tennis');
-    const desc = h('div', { class: 'hintline' }, 'Choose your match, then pick a world. In Kaleido mode every couple of points — or a PERFECT shot in a long rally — shatters the court into the next world.');
+    const desc = h('div', { class: 'hintline' }, 'Choose your match, then pick a world.');
     const kal = this.kaleidoRow();
     const teamsView = h('div', { class: 'teams' });
     const row = (k: string) => {
@@ -1113,7 +1119,7 @@ export class Flow {
     navRef = nav;
     nav.focus(5);
     sheet.append(title, desc, teamsView, rTeams.r, rFormat.r, rLevel.r, rLen.r, kal.r, go, h('div', { class: 'hintline' }, '◀ ▶ change · A select · B back'));
-    const el = h('div', { class: 'screen center' }, sheet);
+    const el = h('div', { class: 'screen setup' }, sheet);
     refresh();
     const scr = this.navScreen('setup', el, nav, () => this.go(this.mainMenu()), { title: 'Tennis', hint: '◀ ▶ to change' });
     const baseInput = scr.input;
@@ -1749,7 +1755,7 @@ export class Flow {
     refresh();
     const sheet = h(
       'div',
-      { class: 'sheet panel' },
+      { class: 'sheet' },
       h('h2', null, 'Home Run Derby'),
       h('div', { class: 'hintline' }, 'Hold your phone like a bat and swing as the ball reaches the plate. Early pulls it, late pushes it the other way — time it right and swing hard to clear the fence. Most home runs wins.'),
       who,
@@ -1760,7 +1766,7 @@ export class Flow {
       kal.r,
       go,
     );
-    return this.navScreen('hrsetup', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Home Run Derby', hint: '◀ ▶ to change · A to play' });
+    return this.navScreen('hrsetup', h('div', { class: 'screen setup' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Home Run Derby', hint: '◀ ▶ to change · A to play' });
   }
 
   beginBaseball(cfg: { world: string; cpu: number; pitching: number; pitches: number }) {
@@ -2032,7 +2038,7 @@ export class Flow {
     refresh();
     const sheet = h(
       'div',
-      { class: 'sheet panel' },
+      { class: 'sheet' },
       h('h2', null, 'Archery'),
       h('div', { class: 'hintline' }, 'Point your phone at the target, hold DRAW to pull the string, and let go. The arrow drops with distance and drifts with the wind — aim a little high, and into the wind.'),
       who,
@@ -2041,7 +2047,7 @@ export class Flow {
       kal.r,
       go,
     );
-    return this.navScreen('archsetup', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Archery', hint: '◀ ▶ to change · A to shoot' });
+    return this.navScreen('archsetup', h('div', { class: 'screen setup' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Archery', hint: '◀ ▶ to change · A to shoot' });
   }
 
   beginArchery(world: string, cpu: number) {
@@ -2264,7 +2270,7 @@ export class Flow {
     refresh();
     const sheet = h(
       'div',
-      { class: 'sheet panel' },
+      { class: 'sheet' },
       h('h2', null, 'Sword Duel'),
       h('div', { class: 'hintline' }, 'Your phone is the sword. Swing to strike; hold GUARD and hold the sword across their swing to block — a blocked attacker is stunned. Knock them off the end!'),
       oppRow.r,
@@ -2272,7 +2278,7 @@ export class Flow {
       kal.r,
       go,
     );
-    return this.navScreen('duelsetup', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Sword Duel', hint: '◀ ▶ to change · A to fight' });
+    return this.navScreen('duelsetup', h('div', { class: 'screen setup' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Sword Duel', hint: '◀ ▶ to change · A to fight' });
   }
 
   beginDuel(world: string, cpu: number) {
@@ -2518,7 +2524,7 @@ export class Flow {
     refresh();
     const sheet = h(
       'div',
-      { class: 'sheet panel' },
+      { class: 'sheet' },
       h('h2', null, 'Bowling'),
       h('div', { class: 'hintline' }, 'Hold the grip on your phone, swing your arm back and through, and let go. Twist your wrist to hook it.'),
       who,
@@ -2527,7 +2533,7 @@ export class Flow {
       kal.r,
       go,
     );
-    return this.navScreen('bowlsetup', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Bowling', hint: '◀ ▶ to change · A to bowl' });
+    return this.navScreen('bowlsetup', h('div', { class: 'screen setup' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Bowling', hint: '◀ ▶ to change · A to bowl' });
   }
 
   async beginBowling(world: string, cpu: number) {
