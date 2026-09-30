@@ -43,6 +43,12 @@ const C_LOCAL = V(0, 0, 0);
 const C_SH = V(0, 0, 0);
 const C_D = V(0, 0, 0);
 
+/** how fast the racket follows the phone (1/s): while the stream is live, and when it is going stale or coming back */
+const MIRROR_LIVE = 60;
+const MIRROR_STALE = 10;
+/** a stream that came back after a gap is eased in for this long (s) before it counts as live */
+const MIRROR_EASE = 0.3;
+
 const key = (): Key => ({ hand: V(0, 0, 0), dir: V(0, 1, 0), off: V(0, 0, 0), twist: 0 });
 
 function keyFrom(k: Key, hs: number, hand: Vec, dir: Vec, off: Vec, twist: number) {
@@ -85,6 +91,9 @@ export class Animator {
   /** live phone orientation (player frame) — the racket mirrors it between swings */
   phone: { s: [number, number, number]; n: [number, number, number] } | null = null;
   private mirror = 0;
+  /** how long the phone's stream has been live without a break (s), and whether it ever has been */
+  private liveFor = 0;
+  private everLive = false;
 
   constructor(public p: TPlayer) {
     this.scale = CHAR_SCALE * (p.look.height || 1);
@@ -206,7 +215,18 @@ export class Animator {
 
     // 1:1 racket: between swings the racket follows the phone in your hand
     const wantMirror = this.phone && !sw && !p.holding && state !== 'toss' ? 1 - this.anticip * 0.75 : 0;
-    this.mirror = damp(this.mirror, wantMirror, 10, dt);
+    // (the pose we draw from is already carried on to now: while the stream is live it is followed
+    // with about a frame of smoothing, so a swing's setup shows as the phone makes it. The slow
+    // fade is for the stream coming and going: a stale pose is let go gently, a returning one
+    // eased in. The very first sample is copied.)
+    if (this.phone && !this.everLive) {
+      this.everLive = true;
+      this.liveFor = MIRROR_EASE;
+      this.mirror = wantMirror;
+    } else {
+      this.liveFor = this.phone ? this.liveFor + dt : 0;
+      this.mirror = damp(this.mirror, wantMirror, this.liveFor >= MIRROR_EASE ? MIRROR_LIVE : MIRROR_STALE, dt);
+    }
     if (this.phone && this.mirror > 0.01) {
       // player frame (x right, y towards screen, z up) → character local (x right, y up, −z forward)
       const ps = this.phone.s;
