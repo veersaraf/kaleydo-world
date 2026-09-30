@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "KALEIDO \u2014 a motion-controlled sports game across worlds. Your phone is the remote, your Mac is the TV.",
+  "description": "Kaleydo World \u2014 a motion-controlled sports game across worlds. Your phone is the remote, your Mac is the TV.",
   "scripts": {
     "dev": "node server/server.mjs --dev",
     "build": "vite build",
