@@ -142,9 +142,10 @@ const SWING_BACK_MAX = 0.4;
  *   slow   the drawn clock's rate while held (1 = real time)
  *   catchUp  seconds over which a held ball is caught up to the true one if no swing comes
  *   min/max/def  the hold's length (s): the median of the last swing ages, clamped to [min, max]; def before any swing
- *   launch  seconds a hit ball takes from where it was drawn to the true outgoing flight
+ *   launch  seconds a hit ball takes from where it was drawn to the true outgoing flight: 1.05 × the swing's age, in [launch, launchMax]
+ *           (the gap to close is the age × the ball's speed; over a fixed time a slow phone's ball would cross the screen in a frame or two)
  */
-export const HOLD = { lead: 0.03, slow: 0.25, catchUp: 0.06, min: 0.04, max: 0.12, def: 0.06, launch: 0.07 };
+export const HOLD = { lead: 0.03, slow: 0.25, catchUp: 0.06, min: 0.04, max: 0.12, def: 0.06, launch: 0.07, launchMax: 0.13 };
 
 export class Match {
   cfg: MatchConfig;
@@ -198,7 +199,7 @@ export class Match {
   private holdPlan: HitPlan | null = null;
   private holdLatched: number = HOLD.def;
   /** a hit ball's blend from where it was drawn to its true flight */
-  private launch: { t0: number; dx: number; dy: number; dz: number } | null = null;
+  private launch: { t0: number; dur: number; dx: number; dy: number; dz: number } | null = null;
   private lv0: V3 = { x: 0, y: 0, z: 0 };
   private lv1: V3 = { x: 0, y: 0, z: 0 };
   /** the last human swing heard (for the TV's latency readout) */
@@ -1149,7 +1150,7 @@ export class Match {
     this.launch = null;
     if (fromView) {
       const c = this.ballCore(this.t, this.lv1);
-      this.launch = { t0: this.t, dx: this.lv0.x - c.x, dy: this.lv0.y - c.y, dz: this.lv0.z - c.z };
+      this.launch = { t0: this.t, dur: clamp((this.t - tc) * 1.05, HOLD.launch, HOLD.launchMax), dx: this.lv0.x - c.x, dy: this.lv0.y - c.y, dz: this.lv0.z - c.z };
     }
     p.hits++;
     p.lockUntil = tc + (sw.serve ? 0.34 : 0.3);
@@ -1251,19 +1252,19 @@ export class Match {
    * Where to draw the ball: the flight, with the racket "magnet" before a scheduled contact, the
    * hold at a human's racket (HOLD) and the blend of a hit ball into its true flight. A pure
    * function of `t` and the match's state (it is called several times a frame, and by a guest's
-   * probe at times of its own).
+   * probe at times of its own). `plain`: the ball as the sim (and the stream to guests) has it, without the hold and the blend.
    */
-  ballView(t: number, out: V3): V3 {
+  ballView(t: number, out: V3, plain = false): V3 {
     const b = this.ball;
     if (b.holder) {
       // (the view places it in the hand: nothing to give, and a point reused from the last frame must not linger)
       out.x = out.y = out.z = 0;
       return out;
     }
-    this.ballCore(t, out);
-    const l = this.launch;
+    this.ballCore(t, out, plain);
+    const l = plain ? null : this.launch;
     if (l && t >= l.t0) {
-      const u = (t - l.t0) / HOLD.launch;
+      const u = (t - l.t0) / l.dur;
       if (u < 1) {
         const k = (1 - u) * (1 - u);
         out.x += l.dx * k;
@@ -1274,7 +1275,7 @@ export class Match {
     return out;
   }
 
-  private ballCore(t: number, out: V3): V3 {
+  private ballCore(t: number, out: V3, plain = false): V3 {
     const b = this.ball;
     segPos(b.seg, t, out);
     const ph = this.pendingHit;
@@ -1289,7 +1290,7 @@ export class Match {
       segPos(b.seg, t, out);
     } else {
       // follow bounces for display (on the drawn clock, which waits at a human's racket)
-      const hp = this.holdPlayer();
+      const hp = plain ? null : this.holdPlayer();
       const td = hp ? this.holdWarp(hp.plan!, this.holdFor(hp.plan!), t) : t;
       const p = this.ballAt(td, this.sa);
       out.x = p.x;
