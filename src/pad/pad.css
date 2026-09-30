@@ -768,13 +768,6 @@ section {
   box-shadow: 0 1px 0 color-mix(in oklab, var(--pc) 70%, black);
 }
 
-.row3 {
-  display: grid;
-  grid-template-columns: repeat(3, 56px);
-  gap: 26px;
-  justify-items: center;
-}
-
 .small {
   width: 50px;
   height: 50px;
@@ -2078,9 +2071,6 @@ section {
   .tvline {
     font-size: 16px;
     padding: 5px 14px;
-  }
-  .row3 {
-    gap: 18px;
   }
   .b-btn {
     height: 50px;

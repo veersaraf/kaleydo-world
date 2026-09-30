@@ -215,18 +215,10 @@ const dpad = h(
 );
 const aBtn = padBtn('a', 'a-btn', 'A');
 const bBtn = padBtn('b', 'b-btn', 'B');
-const row = h(
-  'div',
-  { class: 'row3' },
-  padBtn('minus', 'small', '−'),
-  padBtn('home', 'small home', h('i', { class: 'house' })),
-  padBtn('plus', 'small', '+'),
-);
-for (const [i, label] of ['Minus', 'Home', 'Plus'].entries()) row.children[i].setAttribute('aria-label', label);
 // the TV's screen (main menu, paused, results…) and what the pad does there
 const menuTitle = h('div', { class: 'ptitle' }, '');
 const menuHint = h('div', { class: 'phint' }, '');
-const menuPanel = h('div', { class: 'panel menu' }, h('div', { class: 'mhead' }, menuTitle, menuHint), dpad, aBtn, row, bBtn);
+const menuPanel = h('div', { class: 'panel menu' }, h('div', { class: 'mhead' }, menuTitle, menuHint), dpad, aBtn, bBtn);
 
 const gaugeRing = h('div', { class: 'ring' });
 const gaugeLive = h('div', { class: 'live' });
