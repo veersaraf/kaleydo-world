@@ -139,8 +139,8 @@ const toOnline = async (p) => {
   await p.keyboard.press('Enter'); // the title: any key
   await screenIs(p, 'home');
   for (let i = 0; i < 12; i++) {
-    if (((await p.textContent('.hpill.focus').catch(() => '')) || '').includes('Play online')) break;
-    await p.keyboard.press(i === 0 ? 'ArrowDown' : 'ArrowRight');
+    if (((await p.textContent('.honline.focus').catch(() => '')) || '').includes('Play online')) break;
+    await p.keyboard.press('ArrowUp');
     await sleep(60);
   }
   await p.keyboard.press('Enter');

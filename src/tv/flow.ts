@@ -721,18 +721,28 @@ export class Flow {
         'beta' in sp && sp.beta ? h('div', { class: 'beta' }, 'BETA') : '',
       ),
     );
-    const tb = loadTour().beaten;
-    const pill = (ico: string, label: string, sub: string) => h('div', { class: 'hpill' }, h('i', null, ico), h('span', null, label), h('small', null, sub));
-    const tour = pill('🏆', 'World Tour', tb >= TOUR.length ? 'The Prism is whole' : `${Math.min(tb, 8)} of 8 shards`);
-    // the cloud: play with friends on their own TVs
-    const online = this.app.link.cloud ? pill('🌐', 'Play online', this.app.link.guests.length ? `${this.app.link.guests.length} watching` : `Room ${this.app.link.room}`) : null;
+    // the cloud: play with friends on their own TVs, a bar of its own over the sports
+    const link = this.app.link;
+    let online: HTMLElement | null = null;
+    if (link.cloud) {
+      const globe = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      globe.setAttribute('viewBox', '0 0 24 24');
+      globe.innerHTML = '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.6 3.8 5.6 3.8 9s-1.2 6.4-3.8 9c-2.6-2.6-3.8-5.6-3.8-9S9.4 5.6 12 3z"/>';
+      const g = link.guests.length;
+      online = h(
+        'div',
+        { class: `honline${g ? ' live' : ''}` },
+        h('i', { class: 'hglobe' }, globe),
+        h('span', { class: 'ht' }, h('b', null, 'Play online'), h('small', null, g ? `${g} ${g === 1 ? 'friend' : 'friends'} in room ${link.room}` : `Friends on other TVs · room ${link.room}`)),
+        h('span', { class: 'hchev' }, '▶'),
+      );
+    }
     let lastCard = Math.max(0, sports.findIndex((sp) => sp.id === this.app.attractSport));
     const n = sports.length;
     const nav = new Nav(
       [
-        ...sports.map((sp, i) => ({ el: cards[i], onSelect: () => open(sp.id), onDown: () => nav.focus(online && i >= n / 2 ? n + 1 : n) })),
-        { el: tour, onSelect: () => this.go(this.tourScreen()), onUp: () => nav.focus(lastCard) },
-        ...(online ? [{ el: online, onSelect: () => this.go(this.onlineScreen()), onUp: () => nav.focus(lastCard) }] : []),
+        ...sports.map((sp, i) => ({ el: cards[i], onSelect: () => open(sp.id), onUp: online ? () => nav.focus(n) : undefined })),
+        ...(online ? [{ el: online, onSelect: () => this.go(this.onlineScreen()), onDown: () => nav.focus(lastCard) }] : []),
       ],
       true,
     );
@@ -754,11 +764,11 @@ export class Flow {
       'div',
       { class: 'screen home' },
       h('img', { class: 'mini-logo', src: '/brand/lockup-small.png', alt: 'Kaleydo World' }),
-      h('div', { class: 'hbottom' }, h('div', { class: 'hpills' }, tour, online), h('div', { class: 'scards' }, ...cards)),
+      h('div', { class: 'hbottom' }, online, h('div', { class: 'scards' }, ...cards)),
       this.join.el,
     );
     this.join.refresh();
-    return this.navScreen('menu', el, nav, () => this.go(this.titleScreen()), { title: 'Pick a sport', hint: '◀ ▶ choose · A play' });
+    return this.navScreen('menu', el, nav, () => this.go(this.titleScreen()), { title: 'Pick a sport', hint: link.cloud ? '◀ ▶ choose · ▲ play online · A play' : '◀ ▶ choose · A play' });
   }
 
   // ---------------------------------------------------------------- online rooms (the cloud)
