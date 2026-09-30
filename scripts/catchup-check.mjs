@@ -47,18 +47,13 @@ const out = await tv.evaluate(() => {
   // a swing that happened during a 100 ms frame: where the cap places it
   const m = k.match;
   const before = m.t;
-  const slips0 = k.slips.length;
   vt += 100;
   orig(vt); // the hitch frame: [vt-100, vt]
-  const frameSlip = k.slips[k.slips.length - 1];
-  const at = (msAgo) => (vt + 5) - msAgo; // a swing at this wall time, heard 5 ms after the frame
   vt += 5;
   const place = (ageMs) => +(m.t - ageMs / 1000 + k.slippedSince(ageMs / 1000)).toFixed(4);
   const uncapped = (ageMs) => +(before + 0.1 - ageMs / 1000 + 0).toFixed(4); // the sim had advanced 100 ms
   const cases = [5, 20, 50, 85, 105].map((a) => `age ${a} ms: placed ${place(a) - before >= 0 ? '+' : ''}${((place(a) - before) * 1000).toFixed(1)} ms into the frame, uncapped sim would say ${((uncapped(a) - before) * 1000).toFixed(1)} ms`);
-  void at;
-  void slips0;
-  return { rows, cases, frameSlip };
+  return { rows, cases };
 });
 console.log(out.rows.join('\n'));
 console.log('a swing that happened during a 100 ms frame, heard 5 ms after it (frame = 100 ms of wall time, 50 ms of sim):');
