@@ -89,7 +89,7 @@ export type PadMsg =
   | { type: 'draw'; down: boolean; lat: number; ts?: number };
 
 /** bowl = your turn to bowl: the grip pad plus move (◀ ▶ = btn left/right) and
- *  aim (↺ ↻ = btn minus/plus) buttons. sword = a duel: swing to attack, hold the
+ *  aim (↖ ↗ = btn minus/plus) buttons. sword = a duel: swing to attack, hold the
  *  guard pad to block (the sword follows the phone, streamed as 'ori'). bat = at
  *  bat in baseball: swing the phone like a bat (the tennis swing message) */
 export type PadMode = 'menu' | 'play' | 'serve' | 'wait' | 'watch' | 'skip' | 'bowl' | 'sword' | 'bow' | 'bat';

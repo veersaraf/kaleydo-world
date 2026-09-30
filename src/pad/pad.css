@@ -1636,45 +1636,65 @@ section {
   letter-spacing: 0;
 }
 
-/* move (◀ ▶) and aim (↺ ↻): low in the corners, away from the thumb on the grip */
+/* move (◀ ▶) and aim (↖ ↗): low in the corners, away from the thumb on the grip */
 .bowl-row {
   width: 100%;
   display: flex;
   justify-content: space-between;
-  align-items: flex-end;
-  flex: none;
-}
-
-.bgroup {
-  display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 6px;
-  border-radius: 24px;
-  background: rgba(40, 30, 90, 0.06);
-}
-
-.bgroup > div {
-  display: flex;
   gap: 10px;
+  flex: none;
+  padding-bottom: 4px;
 }
 
-.bgroup > span {
-  font-size: 11px;
+/* the swing meter round the ball: only while it's in your hand or rolling */
+.grip-wrap .grip-meter {
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.grip-wrap:has(.grip.held, .grip.thrown) .grip-meter {
+  opacity: 1;
+}
+
+/* move and aim: one pill each, ◀ label ▶ */
+.stepper {
+  display: flex;
+  align-items: center;
+  border-radius: 99px;
+  background: #eeedf4;
+  box-shadow: 0 3px 0 #dcdbe6;
+}
+
+.stepper > span {
+  min-width: 42px;
+  text-align: center;
+  font-size: 13px;
   font-weight: 700;
-  letter-spacing: 0.2em;
-  opacity: 0.5;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  pointer-events: none;
 }
 
-.bowl-row .small {
+.step {
   width: 54px;
   height: 54px;
+  border-radius: 99px;
+  display: grid;
+  place-items: center;
+  color: var(--ink);
+  transition: background 0.1s;
 }
 
-.bowl-row svg {
-  width: 26px;
-  height: 26px;
+.step.down {
+  background: #dddcea;
+}
+
+.step svg {
+  width: 24px;
+  height: 24px;
+  opacity: 0.75;
 }
 
 /* ------------------------------------------------------------ sword duel */

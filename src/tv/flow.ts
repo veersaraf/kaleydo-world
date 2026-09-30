@@ -1219,7 +1219,7 @@ export class Flow {
           tip('🎳', 'Hold the ball', 'Press and hold the big ball on your phone — that’s your grip. The bowler walks up as you swing.'),
           tip('💪', 'Swing and let go', 'Swing your arm back, then forward like bowling, and let go at the bottom. Faster swing, faster ball.'),
           tip('🌀', 'Hook it', 'Twist your wrist as you let go to curve the ball late in the lane. Turn it left to hook left.'),
-          tip('🎯', 'Aim', '◀ ▶ step along the line, ↺ ↻ turn the aim line — one board per tap. A straight ball from where you start finds the pocket.'),
+          tip('🎯', 'Aim', '◀ ▶ step along the line, ↖ ↗ turn the aim line — one board per tap. A straight ball from where you start finds the pocket.'),
           tip('✨', 'Strikes', 'Hit the pocket (just beside the head pin) with a little angle. Hooking? Move out and aim back in.'),
           tip('👥', 'Take turns', 'Up to four bowlers, each on their own phone — add a CPU if you like. Ten frames, real pin physics.'),
         ],
@@ -2587,11 +2587,11 @@ export class Flow {
     if (!b || b.cpu !== null) return '';
     const seat = this.app.input.seats[b.slot];
     return seat && !seat.local
-      ? '<b>Hold</b> the ball · swing back and through · <b>let go</b> · twist to hook · <b>◀ ▶</b> move · <b>↺ ↻</b> aim'
+      ? '<b>Hold</b> the ball · swing back and through · <b>let go</b> · twist to hook · <b>◀ ▶</b> move · <b>↖ ↗</b> aim'
       : '<b>Hold Space</b> (or the mouse) · let go to bowl · <b>J K L</b> straight / hook left / hook right · <b>arrows</b> move and aim';
   }
 
-  /** ◀ ▶ step along the approach, ↺ ↻ (− +, or ▲ ▼) turn the aim; held down, they keep going. */
+  /** ◀ ▶ step along the approach, ↖ ↗ (− +, or ▲ ▼) turn the aim; held down, they keep going. */
   private bowlButton(slot: number, b: Btn, down: boolean) {
     const g = this.app.bowl;
     if (!g) return false;

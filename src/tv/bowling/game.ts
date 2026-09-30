@@ -58,7 +58,7 @@ const ANGLE_GAIN = 0.1;
 const SPIN_GAIN = 0.8;
 /** where a bowler starts: a straight ball from here meets the pocket (1-3 for a right-hander) */
 export const START_X = 0.065 - HAND_X;
-/** ◀ ▶ and ↺ ↻: a press steps (a board), holding keeps going after a moment */
+/** ◀ ▶ and ↖ ↗: a press steps (a board), holding keeps going after a moment */
 const MOVE_STEP = 0.027;
 const MOVE_RATE = 0.4;
 const TURN_STEP = 0.0015;
@@ -227,7 +227,7 @@ export class BowlingGame {
     this.armLiveT = this.t;
   }
 
-  /** ◀ ▶ step along the approach, ↺ ↻ turn the aim: a press moves one board,
+  /** ◀ ▶ step along the approach, ↖ ↗ turn the aim: a press moves one board,
    *  holding keeps going (dir 0 = let go) */
   move(slot: number, dir: number) {
     const b = this.bowler;

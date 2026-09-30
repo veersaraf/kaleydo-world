@@ -82,7 +82,7 @@ each side its own half of the screen.
 | Bowl | **hold** the ball on the screen, swing your arm back and through, **let go** at the bottom | hold <kbd>Space</kbd> (or the mouse button), let go — or flick the mouse up |
 | Speed | how fast you swing | flick speed |
 | Hook | twist your wrist as you let go (turn it left to hook left) | <kbd>J</kbd> straight · <kbd>K</kbd> hook left · <kbd>L</kbd> hook right |
-| Move / aim | ◀ ▶ step, ↺ ↻ turn the aim line — one board per tap | arrow keys |
+| Move / aim | ◀ ▶ step, ↖ ↗ turn the aim line — one board per tap | arrow keys |
 
 You start where a straight ball meets the pocket. A hook curves late, so to
 hook into the pocket move right (left-handers: left) and aim out a little.

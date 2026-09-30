@@ -252,10 +252,14 @@ const waitPanel = h('div', { class: 'panel wait' }, h('div', { class: 'wicon' },
 
 // bowling: the phone is the ball. Hold the big grip pad (the ball is in your
 // hand), swing back and forward, let go at the bottom. Move (◀ ▶) and aim
-// (↺ ↻) sit low in the corners, well away from where the thumb rests.
+// (↖ ↗) sit low in the corners, well away from where the thumb rests.
 /** move/aim buttons repeat while held */
 function bowlBtn(b: PadButton, label: string, glyph: SVGSVGElement) {
-  return h('button', { class: 'pb small', 'data-b': b, 'data-rep': '', 'aria-label': label }, glyph);
+  return h('button', { class: 'pb step', 'data-b': b, 'data-rep': '', 'aria-label': label }, glyph);
+}
+/** one control: ◀ label ▶ in a single pill */
+function stepper(label: string, left: HTMLElement, right: HTMLElement) {
+  return h('div', { class: 'stepper' }, left, h('span', {}, label), right);
 }
 const bowlTitle = h('div', { class: 'ptitle' }, '');
 const bowlHint = h('div', { class: 'phint' }, '');
@@ -282,23 +286,8 @@ const bowlPanel = h(
   h(
     'div',
     { class: 'bowl-row' },
-    h(
-      'div',
-      { class: 'bgroup' },
-      h('div', {}, bowlBtn('left', 'Step left', icon('', 'M15.5 5.5 7.5 12l8 6.5z')), bowlBtn('right', 'Step right', icon('', 'M8.5 5.5 16.5 12l-8 6.5z'))),
-      h('span', {}, 'MOVE'),
-    ),
-    h(
-      'div',
-      { class: 'bgroup' },
-      h(
-        'div',
-        {},
-        bowlBtn('minus', 'Aim left', icon('M6.4 9.8A6.5 6.5 0 1 0 12 6.5', 'M9 6.5 13 3.2v6.6z')),
-        bowlBtn('plus', 'Aim right', icon('M17.6 9.8A6.5 6.5 0 1 1 12 6.5', 'M15 6.5 11 3.2v6.6z')),
-      ),
-      h('span', {}, 'AIM'),
-    ),
+    stepper('Move', bowlBtn('left', 'Step left', icon('', 'M15.5 5.5 7.5 12l8 6.5z')), bowlBtn('right', 'Step right', icon('', 'M8.5 5.5 16.5 12l-8 6.5z'))),
+    stepper('Aim', bowlBtn('minus', 'Aim left', icon('M16.5 16.5 9 9', 'M6.5 6.5h7.5l-7.5 7.5z')), bowlBtn('plus', 'Aim right', icon('M7.5 16.5 15 9', 'M17.5 6.5H10l7.5 7.5z'))),
   ),
 );
 
