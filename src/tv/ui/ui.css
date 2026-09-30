@@ -719,13 +719,18 @@
   top: calc(var(--u) * 3.4);
   display: grid;
   grid-template-columns: auto auto auto;
-  border-radius: calc(var(--u) * 1.8);
+  border-radius: calc(var(--u) * 1.6);
   overflow: hidden;
-  background: var(--panel);
-  box-shadow: 0 calc(var(--u) * 0.8) calc(var(--u) * 2.6) rgba(10, 10, 40, 0.3);
-  color: var(--ink);
-  font-size: calc(var(--u) * 2.6);
-  font-weight: 700;
+  background: rgba(16, 15, 38, 0.72);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 calc(var(--u) * 0.6) calc(var(--u) * 2.4) rgba(10, 10, 40, 0.25);
+  color: #fff;
+  font-size: calc(var(--u) * 2.3);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
   transition: transform 0.3s;
 }
 
@@ -733,48 +738,62 @@
   display: contents;
 }
 
+/* (the second player's row: a hairline above it) */
+.scorebug > :nth-child(n + 4) {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
 .scorebug .nm {
-  padding: calc(var(--u) * 0.9) calc(var(--u) * 2) calc(var(--u) * 0.9) calc(var(--u) * 1.4);
+  padding: calc(var(--u) * 0.9) calc(var(--u) * 1.8) calc(var(--u) * 0.9) calc(var(--u) * 1.5);
   display: flex;
   align-items: center;
   gap: calc(var(--u) * 1);
-  min-width: calc(var(--u) * 20);
+  min-width: calc(var(--u) * 19);
   font-family: var(--display);
 }
 
-.scorebug .nm i {
-  width: calc(var(--u) * 1);
-  align-self: stretch;
-  border-radius: 99px;
+.scorebug .nm > i:first-child {
+  width: calc(var(--u) * 1.1);
+  height: calc(var(--u) * 1.1);
+  flex: none;
+  border-radius: 50%;
   background: var(--c);
+  box-shadow: 0 0 0 calc(var(--u) * 0.25) color-mix(in oklab, var(--c) 35%, transparent);
 }
 
+/* who serves: a small tennis ball after their name */
 .scorebug .sv {
-  width: calc(var(--u) * 1.6);
-  height: calc(var(--u) * 1.6);
+  width: calc(var(--u) * 1.3);
+  height: calc(var(--u) * 1.3);
+  flex: none;
+  margin-left: auto;
   border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #f6ff8a, #cfe62f 60%, #9ab41b);
+  background: radial-gradient(circle at 35% 35%, #f6ff8a, #d4ea35 60%, #a3bd1f);
   opacity: 0;
-  transition: opacity 0.2s;
+  transform: scale(0.5);
+  transition:
+    opacity 0.2s,
+    transform 0.25s cubic-bezier(0.3, 1.6, 0.5, 1);
 }
 
 .scorebug .sv.on {
   opacity: 1;
+  transform: none;
 }
 
 .scorebug .g {
-  padding: calc(var(--u) * 0.9) calc(var(--u) * 1.6);
-  background: rgba(20, 20, 60, 0.07);
+  padding: calc(var(--u) * 0.9) calc(var(--u) * 1.4);
   text-align: center;
-  min-width: calc(var(--u) * 4.4);
+  min-width: calc(var(--u) * 4);
+  color: rgba(255, 255, 255, 0.55);
 }
 
 .scorebug .p {
-  padding: calc(var(--u) * 0.9) calc(var(--u) * 1.6);
-  background: var(--accent);
-  color: #fff;
+  padding: calc(var(--u) * 0.9) calc(var(--u) * 1.4);
+  background: rgba(255, 255, 255, 0.1);
+  font-weight: 700;
   text-align: center;
-  min-width: calc(var(--u) * 6.4);
+  min-width: calc(var(--u) * 5.6);
 }
 
 .scorebug .p.bump {
@@ -2769,47 +2788,187 @@ kbd {
   box-shadow: 0 0 0 calc(var(--u) * 0.4) var(--accent, #3aa8ff);
 }
 
-/* the Kaleydo toggle on the setup screens (what it does, under it, while it's on) */
-.row.kal {
-  flex-wrap: wrap;
-  row-gap: calc(var(--u) * 0.3);
-}
-
-.row.kal .desc {
-  display: none;
-  flex-basis: 100%;
-}
-
-.row.kal.on .desc {
-  display: block;
-}
-
-.row.kal .k {
+/* the flagship modes on the setup screens (Kaleydo mode, Rush): a tile each, with a switch;
+   switched on, a tile lights up in its mode's colours */
+.feats {
   display: flex;
-  align-items: center;
-  gap: calc(var(--u) * 0.9);
+  flex-direction: column;
+  gap: calc(var(--u) * 1);
+  margin: calc(var(--u) * 1.2) calc(var(--u) * -2) 0;
 }
 
-.row.kal .kgem {
-  width: calc(var(--u) * 1.8);
-  height: calc(var(--u) * 1.8);
-  border-radius: calc(var(--u) * 0.4);
+.feat {
+  display: grid;
+  grid-template-columns: calc(var(--u) * 5.2) 1fr auto;
+  align-items: center;
+  gap: calc(var(--u) * 1.8);
+  padding: calc(var(--u) * 1.3) calc(var(--u) * 1.8);
+  border: calc(var(--u) * 0.25) solid transparent;
+  border-radius: calc(var(--u) * 2.2);
+  background: rgba(255, 255, 255, 0.06) padding-box;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  transition:
+    background 0.2s,
+    box-shadow 0.2s;
+}
+
+.feat.focus {
+  background: rgba(255, 255, 255, 0.13) padding-box;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+}
+
+.feat .fico {
+  width: calc(var(--u) * 5.2);
+  height: calc(var(--u) * 5.2);
+  border-radius: calc(var(--u) * 1.5);
+  display: grid;
+  place-items: center;
+  font-size: calc(var(--u) * 2.8);
+  font-style: normal;
+  background: rgba(255, 255, 255, 0.08);
+  filter: grayscale(0.8);
+  opacity: 0.6;
+  transition:
+    filter 0.25s,
+    opacity 0.25s,
+    background 0.25s;
+}
+
+.feat .kgem {
+  width: calc(var(--u) * 2.3);
+  height: calc(var(--u) * 2.3);
+  border-radius: calc(var(--u) * 0.5);
   transform: rotate(45deg);
   background: linear-gradient(135deg, #ff5a8a, #ffb13d, #4be3a2, #52a7ff);
-  opacity: 0.45;
 }
 
-.row.kal.on .kgem {
-  opacity: 1;
-  box-shadow: 0 0 calc(var(--u) * 1.2) rgba(180, 120, 255, 0.8);
+.feat .ftxt {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 0.3);
 }
 
-.row.kal.on .v span:nth-child(2) {
-  background: linear-gradient(90deg, #ff5a8a, #ffb13d, #4be3a2, #52a7ff);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+.feat .ftxt b {
+  font-size: calc(var(--u) * 2.5);
   font-weight: 700;
+  line-height: 1.1;
+}
+
+.feat .ftxt small {
+  font-size: calc(var(--u) * 1.6);
+  line-height: 1.3;
+  opacity: 0.6;
+}
+
+/* the switch */
+.feat .fsw {
+  width: calc(var(--u) * 5.6);
+  height: calc(var(--u) * 3.2);
+  padding: calc(var(--u) * 0.4);
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.18);
+  transition: background 0.25s;
+}
+
+.feat .fsw i {
+  display: block;
+  width: calc(var(--u) * 2.4);
+  height: calc(var(--u) * 2.4);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 0.25s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+
+.feat.on .fsw i {
+  transform: translateX(calc(var(--u) * 2.4));
+}
+
+.feat.on .fico {
+  filter: none;
+  opacity: 1;
+}
+
+/* Kaleydo on: a prism edge that slides, the gem glows */
+.feat.kal.on {
+  background:
+    linear-gradient(#1d1a36, #1d1a36) padding-box,
+    var(--prism) border-box;
+  background-size:
+    100% 100%,
+    200% 100%;
+  box-shadow: 0 0 calc(var(--u) * 3) rgba(160, 124, 255, 0.35);
+  animation: feat-prism 6s linear infinite;
+}
+
+.feat.kal.on.focus {
+  background:
+    linear-gradient(#29254a, #29254a) padding-box,
+    var(--prism) border-box;
+  background-size:
+    100% 100%,
+    200% 100%;
+}
+
+.feat.kal.on .fico {
+  background: rgba(160, 124, 255, 0.2);
+}
+
+.feat.kal.on .kgem {
+  box-shadow: 0 0 calc(var(--u) * 1.6) rgba(180, 120, 255, 0.9);
+}
+
+.feat.kal.on .fsw {
+  background: var(--prism);
+  background-size: 200% 100%;
+  animation: prism-slide 6s linear infinite;
+}
+
+@keyframes feat-prism {
+  to {
+    background-position:
+      0 0,
+      200% 0;
+  }
+}
+
+/* Rush on: a fire edge, the flame flickers */
+.feat.rush.on {
+  background:
+    linear-gradient(#2b1a22, #2b1a22) padding-box,
+    linear-gradient(90deg, #ffc53d, #ff6a2b, #ff2d55) border-box;
+  box-shadow: 0 0 calc(var(--u) * 3) rgba(255, 106, 43, 0.35);
+}
+
+.feat.rush.on.focus {
+  background:
+    linear-gradient(#3a2230, #3a2230) padding-box,
+    linear-gradient(90deg, #ffc53d, #ff6a2b, #ff2d55) border-box;
+}
+
+.feat.rush.on .fico {
+  background: rgba(255, 106, 43, 0.2);
+  animation: flicker 1.2s ease-in-out infinite;
+}
+
+.feat.rush.on .fsw {
+  background: linear-gradient(90deg, #ffc53d, #ff6a2b, #ff2d55);
+}
+
+@keyframes flicker {
+  50% {
+    transform: scale(1.06) rotate(-2deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .feat.kal.on,
+  .feat.kal.on .fsw,
+  .feat.rush.on .fico {
+    animation: none;
+  }
 }
 
 /* ------------------------------------------------------------ the smash */
@@ -3775,4 +3934,64 @@ kbd {
 .setup .row.go.focus {
   background: #fff;
   box-shadow: 0 0 0 calc(var(--u) * 0.4) rgba(255, 255, 255, 0.35);
+}
+
+/* ------------------------------------------------------------ pause */
+
+.pausemenu {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(12, 12, 32, 0.55);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  color: #fff;
+  text-shadow: none;
+}
+
+.pausemenu .sheet {
+  width: min(calc(var(--u) * 50), 90vw);
+  padding: 0;
+  align-items: center;
+  gap: calc(var(--u) * 2.4);
+}
+
+.pausemenu .sheet h2 {
+  margin: 0;
+  font-size: calc(var(--u) * 2);
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+
+.pausemenu .menu {
+  width: 100%;
+  gap: calc(var(--u) * 0.8);
+}
+
+.pausemenu .item {
+  justify-content: center;
+  padding: calc(var(--u) * 1.6) calc(var(--u) * 3);
+  border-radius: 99px;
+  background: transparent;
+  box-shadow: none;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: calc(var(--u) * 3);
+  transform: none;
+}
+
+.pausemenu .item.focus {
+  background: #fff;
+  color: var(--ink);
+  transform: none;
+  box-shadow: 0 calc(var(--u) * 0.8) calc(var(--u) * 2.4) rgba(0, 0, 0, 0.25);
+}
+
+.pausemenu .item.focus::after {
+  content: none;
+}
+
+.pausemenu .hintline {
+  opacity: 0.5;
 }

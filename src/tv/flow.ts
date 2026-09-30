@@ -611,29 +611,33 @@ export class Flow {
     this.app.startAttract(this.app.stage.current?.def.id ?? 'park', sport);
   }
 
-  /** The Kaleydo toggle on every setup screen: big moments shatter the world into the next one. */
-  private kaleidoRow(onChange?: () => void) {
-    const S = this.settings;
-    const v = h('span');
+  /**
+   * A flagship mode's toggle on a setup screen: a tile with its mark, its name, what it does and
+   * a switch; switched on, it lights up in the mode's own colours.
+   */
+  private featureTile(kind: 'kal' | 'rush', icon: Node, title: string, desc: string, get: () => boolean, set: (on: boolean) => void, onChange?: () => void) {
     const r = h(
       'div',
-      { class: 'row kal' },
-      h('span', { class: 'k' }, h('i', { class: 'kgem' }), 'Kaleydo mode'),
-      h('span', { class: 'v' }, h('span', { class: 'arrow' }, '◀'), v, h('span', { class: 'arrow' }, '▶')),
-      h('span', { class: 'desc' }, 'Big moments shatter the world into the next one'),
+      { class: `feat ${kind}` },
+      h('i', { class: 'fico' }, icon),
+      h('span', { class: 'ftxt' }, h('b', null, title), h('small', null, desc)),
+      h('span', { class: 'fsw' }, h('i')),
     );
-    const refresh = () => {
-      v.textContent = S.kaleido ? 'On' : 'Off';
-      r.classList.toggle('on', S.kaleido);
-    };
+    const refresh = () => r.classList.toggle('on', get());
     const toggle = () => {
-      S.kaleido = !S.kaleido;
+      set(!get());
       this.save();
       refresh();
       onChange?.();
     };
     refresh();
     return { r, item: { el: r, onLeft: toggle, onRight: toggle, onSelect: toggle } };
+  }
+
+  /** The Kaleydo toggle on every setup screen: big moments shatter the world into the next one. */
+  private kaleidoRow(onChange?: () => void) {
+    const S = this.settings;
+    return this.featureTile('kal', h('i', { class: 'kgem' }), 'Kaleydo mode', 'Big moments shatter the world into the next one', () => S.kaleido, (on) => (S.kaleido = on), onChange);
   }
 
   /** The sports on the home screen: what each is and how it plays. */
@@ -1069,10 +1073,9 @@ export class Flow {
     const sheet = h('div', { class: 'sheet' });
     void mode;
     const title = h('h2', null, 'Tennis');
-    const TENNIS_DESC = 'Choose your match, then pick a world.';
-    const RUSH_DESC = 'Rush: every shot in a rally speeds the ball up — keep it going and it catches fire.';
-    const desc = h('div', { class: 'hintline' }, TENNIS_DESC);
+    const desc = h('div', { class: 'hintline' }, 'Choose your match, then pick a world.');
     const kal = this.kaleidoRow(() => refresh());
+    const rush = this.featureTile('rush', document.createTextNode('🔥'), 'Rush', 'Every shot speeds the ball up. Keep the rally going and it catches fire.', () => S.rush, (on) => (S.rush = on), () => refresh());
     const teamsView = h('div', { class: 'teams' });
     const row = (k: string) => {
       const v = h('span');
@@ -1083,7 +1086,6 @@ export class Flow {
     const rFormat = row('Format');
     const rLevel = row('CPU level');
     const rLen = row('Match');
-    const rPace = row('Pace');
     const go = h('div', { class: 'row go' }, 'Choose a world ▶');
     const refresh = () => {
       // (Kaleydo picks the worlds itself: no world screen to go to)
@@ -1105,9 +1107,6 @@ export class Flow {
         navRef.items[2].disabled = !cpu;
       }
       rLen.v.textContent = S.games === 1 ? '1 game' : S.games === 2 ? 'Best of 3 games' : 'Best of 5 games';
-      rPace.v.textContent = S.rush ? 'Rush 🔥' : 'Standard';
-      // (Rush swaps the description for one about it, the same two lines tall, so the sheet keeps its height)
-      desc.textContent = S.rush ? RUSH_DESC : TENNIS_DESC;
       clear(teamsView);
       teamsView.append(this.teamChips(p.t0, S.doubles), h('span', { class: 'vs' }, 'vs'), this.teamChips(p.t1, S.doubles));
       this.save();
@@ -1143,7 +1142,7 @@ export class Flow {
         onRight: () => ((S.games = cyc([1, 2, 3], S.games, 1)), refresh()),
         onSelect: () => ((S.games = cyc([1, 2, 3], S.games, 1)), refresh()),
       },
-      { el: rPace.r, onLeft: () => ((S.rush = !S.rush), refresh()), onRight: () => ((S.rush = !S.rush), refresh()), onSelect: () => ((S.rush = !S.rush), refresh()) },
+      rush.item,
       kal.item,
       {
         el: go,
@@ -1157,7 +1156,7 @@ export class Flow {
     ]);
     navRef = nav;
     nav.focus(6);
-    sheet.append(title, desc, teamsView, rTeams.r, rFormat.r, rLevel.r, rLen.r, rPace.r, kal.r, go, h('div', { class: 'hintline' }, '◀ ▶ change · A select · B back'));
+    sheet.append(title, desc, teamsView, rTeams.r, rFormat.r, rLevel.r, rLen.r, h('div', { class: 'feats' }, rush.r, kal.r), go, h('div', { class: 'hintline' }, '◀ ▶ change · A select · B back'));
     const el = h('div', { class: 'screen setup' }, sheet);
     refresh();
     const scr = this.navScreen('setup', el, nav, () => this.go(this.mainMenu()), { title: 'Tennis', hint: '◀ ▶ to change' });
@@ -1329,8 +1328,8 @@ export class Flow {
       },
       { el: quit, onSelect: () => this.quitToMenu() },
     ]);
-    const sheet = h('div', { class: 'sheet panel', style: 'width:auto;min-width:calc(var(--u)*56)' }, h('h2', null, 'Paused'), h('div', { class: 'menu' }, resume, restart, quit));
-    return this.navScreen('pause', h('div', { class: 'screen center' }, sheet), nav, () => this.resume(), { title: 'Paused', hint: 'A to choose · B resume' });
+    const sheet = h('div', { class: 'sheet' }, h('h2', null, 'Paused'), h('div', { class: 'menu' }, resume, restart, quit));
+    return this.navScreen('pause', h('div', { class: 'screen pausemenu' }, sheet), nav, () => this.resume(), { title: 'Paused', hint: 'A to choose · B resume' });
   }
 
   private resultsScreen(): Screen {
@@ -1625,8 +1624,8 @@ export class Flow {
       { el: resume, onSelect: () => this.go(null) },
       { el: leave, onSelect: () => (this.mm ? this.mmGuestExit('') : this.leaveGuestMatch()) },
     ]);
-    const sheet = h('div', { class: 'sheet panel', style: 'width:auto;min-width:calc(var(--u)*56)' }, h('h2', null, 'Menu'), h('div', { class: 'hintline' }, 'The match goes on without you'), h('div', { class: 'menu' }, resume, leave));
-    return this.navScreen('guestpause', h('div', { class: 'screen center' }, sheet), nav, () => this.go(null), { title: 'Menu', hint: 'A to choose · B back' });
+    const sheet = h('div', { class: 'sheet' }, h('h2', null, 'Menu'), h('div', { class: 'menu' }, resume, leave), h('div', { class: 'hintline' }, 'The match goes on without you'));
+    return this.navScreen('guestpause', h('div', { class: 'screen pausemenu' }, sheet), nav, () => this.go(null), { title: 'Menu', hint: 'A to choose · B back' });
   }
 
   private guestResultsScreen(end: NetEnd): Screen {
@@ -1808,7 +1807,7 @@ export class Flow {
       pitchRow.r,
       countRow.r,
       worldRow.r,
-      kal.r,
+      h('div', { class: 'feats' }, kal.r),
       go,
     );
     return this.navScreen('hrsetup', h('div', { class: 'screen setup' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Home Run Derby', hint: '◀ ▶ to change · A to play' });
@@ -2089,7 +2088,7 @@ export class Flow {
       who,
       cpuRow.r,
       worldRow.r,
-      kal.r,
+      h('div', { class: 'feats' }, kal.r),
       go,
     );
     return this.navScreen('archsetup', h('div', { class: 'screen setup' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Archery', hint: '◀ ▶ to change · A to shoot' });
@@ -2320,7 +2319,7 @@ export class Flow {
       h('div', { class: 'hintline' }, 'Your phone is the sword. Swing to strike; hold GUARD and hold the sword across their swing to block — a blocked attacker is stunned. Knock them off the end!'),
       oppRow.r,
       worldRow.r,
-      kal.r,
+      h('div', { class: 'feats' }, kal.r),
       go,
     );
     return this.navScreen('duelsetup', h('div', { class: 'screen setup' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Sword Duel', hint: '◀ ▶ to change · A to fight' });
@@ -2575,7 +2574,7 @@ export class Flow {
       who,
       cpuRow.r,
       worldRow.r,
-      kal.r,
+      h('div', { class: 'feats' }, kal.r),
       go,
     );
     return this.navScreen('bowlsetup', h('div', { class: 'screen setup' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Bowling', hint: '◀ ▶ to change · A to bowl' });
