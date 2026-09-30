@@ -56,6 +56,8 @@ export interface Settings {
   rush: boolean;
   /** the sound button in the corner */
   muted: boolean;
+  /** which set of defaults the saved settings have seen (see load) */
+  rev: number;
 }
 
 const DEFAULTS: Settings = {
@@ -71,9 +73,10 @@ const DEFAULTS: Settings = {
   split: true,
   world: 'park',
   seenTutorial: false,
-  kaleido: false,
+  kaleido: true,
   rush: false,
   muted: false,
+  rev: 1,
 };
 
 const LEVELS: { id: Level; label: string; stars: string }[] = [
@@ -418,7 +421,10 @@ export class Flow {
 
   private load(): Partial<Settings> {
     try {
-      return JSON.parse(localStorage.getItem('kaleido.settings') || '{}');
+      const saved: Partial<Settings> = JSON.parse(localStorage.getItem('kaleido.settings') || '{}');
+      // the defaults changed (rev 1: singles, normal pace, Kaleydo mode on): saved settings take them once
+      if ((saved.rev ?? 0) < 1) Object.assign(saved, { doubles: false, rush: false, kaleido: true, rev: 1 });
+      return saved;
     } catch {
       return {};
     }
@@ -632,6 +638,51 @@ export class Flow {
     };
     refresh();
     return { r, item: { el: r, onLeft: toggle, onRight: toggle, onSelect: toggle } };
+  }
+
+  /**
+   * Tennis's Pace, a flagship tile too: Normal or Rush side by side, so Rush is in view even
+   * while it's off; choosing Rush lights the tile with fire.
+   */
+  private paceTile(onChange?: () => void) {
+    const S = this.settings;
+    const ns = 'http://www.w3.org/2000/svg';
+    const flame = document.createElementNS(ns, 'svg');
+    flame.setAttribute('viewBox', '0 0 24 24');
+    flame.innerHTML =
+      '<defs><linearGradient id="pace-fire" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#ff2d55"/><stop offset=".55" stop-color="#ff6a2b"/><stop offset="1" stop-color="#ffc53d"/></linearGradient></defs>' +
+      '<path class="fl" d="M12 2.5c.6 3.2 3.4 4.9 4.9 7.6 1.9 3.4.4 8.4-4.9 8.9-5.1-.2-6.9-4.6-5.3-8.2.6 1.6 1.6 2.5 2.8 2.7-.9-3.6.4-7.9 2.5-11z"/>';
+    const normal = h('span', null, 'Normal');
+    const rush = h('span', null, 'Rush');
+    const desc = h('small');
+    const r = h(
+      'div',
+      { class: 'feat rush' },
+      h('i', { class: 'fico' }, flame),
+      h('span', { class: 'ftxt' }, h('b', null, 'Pace'), desc),
+      h('span', { class: 'fseg' }, normal, rush),
+    );
+    const refresh = () => {
+      r.classList.toggle('on', S.rush);
+      normal.classList.toggle('sel', !S.rush);
+      rush.classList.toggle('sel', S.rush);
+      desc.textContent = S.rush ? 'Every shot is faster, until the ball catches fire' : 'Classic speed. In Rush, every shot is faster';
+    };
+    const set = (on: boolean) => {
+      if (S.rush === on) return;
+      S.rush = on;
+      this.save();
+      refresh();
+      onChange?.();
+    };
+    // (a click on either choice picks it)
+    for (const [el, on] of [[normal, false], [rush, true]] as const)
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        set(on);
+      });
+    refresh();
+    return { r, item: { el: r, onLeft: () => set(false), onRight: () => set(true), onSelect: () => set(!S.rush) } };
   }
 
   /** The Kaleydo toggle on every setup screen: big moments shatter the world into the next one. */
@@ -1075,7 +1126,7 @@ export class Flow {
     const title = h('h2', null, 'Tennis');
     const desc = h('div', { class: 'hintline' }, 'Choose your match, then pick a world.');
     const kal = this.kaleidoRow(() => refresh());
-    const rush = this.featureTile('rush', document.createTextNode('🔥'), 'Rush', 'Every shot speeds the ball up. Keep the rally going and it catches fire.', () => S.rush, (on) => (S.rush = on), () => refresh());
+    const rush = this.paceTile(() => refresh());
     const teamsView = h('div', { class: 'teams' });
     const row = (k: string) => {
       const v = h('span');
