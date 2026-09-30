@@ -54,38 +54,34 @@ interface Biome {
 }
 
 const BIOMES: Record<string, Biome> = {
-  meadow: { top: [col('#86cf3c'), col('#6cbd30')], wall: col('#3f9a2a'), beach: col('#f4cf86'), flora: [['round', 4], ['pine', 1.2], ['flower', 1.3]], density: 2.1 },
-  blossom: { top: [col('#a6dc5e'), col('#8fd14c')], wall: col('#58a83a'), beach: col('#f6d79a'), flora: [['blossom', 4], ['round', 1], ['flower', 1.2]], density: 1.05 },
-  autumn: { top: [col('#c2cf4a'), col('#a9c23e')], wall: col('#789a2c'), beach: col('#f2c77e'), flora: [['autumn', 5], ['pine', 1]], density: 1.05 },
-  snow: { top: [col('#f7fbff'), col('#e6f0ff')], wall: col('#b9cdee'), beach: col('#dfe9f7'), flora: [['snowpine', 1]], density: 0.8 },
-  desert: { top: [col('#f6cd7c'), col('#eebd68')], wall: col('#e0994f'), beach: col('#fbe0a6'), flora: [['palm', 2.5], ['cactus', 2], ['boulder', 1.5]], density: 1.0 },
-  mountain: { top: [col('#9cc64e'), col('#86b842')], wall: col('#5f9434'), beach: col('#f0c57c'), flora: [['pine', 3], ['round', 1]], density: 1.1 },
+  meadow: { top: [col('#86cf3c'), col('#6cbd30')], wall: col('#3f9a2a'), beach: col('#f4cf86'), flora: [['round', 4], ['pine', 1], ['flower', 0.8]], density: 1.3 },
+  autumn: { top: [col('#b9cf48'), col('#a3c23c')], wall: col('#6f9a2c'), beach: col('#f2c77e'), flora: [['autumn', 5], ['pine', 1]], density: 1.0 },
+  snow: { top: [col('#f7fbff'), col('#e6f0ff')], wall: col('#b9cdee'), beach: col('#dfe9f7'), flora: [['snowpine', 1]], density: 0.45 },
+  desert: { top: [col('#f6cd7c'), col('#eebd68')], wall: col('#e0994f'), beach: col('#fbe0a6'), flora: [['palm', 3], ['cactus', 2], ['boulder', 1]], density: 0.7 },
+  forest: { top: [col('#7dc24a'), col('#69b23e')], wall: col('#44913a'), beach: col('#f0c57c'), flora: [['pine', 4], ['round', 1]], density: 1.3 },
 };
+
+type Sport = 'tennis' | 'baseball' | 'bowling' | 'archery' | 'duel' | 'lighthouse' | 'palm';
 
 interface Island {
   d: THREE.Vector3;
   r: number;
   wob: number;
   biome: Biome;
+  sport: Sport;
+  /** angular radius of the flat clearing the landmark sits in (0 = none) */
+  clear: number;
 }
 
-const HERO = dir(8, 0);
-const CLEARING = dir(9, 3);
+const HERO = dir(10, 0);
 const ISLANDS: Island[] = [
-  { d: HERO, r: 0.55, wob: 0.26, biome: BIOMES.meadow },
-  { d: dir(55, -48), r: 0.33, wob: 0.3, biome: BIOMES.blossom },
-  { d: dir(40, 70), r: 0.34, wob: 0.3, biome: BIOMES.autumn },
-  { d: dir(90, 0), r: 0.36, wob: 0.26, biome: BIOMES.snow },
-  { d: dir(-40, 52), r: 0.34, wob: 0.3, biome: BIOMES.desert },
-  { d: dir(-36, -52), r: 0.34, wob: 0.3, biome: BIOMES.mountain },
-  { d: dir(-90, 0), r: 0.3, wob: 0.26, biome: BIOMES.snow },
-  { d: dir(0, -98), r: 0.36, wob: 0.3, biome: BIOMES.meadow },
-  { d: dir(-5, 112), r: 0.42, wob: 0.3, biome: BIOMES.blossom },
-  { d: dir(15, 172), r: 0.5, wob: 0.28, biome: BIOMES.mountain },
-  { d: dir(-30, -140), r: 0.44, wob: 0.3, biome: BIOMES.autumn },
-  { d: dir(38, -135), r: 0.36, wob: 0.3, biome: BIOMES.desert },
-  { d: dir(40, 125), r: 0.3, wob: 0.3, biome: BIOMES.meadow },
-  { d: dir(-45, 160), r: 0.36, wob: 0.3, biome: BIOMES.desert },
+  { d: HERO, r: 0.5, wob: 0.24, biome: BIOMES.meadow, sport: 'tennis', clear: 0.18 },
+  { d: dir(30, 76), r: 0.5, wob: 0.26, biome: BIOMES.autumn, sport: 'baseball', clear: 0.0 },
+  { d: dir(-24, 146), r: 0.5, wob: 0.26, biome: BIOMES.desert, sport: 'bowling', clear: 0.0 },
+  { d: dir(28, -146), r: 0.5, wob: 0.26, biome: BIOMES.forest, sport: 'archery', clear: 0.17 },
+  { d: dir(-26, -76), r: 0.5, wob: 0.26, biome: BIOMES.snow, sport: 'duel', clear: 0.0 },
+  { d: dir(50, -34), r: 0.1, wob: 0.3, biome: BIOMES.meadow, sport: 'lighthouse', clear: 0 },
+  { d: dir(-44, 32), r: 0.09, wob: 0.3, biome: BIOMES.desert, sport: 'palm', clear: 0 },
 ];
 
 /** > 0 on land (grows inland, ~radians) and which island it belongs to */
@@ -147,26 +143,31 @@ function inCap(d: THREE.Vector3, r: number) {
 
 // ---------------------------------------------------------------- planet
 
-const OCEAN = { deep: col('#1569d8'), mid: col('#2595f2'), shallow: col('#62dcff'), foam: col('#c8f6ff') };
+const OCEAN = { deep: col('#1d63d6'), mid: col('#2b8df0'), shallow: col('#3fc8f8'), lagoon: col('#7ae6ff'), line: col('#9fe9ff') };
 
 function buildOcean() {
-  const g = new THREE.IcosahedronGeometry(1, 64);
+  const g = new THREE.IcosahedronGeometry(1, 96);
   const pos = g.attributes.position as THREE.BufferAttribute;
   const cols = new Float32Array(pos.count * 3);
   const p = new THREE.Vector3(), c = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
     p.fromBufferAttribute(pos, i).normalize();
-    const d = -land(p).f;
-    const t = THREE.MathUtils.smoothstep(d, 0, 0.18);
-    c.copy(OCEAN.shallow).lerp(OCEAN.mid, THREE.MathUtils.smoothstep(t, 0.12, 0.55)).lerp(OCEAN.deep, THREE.MathUtils.smoothstep(t, 0.5, 1));
-    if (d < 0.018) c.lerp(OCEAN.foam, 1 - Math.max(0, d) / 0.018);
-    // soft wave bands in open water
-    const wv = fbm(p, 5, 2);
-    c.multiplyScalar(0.95 + wv * 0.1);
+    const d = Math.max(0, -land(p).f);
+    // lagoon → turquoise shelf → azure → deeper blue far out
+    c.copy(OCEAN.lagoon)
+      .lerp(OCEAN.shallow, THREE.MathUtils.smoothstep(d, 0.0, 0.03))
+      .lerp(OCEAN.mid, THREE.MathUtils.smoothstep(d, 0.04, 0.11))
+      .lerp(OCEAN.deep, THREE.MathUtils.smoothstep(d, 0.16, 0.42));
+    // a soft light ring following each coast a little way out, and a fainter second one
+    const wob = (fbm(p, 9, 2) - 0.5) * 0.02;
+    const ring = (x: number, w: number) => Math.exp(-(((d + wob - x) / w) ** 2));
+    c.lerp(OCEAN.line, ring(0.075, 0.007) * 0.55 + ring(0.13, 0.006) * 0.25);
+    // big gentle patches so open water isn't flat
+    c.multiplyScalar(0.94 + fbm(p, 2.2, 2) * 0.12);
     cols.set([c.r, c.g, c.b], i * 3);
   }
   g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
-  return shade(new THREE.Mesh(g, std('#ffffff', 0.16, { vertexColors: true, envMapIntensity: 1.2 })), false, true);
+  return shade(new THREE.Mesh(g, std('#ffffff', 0.12, { vertexColors: true, envMapIntensity: 1.3 })), false, true);
 }
 
 function buildLand() {
@@ -187,9 +188,9 @@ function buildLand() {
       c.copy(soil).lerp(B.wall, THREE.MathUtils.smoothstep(t, 0, 0.3)).lerp(B.top[0], THREE.MathUtils.smoothstep(t, 0.6, 0.95));
     } else {
       c.copy(B.top[0]).lerp(B.top[1], THREE.MathUtils.smoothstep(fbm(p, 9), 0.38, 0.68));
-      if (is.d === HERO) {
-        const cl = p.angleTo(CLEARING) + (fbm(p, 14) - 0.5) * 0.05;
-        c.lerp(B.beach, 1 - THREE.MathUtils.smoothstep(cl, 0.15, 0.185));
+      if (is.clear) {
+        const cl = p.angleTo(is.d) + (fbm(p, 14) - 0.5) * 0.05;
+        c.lerp(B.beach, 1 - THREE.MathUtils.smoothstep(cl, is.clear * 0.85, is.clear * 1.05));
       }
     }
     cols.set([c.r, c.g, c.b], i * 3);
@@ -518,6 +519,232 @@ function atmosphere() {
   return new THREE.Mesh(new THREE.SphereGeometry(1.045, 64, 48), mat);
 }
 
+
+// ---------------------------------------------------------------- sport landmarks
+
+function canvasTex(w: number, h: number, draw: (x: CanvasRenderingContext2D) => void) {
+  const cv = document.createElement('canvas');
+  cv.width = w;
+  cv.height = h;
+  draw(cv.getContext('2d')!);
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;
+}
+
+/** a round pad whose top carries a texture (fields, arenas) */
+function pad(r: number, h: number, top: THREE.Texture, side: THREE.ColorRepresentation) {
+  const sideM = std(side, 0.8);
+  return new THREE.Mesh(new THREE.CylinderGeometry(r, r * 1.02, h, 64).translate(0, h / 2, 0), [sideM, std('#ffffff', 0.7, { map: top }), sideM]);
+}
+
+function baseball() {
+  const g = new THREE.Group();
+  const tex = canvasTex(1024, 1024, (x) => {
+    // mown outfield
+    for (let i = 0; i < 16; i++) {
+      x.fillStyle = i % 2 ? '#5cb83a' : '#6cc444';
+      x.fillRect(0, i * 64, 1024, 64);
+    }
+    // infield dirt: a diamond with a rounded back edge, home plate toward +z (bottom of the texture)
+    const hx = 512, hy = 820;
+    x.fillStyle = '#d99a5b';
+    x.beginPath();
+    x.moveTo(hx, hy + 40);
+    x.lineTo(hx - 300, hy - 300);
+    x.arc(hx, hy - 60, 420, Math.PI * 1.2, Math.PI * 1.8);
+    x.lineTo(hx + 300, hy - 300);
+    x.closePath();
+    x.fill();
+    // infield grass
+    x.fillStyle = '#6cc444';
+    x.beginPath();
+    x.moveTo(hx, hy - 60);
+    x.lineTo(hx - 190, hy - 250);
+    x.lineTo(hx, hy - 440);
+    x.lineTo(hx + 190, hy - 250);
+    x.closePath();
+    x.fill();
+    // foul lines, bases, mound
+    x.strokeStyle = '#ffffff';
+    x.lineWidth = 10;
+    x.beginPath();
+    x.moveTo(hx, hy);
+    x.lineTo(hx - 560, hy - 560);
+    x.moveTo(hx, hy);
+    x.lineTo(hx + 560, hy - 560);
+    x.stroke();
+    x.fillStyle = '#ffffff';
+    for (const [bx, by] of [[hx + 220, hy - 250], [hx, hy - 470], [hx - 220, hy - 250]]) x.fillRect(bx - 18, by - 18, 36, 36);
+    x.beginPath();
+    x.moveTo(hx, hy - 16); x.lineTo(hx + 16, hy); x.lineTo(hx, hy + 16); x.lineTo(hx - 16, hy);
+    x.fill();
+    x.fillStyle = '#c98848';
+    x.beginPath();
+    x.arc(hx, hy - 250, 40, 0, Math.PI * 2);
+    x.fill();
+  });
+  g.add(pad(1, 0.06, tex, '#4e9e36'));
+  // two little stands behind home plate
+  const seat = std('#3aa8ff', 0.6), frame = std('#ffffff', 0.7);
+  for (const side of [-1, 1]) {
+    const st = new THREE.Group();
+    for (let k = 0; k < 3; k++) st.add(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.08 + k * 0.08, 0.14).translate(0, (0.08 + k * 0.08) / 2, -k * 0.14), k % 2 ? seat : frame));
+    st.position.set(side * 0.46, 0.06, 0.62);
+    st.rotation.y = Math.PI + side * 0.75;
+    g.add(st);
+  }
+  // yellow foul poles
+  for (const side of [-1, 1]) g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.5, 8).translate(side * 0.62, 0.31, -0.26), std('#ffd23d', 0.5)));
+  return shade(g);
+}
+
+function pinGeo() {
+  const prof = [[0.16, 0], [0.24, 0.12], [0.28, 0.3], [0.2, 0.52], [0.11, 0.66], [0.13, 0.78], [0.15, 0.88], [0.1, 0.97], [0.001, 1]];
+  return new THREE.LatheGeometry(prof.map(([r, y]) => new THREE.Vector2(r, y)), 20);
+}
+
+function bowling() {
+  const g = new THREE.Group();
+  const lane = canvasTex(256, 1024, (x) => {
+    for (let i = 0; i < 8; i++) {
+      x.fillStyle = i % 2 ? '#f0c388' : '#e8b677';
+      x.fillRect(i * 32, 0, 32, 1024);
+    }
+    x.fillStyle = '#c0392b';
+    for (let i = 0; i < 5; i++) {
+      const ax = 48 + i * 40, ay = 700 - Math.abs(i - 2) * 30;
+      x.beginPath();
+      x.moveTo(ax, ay - 26); x.lineTo(ax + 10, ay); x.lineTo(ax - 10, ay);
+      x.fill();
+    }
+  });
+  const wood = std('#e8b677', 0.6);
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.07, 2.1).translate(0, 0.035, 0), [wood, wood, std('#ffffff', 0.45, { map: lane }), wood, wood, wood]));
+  for (const side of [-1, 1]) g.add(new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.05, 2.1).translate(side * 0.37, 0.05, 0), std('#6a6f8a', 0.5)));
+  // pins in their triangle at the far end, the ball rolling up the lane
+  const pinW = std('#ffffff', 0.35), pinR = std('#e8303f', 0.4);
+  const pg = pinGeo();
+  let k = 0;
+  for (let row = 0; row < 4; row++)
+    for (let i = 0; i <= row; i++) {
+      const pin = new THREE.Group();
+      pin.add(new THREE.Mesh(pg, pinW), new THREE.Mesh(new THREE.TorusGeometry(0.115, 0.022, 8, 20).rotateX(Math.PI / 2).translate(0, 0.72, 0), pinR));
+      pin.position.set((i - row / 2) * 0.13, 0.07, -0.72 - row * 0.12);
+      pin.scale.setScalar(0.24);
+      g.add(pin);
+      k++;
+    }
+  g.add(new THREE.Mesh(new THREE.SphereGeometry(0.09, 24, 16).translate(0.04, 0.16, 0.45), std('#7b4dff', 0.2)));
+  // a giant pin standing beside the lane, the island's beacon
+  const big = new THREE.Group();
+  big.add(new THREE.Mesh(pg, pinW), new THREE.Mesh(new THREE.TorusGeometry(0.115, 0.024, 10, 24).rotateX(Math.PI / 2).translate(0, 0.72, 0), pinR), new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.02, 10, 24).rotateX(Math.PI / 2).translate(0, 0.78, 0), pinR));
+  big.scale.setScalar(1.25);
+  big.position.set(0.72, 0, 0.1);
+  g.add(big);
+  return shade(g);
+}
+
+function target() {
+  const face = canvasTex(256, 256, (x) => {
+    const rings = ['#ffffff', '#1d1c33', '#2f7fe0', '#e8303f', '#ffd23d'];
+    rings.forEach((c, i) => {
+      x.fillStyle = c;
+      x.beginPath();
+      x.arc(128, 128, 128 - i * 24, 0, Math.PI * 2);
+      x.fill();
+    });
+  });
+  const g = new THREE.Group();
+  const straw = std('#e8c46a', 0.9);
+  const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.1, 40).rotateX(Math.PI / 2).translate(0, 0.62, 0), [straw, std('#ffffff', 0.6, { map: face }), straw]);
+  g.add(disc);
+  const leg = std('#9a6a3a', 0.8);
+  for (const side of [-1, 1]) g.add(new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.8, 0.06).translate(0, 0.4, 0).rotateZ(side * 0.25).translate(side * 0.14, 0, -0.06), leg));
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.8, 0.06).translate(0, 0.4, 0).rotateX(-0.35).translate(0, 0, -0.1), leg));
+  return g;
+}
+
+function archery() {
+  const g = new THREE.Group();
+  for (let i = 0; i < 3; i++) {
+    const t = target();
+    t.position.set((i - 1) * 0.62, 0, -0.1 + Math.abs(i - 1) * 0.08);
+    t.rotation.y = (1 - i) * 0.18;
+    // lean back so the faces look up at the viewer (the island faces the camera)
+    t.rotation.x = -0.95;
+    t.position.y = 0.18;
+    g.add(t);
+  }
+  // balloons tethered over the range
+  const cols = ['#e8303f', '#ffd23d', '#3aa8ff', '#ff7aa8', '#7b4dff'];
+  cols.forEach((c, i) => {
+    const bx = (i - 2) * 0.32 + (rnd() - 0.5) * 0.1, by = 1.25 + (i % 2) * 0.22, bz = 0.25 + (rnd() - 0.5) * 0.2;
+    g.add(new THREE.Mesh(new THREE.SphereGeometry(0.13, 20, 14).scale(1, 1.18, 1).translate(bx, by, bz), std(c, 0.35)));
+    g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, by - 0.1, 4).translate(bx, (by - 0.1) / 2, bz), std('#ffffff', 0.6)));
+  });
+  return shade(g);
+}
+
+function sword(blade = '#eef3ff') {
+  const g = new THREE.Group();
+  const bl = new THREE.CylinderGeometry(0.001, 0.11, 1.3, 4, 1).rotateY(Math.PI / 4).scale(1, 1, 0.35).translate(0, 0.65, 0);
+  g.add(new THREE.Mesh(bl, std(blade, 0.25, { metalness: 0.55 })));
+  const gold = std('#ffc83d', 0.35, { metalness: 0.4 });
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.09, 0.11).translate(0, 1.33, 0), gold));
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.28, 10).translate(0, 1.5, 0), std('#7a3f2a', 0.7)));
+  g.add(new THREE.Mesh(new THREE.SphereGeometry(0.06, 14, 10).translate(0, 1.66, 0), gold));
+  // blade tip points down into the stone
+  g.rotation.x = Math.PI;
+  g.position.y = 1.62;
+  return g;
+}
+
+function duel() {
+  const g = new THREE.Group();
+  const floor = canvasTex(512, 512, (x) => {
+    x.fillStyle = '#c9c3e3';
+    x.fillRect(0, 0, 512, 512);
+    x.strokeStyle = '#e8303f';
+    x.lineWidth = 22;
+    x.beginPath();
+    x.arc(256, 256, 190, 0, Math.PI * 2);
+    x.stroke();
+    x.strokeStyle = '#b3acd4';
+    x.lineWidth = 6;
+    for (let a = 0; a < 12; a++) {
+      x.beginPath();
+      x.moveTo(256, 256);
+      x.lineTo(256 + Math.cos((a / 12) * Math.PI * 2) * 256, 256 + Math.sin((a / 12) * Math.PI * 2) * 256);
+      x.stroke();
+    }
+  });
+  g.add(pad(1.0, 0.1, canvasTex(8, 8, (x) => ((x.fillStyle = '#b3acd4'), x.fillRect(0, 0, 8, 8))), '#a39cc8'));
+  const top = pad(0.86, 0.08, floor, '#b3acd4');
+  top.position.y = 0.1;
+  g.add(top);
+  // pillars with flame-orange caps round the rim
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + 0.26;
+    g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 0.42, 12).translate(Math.cos(a) * 0.93, 0.31, Math.sin(a) * 0.93), std('#d8d3ee', 0.7)));
+    g.add(new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 8).translate(Math.cos(a) * 0.93, 0.56, Math.sin(a) * 0.93), std('#ff9a3d', 0.4, { emissive: '#ff7a1a', emissiveIntensity: 0.5 })));
+  }
+  // two swords crossed, planted in the centre
+  for (const side of [-1, 1]) {
+    const sw = sword();
+    const holder = new THREE.Group();
+    holder.add(sw);
+    holder.position.y = 0.18;
+    // lean out into a big X that reads from above
+    holder.rotation.z = side * 0.8;
+    holder.rotation.y = 0.35;
+    holder.scale.setScalar(0.85);
+    g.add(holder);
+  }
+  return shade(g);
+}
+
 // ---------------------------------------------------------------- the globe
 
 export interface Globe {
@@ -546,58 +773,48 @@ export function buildGlobe(): Globe {
     return o;
   };
 
-  // ---- hero meadow: the court in a sandy clearing, houses, rocks, a fence, a dock and boat
-  put(court(), CLEARING, 0.27, 0.35, 0.2, 0.004);
-  put(house('#ef5a6f'), at(28, -20), 0.1, 0.8, 0.09);
-  put(house('#ff8a3d'), at(-2, 24), 0.1, -0.5, 0.09);
-  put(house('#ef5a6f'), at(24, 26), 0.085, 2.4, 0.08);
-  for (const [la, lo, s] of [[-4, -18, 0.038], [-2, -14, 0.024], [32, 12, 0.03], [-16, 12, 0.03]]) put(rock(), at(la, lo), s, rnd() * 6, s * 1.6, 0.005);
-  put(fence(6), at(-10, -8), 0.07, 0.2, 0.06);
+  // ---- one landmark per island, the flora framing it
+  const [tennisI, baseballI, bowlingI, archeryI, duelI, lightI, palmI] = ISLANDS;
+  // tennis: the court in its sandy clearing, two cottages, rocks, a dock and a boat
+  put(court(), tennisI.d, 0.27, 0.35, tennisI.clear, 0.004);
+  put(house('#ef5a6f'), at(30, -18), 0.1, 0.8, 0.09);
+  put(house('#ff8a3d'), at(-4, 22), 0.1, -0.5, 0.09);
+  for (const [la, lo, s] of [[-6, -16, 0.036], [-4, -12, 0.022], [30, 14, 0.028]]) put(rock(), at(la, lo), s, rnd() * 6, s * 1.6, 0.005);
   {
     const dock = new THREE.Group();
     const plank = std('#c98a52', 0.8);
     dock.add(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.06, 1.8).translate(0, 0.25, -0.9), plank));
     for (const [px, pz] of [[-0.22, -0.4], [0.22, -0.4], [-0.22, -1.4], [0.22, -1.4]]) dock.add(new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.5, 8).translate(px, 0.1, pz), plank));
-    place(shade(dock), at(0, -30), 1.0, Math.PI / 2 + 0.6);
-    dock.scale.setScalar(0.085);
+    place(shade(dock), at(2, -27), 1.0, Math.PI / 2 + 0.6);
+    dock.scale.setScalar(0.09);
     spinner.add(dock);
     const boat = new THREE.Group();
     const hull = new THREE.Mesh(new THREE.SphereGeometry(0.5, 20, 12, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2).scale(0.55, 0.55, 1.25), std('#ff6f61', 0.55, { side: THREE.DoubleSide }));
     hull.position.y = 0.34;
     boat.add(hull, new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.05, 8, 24).scale(0.55, 1.25, 1).rotateX(Math.PI / 2).translate(0, 0.34, 0), std('#ffffff', 0.6)));
-    place(shade(boat), at(-10, -38), 0.998, 0.9);
-    boat.scale.setScalar(0.1);
+    place(shade(boat), at(-8, -36), 0.998, 0.9);
+    boat.scale.setScalar(0.11);
     spinner.add(boat);
   }
-  // biome landmarks
-  put(lighthouse(), at(62, -58), 0.08, 0, 0.08);
-  put(house('#ff7aa8'), at(48, -38), 0.085, 1.4, 0.08);
-  put(igloo(), at(78, 20), 0.07, 0.5, 0.08);
-  put(house('#e8552e'), at(34, 80), 0.085, -0.4, 0.08);
-  put(house('#3aa8ff'), at(-44, 40), 0.085, 2.2, 0.08);
-  put(house('#ef5a6f'), at(2, -104), 0.085, 1, 0.08);
+  // baseball: a ballpark among autumn trees
+  put(baseball(), baseballI.d, 0.21, -1.1, 0.24, 0.004);
+  // bowling: an open-air lane with a giant pin, palms around
+  put(bowling(), bowlingI.d, 0.2, 2.6, 0.26, 0.004);
+  // archery: a range of targets and balloons in a pine forest clearing
+  put(archery(), archeryI.d, 0.2, 0, archeryI.clear, 0.004);
+  // the duel: a stone arena with crossed swords on a snowy peak island
+  put(duel(), duelI.d, 0.2, 0.9, 0.23, 0.004);
+  // the islets
+  put(lighthouse(), lightI.d, 0.08, 0, 0.05);
 
-  // ---- flora on every island
-  // a small range of peaks at the heart of every mountain island
-  const peaks: { d: THREE.Vector3; s: number; kind: Flora }[] = [];
-  for (const is of ISLANDS) {
-    if (is.biome !== BIOMES.mountain) continue;
-    for (let k = 0; k < 5; k++) {
-      const d = inCap(is.d, is.r * 0.45);
-      if (land(d).f < 0.12 || peaks.some((o) => o.d.angleTo(d) < 0.09)) continue;
-      const pk = { d, s: 0.06 + rnd() * 0.035, kind: 'peak' as Flora };
-      peaks.push(pk);
-      avoid.push({ d, r: pk.s * 1.1 });
-    }
-  }
-  const spots = [...peaks, ...ISLANDS.flatMap((is, i) => floraFor(is, avoid, i === 0 ? 1.1 : 1))];
+  const spots = ISLANDS.flatMap((is) => floraFor(is, avoid));
+  spots.push({ d: palmI.d, s: 0.06, kind: 'palm' });
   spinner.add(makeFlora(spots));
 
   // ---- clouds hugging the planet (lat, lon, height, size, puffs)
   const clouds: [number, number, number, number, number][] = [
-    [52, 30, 1.22, 0.11, 5], [12, -60, 1.24, 0.09, 4], [-26, 66, 1.22, 0.1, 5], [-58, -44, 1.2, 0.08, 4],
-    [76, -80, 1.2, 0.1, 5], [22, 100, 1.2, 0.09, 4], [-12, -104, 1.2, 0.09, 4], [-78, 110, 1.2, 0.08, 4],
-    [35, 170, 1.22, 0.11, 5], [-42, 10, 1.22, 0.085, 5], [44, -16, 1.26, 0.065, 4],
+    [56, 24, 1.22, 0.11, 5], [8, -62, 1.24, 0.09, 4], [-30, 44, 1.22, 0.1, 5], [70, -100, 1.2, 0.1, 5],
+    [0, 116, 1.2, 0.1, 5], [-60, -130, 1.2, 0.09, 4], [60, 150, 1.2, 0.1, 5], [-55, 100, 1.2, 0.08, 4],
   ];
   for (const [la, lo, h, s, n] of clouds) spinner.add(place(cloud(n, s), dir(la, lo), h, rnd() * 6));
 
