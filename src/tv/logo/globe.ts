@@ -660,6 +660,16 @@ export function renderGlobe(size: number, opts: { spin?: number; bg?: boolean } 
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
   renderer.setPixelRatio(1);
   renderer.setSize(size, size, false);
+  const g = dress(renderer, opts.bg);
+  g.setSpin(opts.spin ?? 0);
+  renderer.render(g.scene, g.camera);
+  const url = renderer.domElement.toDataURL('image/png');
+  renderer.dispose();
+  return url;
+}
+
+/** Build the globe and set the renderer up to light it (tone mapping, shadows, environment, optional backdrop). */
+export function dress(renderer: THREE.WebGLRenderer, bg = false) {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.NeutralToneMapping;
   renderer.toneMappingExposure = 1.05;
@@ -669,7 +679,7 @@ export function renderGlobe(size: number, opts: { spin?: number; bg?: boolean } 
   const pm = new THREE.PMREMGenerator(renderer);
   g.scene.environment = pm.fromScene(new RoomEnvironment(), 0.04).texture;
   g.scene.environmentIntensity = 0.28;
-  if (opts.bg) {
+  if (bg) {
     const cv = document.createElement('canvas');
     cv.width = cv.height = 1024;
     const x = cv.getContext('2d')!;
@@ -690,9 +700,5 @@ export function renderGlobe(size: number, opts: { spin?: number; bg?: boolean } 
     t.colorSpace = THREE.SRGBColorSpace;
     g.scene.background = t;
   }
-  g.setSpin(opts.spin ?? 0);
-  renderer.render(g.scene, g.camera);
-  const url = renderer.domElement.toDataURL('image/png');
-  renderer.dispose();
-  return url;
+  return g;
 }
