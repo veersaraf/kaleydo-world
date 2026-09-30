@@ -15,6 +15,8 @@ import type { HostToGuest } from '../../shared/protocol';
 
 /** the least time between regular snapshots, ms: every other frame at 60 fps, every frame below ~38 */
 const TICK_MS = 26;
+/** a hit that resolved the moment it was heard (a person's swing already made) has no racket magnet: t0 = tc */
+const MIN_MAGNET = 0.005;
 
 export class NetHost {
   /** set by the flow: is Kaleido (worlds shifting mid-match) on? */
@@ -186,7 +188,7 @@ export class NetHost {
     switch (e.type) {
       case 'hit': {
         const sw = e.p.swing;
-        n = { type: 'hit', t, p: p(e.p), warp: sw && sw.hit ? { t0: sw.t0, tc: sw.tc } : undefined, power: e.power, spin: e.spin, perfect: e.perfect, kind: e.kind, stroke: e.stroke, pos: e.pos, kph: e.kph, rally: e.rally, tau: e.tau, serve: e.serve, dtMs: e.dtMs, aim: e.aim, crossed: e.crossed, shotSpin: e.shotSpin, rocket: e.rocket };
+        n = { type: 'hit', t, p: p(e.p), warp: sw && sw.hit && sw.tc - sw.t0 >= MIN_MAGNET ? { t0: sw.t0, tc: sw.tc } : undefined, power: e.power, spin: e.spin, perfect: e.perfect, kind: e.kind, stroke: e.stroke, pos: e.pos, kph: e.kph, rally: e.rally, tau: e.tau, serve: e.serve, dtMs: e.dtMs, aim: e.aim, crossed: e.crossed, shotSpin: e.shotSpin, rocket: e.rocket };
         break;
       }
       case 'whiff':
@@ -279,7 +281,7 @@ export class NetHost {
     // a hit being lined up begins: the guests need to hear of it while it lasts, whatever the tick
     const ph = m.pendingHit;
     const sw = ph?.swing && !ph.swing.resolved ? ph.swing : null;
-    const warpNew = !!sw && sw !== this.warpSent;
+    const warpNew = !!sw && sw !== this.warpSent && sw.tc - sw.t0 >= MIN_MAGNET;
     this.warpSent = sw;
     if (!this.events.length && !due && !ended && !warpNew) return;
     this.lastSend = now;

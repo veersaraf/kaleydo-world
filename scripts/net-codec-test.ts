@@ -183,13 +183,13 @@ function compareEvent(w: string, a: NetEvent, b: NetEvent) {
 
 // ---------------------------------------------------------------- 3. a whole match over a jittery network
 interface Net { arrive: number; data: unknown }
-function streamMatch(opts: { doubles: boolean; seed: number; stall?: [number, number]; jitter?: number; base?: number; hostMs?: number }) {
+function streamMatch(opts: { doubles: boolean; seed: number; stall?: [number, number]; jitter?: number; base?: number; hostMs?: number; human?: boolean }) {
   const T0 = 1_700_000_000_000;
   let vnow = 0;
   const clock = { perf: () => vnow, date: () => T0 + vnow };
   const players: MatchConfig['players'] = [];
   const look: any = { height: 1 };
-  for (const team of [0, 1] as const) for (let i = 0; i < (opts.doubles ? 2 : 1); i++) players.push({ team, name: `P${team}${i}`, look, handed: i ? -1 : 1, ctrl: { kind: 'cpu', ai: AI_LEVELS[team ? 'ace' : 'pro'] } });
+  for (const team of [0, 1] as const) for (let i = 0; i < (opts.doubles ? 2 : 1); i++) players.push({ team, name: `P${team}${i}`, look, handed: i ? -1 : 1, ctrl: opts.human && team === 0 && i === 0 ? { kind: 'human', slot: 0, ai: AI_LEVELS.auto } : { kind: 'cpu', ai: AI_LEVELS[team ? 'ace' : 'pro'] } });
   const cfg: MatchConfig = { doubles: opts.doubles, gamesToWin: 2, players, seed: opts.seed, introTime: 0.6, teamNames: ['Red', 'Blue'], firstServer: 0 };
   const m = new Match(cfg);
   const anims = m.players.map((p) => new Animator(p));
@@ -239,6 +239,9 @@ function streamMatch(opts: { doubles: boolean; seed: number; stall?: [number, nu
   let startedAt = -1;
   const hostMs = opts.hostMs ?? dtF;
   let nextHost = 0;
+  let instantHits = 0;
+  let hostMaxStep = 0;
+  let hostMaxPop = 0;
   let missedWarps = 0;
   let engagedWarps = 0;
   const seenWarp = new Set<number>();
@@ -257,8 +260,26 @@ function streamMatch(opts: { doubles: boolean; seed: number; stall?: [number, nu
       const t0 = performance.now();
       net.frame(poses);
       encodeMs.push(performance.now() - t0);
+      const pl = hostLog[hostLog.length - 1];
+      if (pl && !pl.holder && !m.ball.holder && m.state !== 'intro') hostMaxStep = Math.max(hostMaxStep, Math.hypot(ball.x - pl.x, ball.y - pl.y, ball.z - pl.z));
       hostLog.push({ t: m.t, x: ball.x, y: ball.y, z: ball.z, holder: !!m.ball.holder });
       if (hostLog.length > 400) hostLog.shift();
+      // a person's swing heard between frames, already made: the hit resolves on the spot (no racket magnet)
+      if (opts.human) {
+        const me = m.players[0];
+        const seg0 = m.ball.seg;
+        const before = m.ballView(m.t, { x: 0, y: 0, z: 0 });
+        const heldBefore = !!m.ball.holder;
+        if (m.state === 'serve' && m.server === me && m.t - m.stateT0 > 0.5) m.humanSwing(0, { power: 0.7, spin: 0.2 }, m.t);
+        else if (m.state === 'toss' && m.server === me && m.t >= me.tossT + 0.75) m.humanSwing(0, { power: 0.7, spin: 0.2 }, m.t);
+        else if (m.state === 'play' && me.plan && !me.swing && m.t >= me.plan.t - 0.06) m.humanSwing(0, { power: 0.7, spin: 0.2, side: me.plan.stroke === 'serve' ? 'fh' : me.plan.stroke }, m.t);
+        // (the ball at this frame's time is double-valued: drawn before the hit, and the flight that starts now begins here)
+        if (m.ball.seg !== seg0 && m.ball.seg.t0 === m.t) (hostLog[hostLog.length - 1] as { amb?: boolean }).amb = true;
+        if (m.ball.seg !== seg0) {
+          instantHits++;
+          if (!heldBefore && !m.ball.holder && m.ball.seg.t0 === m.t) hostMaxPop = Math.max(hostMaxPop, Math.hypot(m.ball.seg.px - before.x, m.ball.seg.py - before.y, m.ball.seg.pz - before.z));
+        }
+      }
     }
     // ---- the network
     const gnow = vnow + 5;
@@ -315,7 +336,7 @@ function streamMatch(opts: { doubles: boolean; seed: number; stall?: [number, nu
         if (f.done) break;
         if (f.t <= g.tR - 0.1) {
           f.done = true;
-          if (f.holder) continue;
+          if (f.holder || (f as { amb?: boolean }).amb) continue;
           if (g.ballAtSimTime(f.t, ballTmp)) {
             const e = Math.hypot(ballTmp.x - f.x, ballTmp.y - f.y, ballTmp.z - f.z);
             maxErr = Math.max(maxErr, e);
@@ -349,7 +370,7 @@ function streamMatch(opts: { doubles: boolean; seed: number; stall?: [number, nu
   }
   void startedAt;
   renderList.sort((a, b) => a - b);
-  return { m, guest: guest as GuestStream | null, hostEvents, guestEvents, ended, status, maxErr, meanErr: sumErr / Math.max(1, cmp), cmp, jumps, maxStep, frames, encodeMs, net, renderList, cueAt, missedWarps, engagedWarps };
+  return { m, guest: guest as GuestStream | null, hostEvents, guestEvents, ended, status, maxErr, meanErr: sumErr / Math.max(1, cmp), cmp, jumps, maxStep, frames, encodeMs, net, renderList, cueAt, missedWarps, engagedWarps, instantHits, hostMaxStep, hostMaxPop };
 }
 
 for (const doubles of [false, true]) {
@@ -373,6 +394,16 @@ for (const doubles of [false, true]) {
   check(`${label}: encoding under 0.2 ms`, em[Math.floor(em.length * 0.99)] < 0.2, `p99 ${(em[Math.floor(em.length * 0.99)] * 1000).toFixed(0)} µs`);
   const rl = r.renderList;
   console.log(`   drawn ball vs the host's log (linear between its frames: rough at bounces and hits; ${rl.length} frames): p50 ${(rl[rl.length >> 1] * 100).toFixed(2)} cm, p95 ${(rl[Math.floor(rl.length * 0.95)] * 100).toFixed(2)} cm`);
+}
+
+// ---- a person's swings heard between frames: hits that resolve on the spot (no racket magnet), among CPU ones (which have one)
+{
+  const r = streamMatch({ doubles: false, seed: 21, human: true });
+  check('instant hits: the same events, in the same order', r.hostEvents.join() === r.guestEvents.join() && !!r.ended, `${r.hostEvents.length} events`);
+  check('instant hits: the ball is where the host\'s was at each of its frames (bar the frame a hit lands after)', r.maxErr < 0.02 && r.cmp > 500, `${(r.maxErr * 100).toFixed(3)} cm over ${r.cmp} frames`);
+  // (the ball goes to the racket at the instant a hit lands, on the host too — up to `pop` m — and it's drawn once a frame: a step is a frame's travel plus that)
+  check('instant hits: the guest\'s ball takes no step bigger than a frame\'s travel plus the hit\'s own jump to the racket', r.maxStep <= r.hostMaxStep + r.hostMaxPop + 0.05, `guest ${r.maxStep.toFixed(2)} m per frame; host ${r.hostMaxStep.toFixed(2)} m per frame, jump to the racket up to ${r.hostMaxPop.toFixed(2)} m; ${r.instantHits} flights began between frames`);
+  check('instant hits: there were some', r.instantHits > 20, String(r.instantHits));
 }
 
 // ---- a slow host (22 fps: some racket magnets last less than a frame and no snapshot sees them)

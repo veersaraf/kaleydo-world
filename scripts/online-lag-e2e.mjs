@@ -224,7 +224,7 @@ async function runProfile(P) {
         }
         if (m && !k.attract) {
           m.ballView(m.t, tmp);
-          window.__hostLog.push({ t: m.t, x: tmp.x, y: tmp.y, z: tmp.z, h: m.ball.holder ? 1 : 0, s: `${m.state}|${m.score.points}|${m.score.games}|${m.score.server}|${m.server.id}|${m.rally}|${m.second ? 1 : 0}|${m.score.winner}` });
+          window.__hostLog.push({ t: m.t, x: tmp.x, y: tmp.y, z: tmp.z, h: m.ball.holder ? 1 : 0, s0: m.ball.seg.t0, s: `${m.state}|${m.score.points}|${m.score.games}|${m.score.server}|${m.server.id}|${m.rally}|${m.second ? 1 : 0}|${m.score.winner}` });
           const hold = !!m.ball.holder;
           if (prev && !hold && !prev.h && m.state !== 'intro') {
             const s = Math.hypot(tmp.x - prev.x, tmp.y - prev.y, tmp.z - prev.z);
@@ -401,7 +401,11 @@ async function runProfile(P) {
     let cursor = 0;
     const cmp = { n: 0, max: 0, sum: 0, skipped: 0 };
     const compare = async () => {
-      const log = await host.evaluate((i) => window.__hostLog.slice(i), cursor);
+      const all = await host.evaluate((i) => window.__hostLog.slice(i).map((e) => ({ t: e.t, x: e.x, y: e.y, z: e.z, h: e.h, s0: e.s0 })), cursor);
+      // (a person's swing heard between frames resolves on the spot: a flight begins at exactly the last frame's time, and the ball
+      // at that instant is double-valued — drawn before the hit, at the racket after it. That frame isn't compared; the last waits for the next)
+      const log = all.slice(0, -1);
+      for (let i = 0; i < log.length; i++) if (all[i + 1].s0 === all[i].t && all[i].s0 !== all[i].t) log[i].a = 1;
       if (!log.length) return;
       const r = await guest.evaluate((log) => {
         const g = window.kaleido.guest;
@@ -411,7 +415,7 @@ async function runProfile(P) {
         for (const e of log) {
           if (e.t > g.tR - 0.1) break;
           out.consumed++;
-          if (e.h) continue;
+          if (e.h || e.a) continue;
           if (g.ballAtSimTime(e.t, tmp)) {
             const d = Math.hypot(tmp.x - e.x, tmp.y - e.y, tmp.z - e.z);
             if (d > out.max && d > 0.02) {
