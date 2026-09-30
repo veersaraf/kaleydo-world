@@ -215,18 +215,10 @@ const dpad = h(
 );
 const aBtn = padBtn('a', 'a-btn', 'A');
 const bBtn = padBtn('b', 'b-btn', 'B');
-const row = h(
-  'div',
-  { class: 'row3' },
-  padBtn('minus', 'small', '−'),
-  padBtn('home', 'small home', h('i', { class: 'house' })),
-  padBtn('plus', 'small', '+'),
-);
-for (const [i, label] of ['Minus', 'Home', 'Plus'].entries()) row.children[i].setAttribute('aria-label', label);
 // the TV's screen (main menu, paused, results…) and what the pad does there
 const menuTitle = h('div', { class: 'ptitle' }, '');
 const menuHint = h('div', { class: 'phint' }, '');
-const menuPanel = h('div', { class: 'panel menu' }, h('div', { class: 'mhead' }, menuTitle, menuHint), dpad, aBtn, row, bBtn);
+const menuPanel = h('div', { class: 'panel menu' }, h('div', { class: 'mhead' }, menuTitle, menuHint), dpad, aBtn, bBtn);
 
 const gaugeRing = h('div', { class: 'ring' });
 const gaugeLive = h('div', { class: 'live' });
@@ -432,8 +424,6 @@ const panels: Record<PadMode, HTMLElement> = {
   bat: playPanel,
 };
 
-const leds = h('div', { class: 'leds' }, h('i'), h('i'), h('i'), h('i'));
-const footer = h('footer', {}, leds, h('div', { class: 'brand' }, 'KALEYDO WORLD'));
 const flash = h('div', { class: 'flash' });
 const toast = h('div', { class: 'toast' });
 const shell = h('div', { class: 'shell' }, menuPanel, playPanel, servePanel, waitPanel, skipPanel, bowlPanel, swordPanel, bowPanel, netBar);
@@ -442,7 +432,6 @@ const remoteScreen = h(
   { class: 'remote' },
   header,
   shell,
-  footer,
   flash,
   toast,
 );
@@ -504,6 +493,8 @@ const sheet = h(
 );
 
 root.append(joinScreen, remoteScreen, sheet);
+// a text field's keyboard scrolls the whole remote up to it: once it's gone, put the remote back
+root.addEventListener('focusout', () => requestAnimationFrame(() => (root.scrollTop = 0)));
 
 // ------------------------------------------------------------------ state
 
@@ -827,7 +818,6 @@ function onMessage(m: ServerToPad) {
       setColor(m.color || PLAYER_COLORS[m.slot] || '#8a7dff');
       badge.textContent = 'P' + (m.slot + 1);
       nameLabel.textContent = m.name;
-      [...leds.children].forEach((el, i) => el.classList.toggle('on', i === m.slot));
       remoteScreen.classList.remove('lost');
       waitPanel.classList.remove('busy');
       if (mode === 'wait') setMode('menu');
@@ -1224,6 +1214,13 @@ function showSwing(sw: SwingEvent, path: number | null) {
 }
 
 detector.onSwing = (s) => emitSwing(s);
+// A swing has just begun: tell the TV at once so the stroke starts now, not when the swing is confirmed
+// (~35 ms after its peak, plus the trip). Tennis only, real motion only (the detector is fed by the sensor;
+// a swipe never comes here), nothing else done first: no sound, no screen.
+detector.onStart = (e) => {
+  if ((mode !== 'play' && mode !== 'serve') || e.t < noSwingUntil) return;
+  link.send({ type: 'swing-start', side: e.side, age: Math.round(Math.max(0, performance.now() - e.t)), lat: Math.round(link.lat) });
+};
 detector.onPrep = (side) => {
   if (swingWanted()) link.send({ type: 'prep', side, lat: Math.round(link.lat) });
 };
@@ -1922,6 +1919,7 @@ joinBtn.addEventListener('click', () => {
   void keepAwake();
   joined = true;
   root.dataset.screen = 'remote';
+  root.scrollTop = 0;
   nameLabel.textContent = prefs.name || 'Player';
   setMode('wait', 'Connecting…', '');
   link.connect();

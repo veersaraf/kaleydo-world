@@ -1,11 +1,22 @@
-// How long a phone's swing takes to show as contact on the TV. A simulated phone (as in e2e-swing.mjs)
-// plays the Swing Lab; on the TV we stamp, per swing that connects, the wall time the swing reached
-// the match (humanSwing), the wall time the `hit` event fired, and the wall time of the end of the
-// first frame that includes it (when the ball/racket can first be seen to have made contact).
-//   BASE=http://localhost:3370 node scripts/contact-latency.mjs [swings=16]
+// How a phone's swing shows as contact on the TV. A simulated phone (as in e2e-swing.mjs) plays the
+// Swing Lab; on the TV we stamp, per swing that connects:
+//   (a) the wall time the swing reached the match (humanSwing) to the `hit` event, and to the end of the first frame with it,
+//   (b) how far the DRAWN ball is from the racket's contact when the swing arrives (from the plan's ball point,
+//       and from the swing's own contact point) — the ball that has already gone by, or the ball waiting at the racket,
+//   (c) the biggest per-frame jump of the drawn ball around the hit beyond what its true flight explains, and
+//       the part of it sideways to its flight (what the player saw as "the ball is past me, then it glitches").
+// AGES (ms, default 40,80,120) are the swing's age when it arrives: the message is held in the TV's link until it is
+// that old (a message already older arrives as it is, and the row says so). The phone's swing-START (the swing's onset, sent ~100 ms
+// before the peak) is held the same way, so it arrives AGE ms after the onset, ~100 ms ahead of its swing:
+//   (d) the stroke's phase when the swing arrives: the fraction of the wind-up done (0: no stroke going yet, 1: at contact,
+//       above 1: past it), and how far the racket is from its contact point then. Before the onset existed it was always 0.
+//   BASE=http://localhost:3370 AGES=40,80,120 node scripts/contact-latency.mjs [swings per age=10]
 import { chromium } from 'playwright-core';
 const BASE = process.env.BASE || 'http://localhost:3200';
-const N = +(process.argv[2] || 16);
+const N = +(process.argv[2] || 10);
+const AGES = (process.env.AGES || '40,80,120').split(',').map(Number);
+// (the first swings at each age only teach the match how old the phone's swings are: the drawn ball's hold follows the median age. They are played, not counted; WARM=0 counts them)
+const WARM = +(process.env.WARM ?? 8);
 const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--use-angle=metal', '--autoplay-policy=no-user-gesture-required'] });
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 const logs = [];
@@ -79,19 +90,48 @@ const results = [];
 await tv.evaluate(() => {
   const k = window.kaleido;
   const m = k.match;
-  const L = (window.__lat = { rows: [], cur: null, inFrame: false });
+  const L = (window.__lat = { rows: [], cur: null, inFrame: false, frames: [], target: 0, hitNext: false });
+  const tmp = { x: 0, y: 0, z: 0 };
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+  // ---- the link: hold a swing message until it is TARGET ms old (its rt stays: the wait shows up as relay transit)
+  const pm = k.input.padMsg.bind(k.input);
+  k.input.padMsg = (pid, rt, msg) => {
+    if ((msg.type === 'swing' || msg.type === 'swing-start') && L.target > 0) {
+      const nat = k.input.ageOf(rt, msg.lat, msg.age, 0.25, msg.ts) * 1000;
+      const wait = Math.max(0, L.target - nat);
+      setTimeout(() => pm(pid, rt, msg), wait);
+      return;
+    }
+    pm(pid, rt, msg);
+  };
   const orig = m.humanSwing.bind(m);
   m.humanSwing = (slot, inp, tEvent) => {
     const a = performance.now();
-    const before = m.t;
-    L.cur = { arrive: a, hit: null, shown: null, age: before - tEvent, hitInFrame: false };
+    const p = m.players.find((q) => q.human);
+    const plan = p.plan;
+    // where the ball is DRAWN as the swing arrives, against where the racket meets it
+    const D = m.ballView(m.t, tmp);
+    const drawn = { x: D.x, y: D.y, z: D.z };
+    const sw0 = p.swing;
+    const phase = sw0 ? (m.t - sw0.t0) / Math.max(1e-3, sw0.tc - sw0.t0) : 0;
+    const row = { warm: L.warm, arrive: a, phase, prov: !!(sw0 && sw0.provisional), hit: null, shown: null, age: (m.t - tEvent) * 1000, target: L.target, dPlan: plan ? dist(drawn, { x: plan.bx, y: plan.by, z: plan.bz }) : NaN, dContact: NaN, hitInFrame: false };
+    L.cur = row;
     const r = orig(slot, inp, tEvent);
-    if (!L.cur.hit && !m.players.find((q) => q.human)?.swing?.hit) L.cur = null; // a whiff: nothing to time
+    const sw = p.swing;
+    if (sw && sw.hit) row.dContact = dist(drawn, { x: sw.cx, y: sw.cy, z: sw.cz });
+    if (!row.hit && !(sw && sw.hit)) L.cur = null; // a whiff: nothing to time
+
     return r;
   };
   const oe = k.onMatchEvent;
   k.onMatchEvent = (e) => {
-    if (e.type === 'hit' && e.p.human && L.cur && !L.cur.hit) { L.cur.hit = performance.now(); L.cur.hitInFrame = L.inFrame; L.cur.kind = e.kind; }
+    if (e.type === 'hit' && e.p.human && L.cur && !L.cur.hit) {
+      L.cur.hit = performance.now();
+      L.cur.hitInFrame = L.inFrame;
+      L.cur.kind = e.kind;
+      L.cur.kph = e.kph;
+      L.hitNext = true;
+    }
     return oe(e);
   };
   const of = k.frame.bind(k);
@@ -101,38 +141,84 @@ await tv.evaluate(() => {
     L.inFrame = false;
     const c = L.cur;
     if (c && c.hit && !c.shown) { c.shown = performance.now(); L.rows.push(c); L.cur = null; }
+    // the drawn ball and its true velocity, per frame
+    const mm = k.match;
+    if (mm && !k.attract && !mm.ball.holder) {
+      const b = mm.ballView(mm.t, tmp);
+      const t = mm.t, e = 0.002;
+      const p0 = mm.ballAt(t - e, { x: 0, y: 0, z: 0 }), p1 = mm.ballAt(t + e, { x: 0, y: 0, z: 0 });
+      L.frames.push({ t, x: b.x, y: b.y, z: b.z, vx: (p1.x - p0.x) / (2 * e), vy: (p1.y - p0.y) / (2 * e), vz: (p1.z - p0.z) / (2 * e), hit: L.hitNext ? L.rows.length - 1 : -1 });
+      L.hitNext = false;
+    }
   };
 });
 const plan = async () => tv.evaluate(() => { const m = window.kaleido.match; const p = m?.players.find((q) => q.human); return p && p.plan ? { dt: p.plan.t - m.t, stroke: p.plan.stroke, state: m.state, contactWall: Date.now() + (p.plan.t - m.t) * 1000 } : { state: m?.state }; });
-for (let n = 0; n < N; n++) {
-  // wait for a ball to come
-  let info = null;
-  for (let k = 0; k < 300; k++) {
-    info = await plan();
-    if (info.dt !== undefined && info.dt < 0.72 && info.dt > 0.5) break;
-    await tv.waitForTimeout(15);
+for (const target of AGES) {
+  await tv.evaluate((t) => { window.__lat.target = t; window.__lat.warm = true; }, target);
+  for (let n = 0; n < N + WARM; n++) {
+    if (n === WARM) await tv.evaluate(() => { window.__lat.warm = false; });
+    // wait for a ball to come
+    let info = null;
+    for (let k = 0; k < 300; k++) {
+      info = await plan();
+      if (info.dt !== undefined && info.dt < 0.72 && info.dt > 0.5) break;
+      await tv.waitForTimeout(15);
+    }
+    if (!info || info.dt === undefined) { results.push('no ball'); continue; }
+    const want = n % 4 === 3 ? (info.stroke === 'fh' ? 'bh' : 'fh') : info.stroke; // every 4th swing: the "other" stroke
+    const vUp = [0, 2.2, -2.2, 1][n % 4];
+    const aim = [0, 15, -15, 0, 25, -25, 0, 0][n % 8];
+    const lead = Math.max(0, (info.dt - 0.62) * 1000);
+    await pad.waitForTimeout(lead);
+    await pad.evaluate(([s, v, a]) => window.__swing(s, v, a), [want, vUp, aim]);
+    await tv.waitForTimeout(700);
   }
-  if (!info || info.dt === undefined) { results.push('no ball'); continue; }
-  const want = n % 4 === 3 ? (info.stroke === 'fh' ? 'bh' : 'fh') : info.stroke; // every 4th swing: the "other" stroke
-  const vUp = [0, 2.2, -2.2, 1][n % 4];
-  const aim = [0, 15, -15, 0, 25, -25, 0, 0][n % 8];
-  const lead = Math.max(0, (info.dt - 0.62) * 1000);
-  await pad.waitForTimeout(lead);
-  await pad.evaluate(([s, v, a]) => window.__swing(s, v, a), [want, vUp, aim]);
-  const peak = await pad.evaluate(() => ({ w: window.__peakWall, n: window.__steps, vis: document.visibilityState }));
-  const tvVis = await tv.evaluate(() => document.visibilityState);
-  results.push(`   peak - contact = ${peak.w - info.contactWall} ms; steps ${peak.n}; pad ${peak.vis}, tv ${tvVis}`);
-  await tv.waitForTimeout(250);
-  const lab = await tv.evaluate(() => [...document.querySelectorAll('.lab-row')].map((r) => r.textContent).join(' | '));
-  const padLine = await pad.evaluate(() => [...document.querySelectorAll('.gtext b, .gtext span, .shotline')].map((e) => e.textContent).join(' / '));
-  results.push(`planned ${info.stroke}, swung ${want} vUp ${vUp} aim ${aim}: ${lab}\n      pad: ${padLine}`);
 }
-const rows = await tv.evaluate(() => window.__lat.rows);
-const q = (a, p) => { const b = [...a].sort((x, y) => x - y); return b.length ? b[Math.min(b.length - 1, Math.floor(p * b.length))] : NaN; };
-const f = (a) => `p50 ${q(a, 0.5).toFixed(1)}  p90 ${q(a, 0.9).toFixed(1)}  max ${Math.max(...a).toFixed(1)}`;
+const data = await tv.evaluate(() => ({ rows: window.__lat.rows, frames: window.__lat.frames }));
+const rows = data.rows;
+if (process.env.DUMP) {
+  const i = data.frames.findIndex((f) => f.hit >= 0);
+  console.log(JSON.stringify(data.frames.slice(Math.max(0, i - 3), i + 6).map((f) => [f.t.toFixed(3), f.x.toFixed(2), f.y.toFixed(2), f.z.toFixed(2), f.vz.toFixed(1), f.hit])));
+}
+// per hit: the frames around it (2 before … 7 after), the drawn ball's step against the step its true flight makes
+for (const r of rows) r.jump = NaN, r.back = NaN, r.maxSpeed = NaN;
+let hi = 0;
+data.frames.forEach((fr, i) => {
+  const r = rows[fr.hit];
+  if (fr.hit < 0 || !r) return;
+  let jump = 0, back = 0, maxSpeed = 0;
+  for (let j = Math.max(1, i - 2); j <= Math.min(data.frames.length - 1, i + 7); j++) {
+    const a = data.frames[j - 1], b = data.frames[j];
+    const dt = b.t - a.t;
+    if (dt < 0) continue;
+    const s = [b.x - a.x, b.y - a.y, b.z - a.z];
+    // (the true velocity at this frame's time: after the hit it is the outgoing flight's, before it the incoming one's)
+    const e = [b.vx * dt, b.vy * dt, b.vz * dt];
+    const res = [s[0] - e[0], s[1] - e[1], s[2] - e[2]];
+    jump = Math.max(jump, Math.hypot(...res));
+    // (the part of it that is not along the ball's own line: a sideways jump)
+    const vl = Math.hypot(b.vx, b.vy, b.vz) || 1;
+    const along = (res[0] * b.vx + res[1] * b.vy + res[2] * b.vz) / vl;
+    back = Math.max(back, Math.sqrt(Math.max(0, res[0] ** 2 + res[1] ** 2 + res[2] ** 2 - along * along)));
+    if (dt > 1e-4) maxSpeed = Math.max(maxSpeed, Math.hypot(...s) / dt);
+  }
+  r.jump = jump; r.back = back; r.maxSpeed = maxSpeed;
+});
+const q = (a, p) => { const b = a.filter(Number.isFinite).sort((x, y) => x - y); return b.length ? b[Math.min(b.length - 1, Math.floor(p * b.length))] : NaN; };
+const f = (a, d = 1, u = '') => `p50 ${q(a, 0.5).toFixed(d)}  max ${q(a, 1).toFixed(d)}${u}`;
 console.log(`${rows.length} connecting swings`);
-console.log('arrival -> hit event (ms):    ', f(rows.map((r) => r.hit - r.arrive)));
-console.log('arrival -> visible frame (ms):', f(rows.map((r) => r.shown - r.arrive)));
-console.log('hit fired inside a frame:', rows.filter((r) => r.hitInFrame).length, 'of', rows.length, '| swing age at arrival (sim ms):', f(rows.map((r) => r.age * 1000)));
+for (const target of AGES) {
+  const R = rows.filter((r) => r.target === target && !r.warm);
+  if (!R.length) { console.log(`age ${target}: no connecting swings`); continue; }
+  console.log(`--- swing age ${target} ms (measured at arrival: ${f(R.map((r) => r.age), 0, ' ms')}), ${R.length} swings`);
+  console.log('  (d) stroke phase when the swing arrives:', f(R.map((r) => r.phase), 2), `(${R.filter((r) => r.prov).length} of ${R.length} had the onset's stroke going; 1 = at contact)`);
+  console.log('  (a) arrival -> hit event (ms):          ', f(R.map((r) => r.hit - r.arrive)));
+  console.log('      arrival -> visible frame (ms):      ', f(R.map((r) => r.shown - r.arrive)));
+  console.log('  (b) drawn ball to plan point at arrival:', f(R.map((r) => r.dPlan), 2, ' m'));
+  console.log('      drawn ball to swing contact point:  ', f(R.map((r) => r.dContact), 2, ' m'));
+  console.log('  (c) biggest jump around the hit:        ', f(R.map((r) => r.jump), 2, ' m/frame beyond its flight'));
+  console.log('      of which sideways to its flight:    ', f(R.map((r) => r.back), 2, ' m'));
+  console.log('      fastest drawn step / hit speed:     ', f(R.map((r) => r.maxSpeed), 1, ' m/s'), `(hits at ${f(R.map((r) => r.kph / 3.6), 1, ' m/s')})`);
+}
 console.log(logs.join('\n') || 'no page errors');
 await browser.close();

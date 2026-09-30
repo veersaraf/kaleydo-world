@@ -1,6 +1,6 @@
 // Game flow: screens, menus, match lifecycle, pads, audio cues.
 
-import { h, clear, replay, setVars } from './ui/dom';
+import { h, clear, replay } from './ui/dom';
 import { Nav } from './ui/menu';
 import { Hud, type TeamInfo } from './ui/hud';
 import { JoinPanel } from './ui/join';
@@ -52,6 +52,8 @@ export interface Settings {
   seenTutorial: boolean;
   /** Kaleido mode: big moments shatter the world into the next one (every sport) */
   kaleido: boolean;
+  /** the sound button in the corner */
+  muted: boolean;
 }
 
 const DEFAULTS: Settings = {
@@ -68,6 +70,7 @@ const DEFAULTS: Settings = {
   world: 'park',
   seenTutorial: false,
   kaleido: false,
+  muted: false,
 };
 
 const LEVELS: { id: Level; label: string; stars: string }[] = [
@@ -184,9 +187,8 @@ export class Flow {
     this.screenLayer = h('div', { class: 'layer' });
     this.hudLayer = h('div', { class: 'layer' });
     this.toastEl = h('div', { class: 'toast' });
-    this.root.append(this.hudLayer, this.screenLayer, this.toastEl);
+    this.root.append(this.hudLayer, this.screenLayer, this.toastEl, this.soundButton());
     this.join = new JoinPanel(app.link, app.input);
-    this.applyTheme(worldDef('plaza'));
 
     app.input.onButton = (slot, b, down) => {
       if (this.app.sport === 'bowling' && !this.screen && this.bowlButton(slot, b, down)) return;
@@ -231,6 +233,10 @@ export class Flow {
       prevSwing(e);
       this.audio?.sfx.swish(e.power, 0);
     };
+    const prevStart = app.input.onSwingStart;
+    app.input.onSwingStart = (slot, side, age) => {
+      if (!this.screen) prevStart(slot, side, age); // menus: ignore swings
+    };
     // (online rooms: the roster the host sends its guests carries each phone's seat)
     app.link.seatOf = (pid) => {
       const s = app.input.seatOfPid(pid);
@@ -254,7 +260,7 @@ export class Flow {
       this.guestLobby?.message(m);
       if (m.type === 'pad-join') {
         const seat = app.input.seatOfPid(m.pid);
-        if (seat) this.toast(`P${seat.slot + 1} ${seat.name} joined`, seat.color);
+        if (seat) this.toast(`${seat.name} joined`, seat.color);
         if (app.input.padCount > before) this.audio?.sfx.ui('join');
         this.syncPads(true);
       }
@@ -262,7 +268,7 @@ export class Flow {
         const seat = app.input.seatOfPid(m.pid);
         if (seat) {
           // (a phone that was sent to another room isn't lost: it's on its way)
-          if (!app.link.wasMoved(m.pid)) this.toast(`P${seat.slot + 1}'s remote disconnected`, seat.color);
+          if (!app.link.wasMoved(m.pid)) this.toast(`${this.seatName(seat.slot)}’s phone disconnected`, seat.color);
           if (!this.screen && this.app.match && !this.app.attract && this.app.match.players.some((p) => p.slot === seat.slot)) this.pause();
           this.padLost(seat.slot);
         }
@@ -318,7 +324,6 @@ export class Flow {
     app.onSplit = (on) => this.hud?.setSplit(on ? app.rig2 : null);
     app.stage.onSwap = (w) => {
       COURT.gravity = 9.81 * (w.def.gravity ?? 1);
-      this.applyTheme(w.def);
       this.audio?.setTimbre(TIMBRE[w.def.id] ?? 'hard');
       if (this.audio && (this.screen || !this.app.attract)) this.audio.playSong(w.def.song);
       this.syncScoreboard();
@@ -438,7 +443,52 @@ export class Flow {
     const au = this.audio;
     this.app.beat = () => au.music.beat();
     this.audio.setVolumes(this.settings.music, this.settings.sfx);
+    this.audio.setMuted(this.settings.muted);
     if (!this.audio.music.song) this.audio.playSong(this.app.stage.current?.def.song ?? 'plaza');
+  }
+
+  /** The round sound button in the top-right corner, on every screen (M toggles it too). */
+  private soundButton() {
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.innerHTML =
+      '<path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z" fill="currentColor"/>' +
+      '<g class="waves"><path d="M15.5 9a4 4 0 0 1 0 6"/><path d="M18 6.5a7.5 7.5 0 0 1 0 11"/></g>' +
+      '<g class="x"><path d="M16 9.5l5 5M21 9.5l-5 5"/></g>';
+    const btn = h('button', { class: 'soundbtn', type: 'button' });
+    btn.append(svg);
+    const show = () => {
+      const m = this.settings.muted;
+      btn.classList.toggle('muted', m);
+      btn.setAttribute('aria-label', m ? 'Sound off — turn it on' : 'Sound on — mute');
+      btn.title = m ? 'Sound off (M)' : 'Mute (M)';
+    };
+    const toggle = () => {
+      this.settings.muted = !this.settings.muted;
+      this.save();
+      this.unlockAudio();
+      this.audio?.setMuted(this.settings.muted);
+      show();
+    };
+    // (the button is not a swing or a menu click)
+    btn.addEventListener('pointerdown', (e) => e.stopPropagation());
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggle();
+      btn.blur();
+    });
+    window.addEventListener('keydown', (e) => {
+      if (e.key.toLowerCase() !== 'm' || e.repeat || e.metaKey || e.ctrlKey || (e.target as HTMLElement)?.tagName === 'INPUT') return;
+      toggle();
+    });
+    show();
+    return btn;
   }
 
   // ---------------------------------------------------------------- screens
@@ -542,7 +592,6 @@ export class Flow {
       this.app.stage.setWorld(next, { transition: true, origin: { x: 0.5, y: 0.45 } });
       this.audio?.sfx.ui('shift');
       const def = worldDef(next);
-      this.applyTheme(def);
       this.toast(`✦ ${def.name}`, '#b07cff');
     }, delay);
   }
@@ -563,9 +612,15 @@ export class Flow {
   private kaleidoRow(onChange?: () => void) {
     const S = this.settings;
     const v = h('span');
-    const r = h('div', { class: 'row kal' }, h('span', { class: 'k' }, h('i', { class: 'kgem' }), 'Kaleydo mode'), h('span', { class: 'v' }, h('span', { class: 'arrow' }, '◀'), v, h('span', { class: 'arrow' }, '▶')));
+    const r = h(
+      'div',
+      { class: 'row kal' },
+      h('span', { class: 'k' }, h('i', { class: 'kgem' }), 'Kaleydo mode'),
+      h('span', { class: 'v' }, h('span', { class: 'arrow' }, '◀'), v, h('span', { class: 'arrow' }, '▶')),
+      h('span', { class: 'desc' }, 'Big moments shatter the world into the next one'),
+    );
     const refresh = () => {
-      v.textContent = S.kaleido ? 'On — big moments shatter the world' : 'Off';
+      v.textContent = S.kaleido ? 'On' : 'Off';
       r.classList.toggle('on', S.kaleido);
     };
     const toggle = () => {
@@ -611,16 +666,14 @@ export class Flow {
     const tb = loadTour().beaten;
     const pill = (ico: string, label: string, sub: string) => h('div', { class: 'hpill' }, h('i', null, ico), h('span', null, label), h('small', null, sub));
     const tour = pill('🏆', 'World Tour', tb >= TOUR.length ? 'The Prism is whole' : `${Math.min(tb, 8)} of 8 shards`);
-    const set = pill('⚙', 'Settings', 'Sound, controls');
     // the cloud: play with friends on their own TVs
     const online = this.app.link.cloud ? pill('🌐', 'Play online', this.app.link.guests.length ? `${this.app.link.guests.length} watching` : `Room ${this.app.link.room}`) : null;
     let lastCard = Math.max(0, sports.findIndex((sp) => sp.id === this.app.attractSport));
     const n = sports.length;
     const nav = new Nav(
       [
-        ...sports.map((sp, i) => ({ el: cards[i], onSelect: () => open(sp.id), onDown: () => nav.focus(i < n / 2 ? n : n + 1) })),
+        ...sports.map((sp, i) => ({ el: cards[i], onSelect: () => open(sp.id), onDown: () => nav.focus(online && i >= n / 2 ? n + 1 : n) })),
         { el: tour, onSelect: () => this.go(this.tourScreen()), onUp: () => nav.focus(lastCard) },
-        { el: set, onSelect: () => this.go(this.settingsScreen()), onUp: () => nav.focus(lastCard) },
         ...(online ? [{ el: online, onSelect: () => this.go(this.onlineScreen()), onUp: () => nav.focus(lastCard) }] : []),
       ],
       true,
@@ -643,7 +696,7 @@ export class Flow {
       'div',
       { class: 'screen home' },
       h('img', { class: 'mini-logo', src: '/brand/lockup-small.png', alt: 'Kaleydo World' }),
-      h('div', { class: 'hbottom' }, h('div', { class: 'hpills' }, tour, set, online), h('div', { class: 'scards' }, ...cards)),
+      h('div', { class: 'hbottom' }, h('div', { class: 'hpills' }, tour, online), h('div', { class: 'scards' }, ...cards)),
       this.join.el,
     );
     this.join.refresh();
@@ -985,7 +1038,7 @@ export class Flow {
     const humans = this.app.input.activeSeats.map((s) => s.slot).sort();
     const n = humans.length;
     const P = (i: number) => humans[i];
-    const nm = (s: number) => `P${s + 1}`;
+    const nm = (s: number) => this.seatName(s);
     if (n <= 1) return [{ label: `${nm(P(0) ?? 0)} vs CPU`, t0: [P(0) ?? 0], t1: [] }];
     if (n === 2)
       return [
@@ -1010,11 +1063,11 @@ export class Flow {
     this.mode = mode;
     this.showcase('tennis');
     const S = this.settings;
-    const sheet = h('div', { class: 'sheet panel' });
+    const sheet = h('div', { class: 'sheet' });
     void mode;
     const title = h('h2', null, 'Tennis');
-    const desc = h('div', { class: 'hintline' }, 'Choose your match, then pick a world. In Kaleydo mode every couple of points — or a PERFECT shot in a long rally — shatters the court into the next world.');
-    const kal = this.kaleidoRow();
+    const desc = h('div', { class: 'hintline' }, 'Choose your match, then pick a world.');
+    const kal = this.kaleidoRow(() => refresh());
     const teamsView = h('div', { class: 'teams' });
     const row = (k: string) => {
       const v = h('span');
@@ -1027,6 +1080,8 @@ export class Flow {
     const rLen = row('Match');
     const go = h('div', { class: 'row go' }, 'Choose a world ▶');
     const refresh = () => {
+      // (Kaleido picks the worlds itself: no world screen to go to)
+      go.textContent = S.kaleido ? 'Play ▶' : 'Choose a world ▶';
       const ps = this.presets();
       S.teamPreset = Math.min(S.teamPreset, ps.length - 1);
       const p = ps[S.teamPreset];
@@ -1093,7 +1148,7 @@ export class Flow {
     navRef = nav;
     nav.focus(5);
     sheet.append(title, desc, teamsView, rTeams.r, rFormat.r, rLevel.r, rLen.r, kal.r, go, h('div', { class: 'hintline' }, '◀ ▶ change · A select · B back'));
-    const el = h('div', { class: 'screen center' }, sheet);
+    const el = h('div', { class: 'screen setup' }, sheet);
     refresh();
     const scr = this.navScreen('setup', el, nav, () => this.go(this.mainMenu()), { title: 'Tennis', hint: '◀ ▶ to change' });
     const baseInput = scr.input;
@@ -1108,6 +1163,12 @@ export class Flow {
     return scr;
   }
 
+  /** what the menus call a player: the name they typed on their phone, else "P1"… */
+  private seatName(slot: number) {
+    const seat = this.app.input.seats[slot];
+    return (!seat?.local && seat?.name?.trim()) || `P${slot + 1}`;
+  }
+
   private teamChips(slots: number[], doubles: boolean) {
     const t = h('div', { class: 'team' });
     if (!slots.length) {
@@ -1116,7 +1177,7 @@ export class Flow {
     }
     for (const s of slots) {
       const seat = this.app.input.seats[s];
-      t.append(h('span', { class: 'chip', style: `--c:${seat?.color ?? '#999'}` }, `P${s + 1} ${seat?.local ? '' : seat?.name ?? ''}`.trim()));
+      t.append(h('span', { class: 'chip', style: `--c:${seat?.color ?? '#999'}` }, this.seatName(s)));
     }
     if (doubles && slots.length === 1) t.append(h('span', { class: 'chip', style: `--c:${this.app.input.seats[slots[0]]?.color ?? '#999'};opacity:.75` }, '×2'));
     return t;
@@ -1234,49 +1295,6 @@ export class Flow {
     ]);
     const sheet = h('div', { class: 'sheet panel' }, h('h2', null, 'How to play'), tabs, h('div', { class: 'help-grid' }, ...page.tips), page.keys, back);
     return this.navScreen('help', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'How to play', hint: '◀ ▶ sport · A to go back' });
-  }
-
-  private settingsScreen(): Screen {
-    const S = this.settings;
-    const row = (k: string, get: () => string) => {
-      const v = h('span');
-      const r = h('div', { class: 'row' }, h('span', { class: 'k' }, k), h('span', { class: 'v' }, h('span', { class: 'arrow' }, '◀'), v, h('span', { class: 'arrow' }, '▶')));
-      return { r, v, get };
-    };
-    const pct = (x: number) => `${Math.round(x * 10) * 10}%`;
-    const rows = [
-      row('Music volume', () => pct(S.music)),
-      row('Effects volume', () => pct(S.sfx)),
-      row('Umpire voice', () => (S.voice ? 'On' : 'Off')),
-      row('Mouse flick swings', () => (S.mouse ? 'On' : 'Off')),
-      row('Swing timing', () => (S.relaxed ? 'Relaxed (easier)' : 'Normal')),
-      row('Split screen (2 players)', () => (S.split ? 'On' : 'Off')),
-    ];
-    const done = h('div', { class: 'row go' }, 'Done');
-    const refresh = () => {
-      rows.forEach((r) => (r.v.textContent = r.get()));
-      this.audio?.setVolumes(S.music, S.sfx);
-      if (this.audio) this.audio.voiceOn = S.voice;
-      this.app.input.mouseSwings = S.mouse;
-      this.app.splitPref = S.split;
-      this.save();
-    };
-    const step = (k: 'music' | 'sfx', d: number) => {
-      S[k] = Math.max(0, Math.min(1, Math.round((S[k] + d) * 10) / 10));
-      refresh();
-    };
-    const nav = new Nav([
-      { el: rows[0].r, onLeft: () => step('music', -0.1), onRight: () => step('music', 0.1), onSelect: () => step('music', 0.1) },
-      { el: rows[1].r, onLeft: () => step('sfx', -0.1), onRight: () => step('sfx', 0.1), onSelect: () => step('sfx', 0.1) },
-      { el: rows[2].r, onLeft: () => ((S.voice = !S.voice), refresh()), onRight: () => ((S.voice = !S.voice), refresh()), onSelect: () => ((S.voice = !S.voice), refresh(), this.audio?.say('Fifteen love')) },
-      { el: rows[3].r, onLeft: () => ((S.mouse = !S.mouse), refresh()), onRight: () => ((S.mouse = !S.mouse), refresh()), onSelect: () => ((S.mouse = !S.mouse), refresh()) },
-      { el: rows[4].r, onLeft: () => ((S.relaxed = !S.relaxed), refresh()), onRight: () => ((S.relaxed = !S.relaxed), refresh()), onSelect: () => ((S.relaxed = !S.relaxed), refresh()) },
-      { el: rows[5].r, onLeft: () => ((S.split = !S.split), refresh()), onRight: () => ((S.split = !S.split), refresh()), onSelect: () => ((S.split = !S.split), refresh()) },
-      { el: done, onSelect: () => this.go(this.mainMenu()) },
-    ]);
-    refresh();
-    const sheet = h('div', { class: 'sheet panel' }, h('h2', null, 'Settings'), ...rows.map((r) => r.r), done);
-    return this.navScreen('settings', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Settings', hint: '◀ ▶ to change' });
   }
 
   private pauseScreen(): Screen {
@@ -1772,7 +1790,7 @@ export class Flow {
     refresh();
     const sheet = h(
       'div',
-      { class: 'sheet panel' },
+      { class: 'sheet' },
       h('h2', null, 'Home Run Derby'),
       h('div', { class: 'hintline' }, 'Hold your phone like a bat and swing as the ball reaches the plate. Early pulls it, late pushes it the other way — time it right and swing hard to clear the fence. Most home runs wins.'),
       who,
@@ -1783,7 +1801,7 @@ export class Flow {
       kal.r,
       go,
     );
-    return this.navScreen('hrsetup', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Home Run Derby', hint: '◀ ▶ to change · A to play' });
+    return this.navScreen('hrsetup', h('div', { class: 'screen setup' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Home Run Derby', hint: '◀ ▶ to change · A to play' });
   }
 
   beginBaseball(cfg: { world: string; cpu: number; pitching: number; pitches: number }) {
@@ -2055,7 +2073,7 @@ export class Flow {
     refresh();
     const sheet = h(
       'div',
-      { class: 'sheet panel' },
+      { class: 'sheet' },
       h('h2', null, 'Archery'),
       h('div', { class: 'hintline' }, 'Point your phone at the target, hold DRAW to pull the string, and let go. The arrow drops with distance and drifts with the wind — aim a little high, and into the wind.'),
       who,
@@ -2064,7 +2082,7 @@ export class Flow {
       kal.r,
       go,
     );
-    return this.navScreen('archsetup', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Archery', hint: '◀ ▶ to change · A to shoot' });
+    return this.navScreen('archsetup', h('div', { class: 'screen setup' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Archery', hint: '◀ ▶ to change · A to shoot' });
   }
 
   beginArchery(world: string, cpu: number) {
@@ -2287,7 +2305,7 @@ export class Flow {
     refresh();
     const sheet = h(
       'div',
-      { class: 'sheet panel' },
+      { class: 'sheet' },
       h('h2', null, 'Sword Duel'),
       h('div', { class: 'hintline' }, 'Your phone is the sword. Swing to strike; hold GUARD and hold the sword across their swing to block — a blocked attacker is stunned. Knock them off the end!'),
       oppRow.r,
@@ -2295,7 +2313,7 @@ export class Flow {
       kal.r,
       go,
     );
-    return this.navScreen('duelsetup', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Sword Duel', hint: '◀ ▶ to change · A to fight' });
+    return this.navScreen('duelsetup', h('div', { class: 'screen setup' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Sword Duel', hint: '◀ ▶ to change · A to fight' });
   }
 
   beginDuel(world: string, cpu: number) {
@@ -2541,7 +2559,7 @@ export class Flow {
     refresh();
     const sheet = h(
       'div',
-      { class: 'sheet panel' },
+      { class: 'sheet' },
       h('h2', null, 'Bowling'),
       h('div', { class: 'hintline' }, 'Hold the grip on your phone, swing your arm back and through, and let go. Twist your wrist to hook it.'),
       who,
@@ -2550,7 +2568,7 @@ export class Flow {
       kal.r,
       go,
     );
-    return this.navScreen('bowlsetup', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Bowling', hint: '◀ ▶ to change · A to bowl' });
+    return this.navScreen('bowlsetup', h('div', { class: 'screen setup' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Bowling', hint: '◀ ▶ to change · A to bowl' });
   }
 
   async beginBowling(world: string, cpu: number) {
@@ -2941,7 +2959,7 @@ export class Flow {
     const sheet = h(
       'div',
       { class: 'sheet panel', style: `--c:${won ? this.teams[0].color : c.look.shirt}` },
-      h('div', { class: 'winner', style: `font-family:${def.ui.display}` }, won ? 'Shard restored!' : `${c.name} wins`),
+      h('div', { class: 'winner' }, won ? 'Shard restored!' : `${c.name} wins`),
       h('div', { class: 'final' }, `${m.score.games[0]} – ${m.score.games[1]}`),
       h('div', { class: 'hintline', style: 'font-size:calc(var(--u)*2.6);opacity:.85' }, won ? `“${c.beatLine}”` : 'So close. Every champion has a weakness — find it.'),
       h('div', { class: 'hintline' }, won ? `${Math.min(8, i + 1)} of 8 shards restored` : `Longest rally: ${this.stats.longest} shots`),
@@ -3428,18 +3446,6 @@ export class Flow {
     this.toastEl.classList.add('show');
     clearTimeout(this.toastTimer);
     this.toastTimer = window.setTimeout(() => this.toastEl.classList.remove('show'), 2600);
-  }
-
-  private applyTheme(def: WorldDef) {
-    setVars(this.root, {
-      '--accent': def.ui.accent,
-      '--accent2': def.ui.accent2,
-      '--ink': def.ui.ink,
-      '--paper': def.ui.paper,
-      '--font': def.ui.font,
-      '--display': def.ui.display,
-      '--panel': def.ui.panel,
-    });
   }
 }
 

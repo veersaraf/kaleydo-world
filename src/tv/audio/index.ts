@@ -10,6 +10,7 @@ export class GameAudio {
   music: Music;
   sfx: Sfx;
   voiceOn = true;
+  muted = false;
   private voiceName: SpeechSynthesisVoice | null = null;
 
   constructor() {
@@ -51,8 +52,16 @@ export class GameAudio {
     this.engine.crowd.gain.value = 0.5 * sfx;
   }
 
+  /** the sound button: everything (music, effects, crowd, the umpire) off or back on */
+  setMuted(m: boolean) {
+    this.muted = m;
+    const g = this.engine.master.gain;
+    g.setTargetAtTime(m ? 0 : 0.9, this.engine.ctx.currentTime, 0.03);
+    if (m && 'speechSynthesis' in window) speechSynthesis.cancel();
+  }
+
   say(text: string, opts: { rate?: number; pitch?: number } = {}) {
-    if (!this.voiceOn || !('speechSynthesis' in window) || !this.engine.unlocked) return;
+    if (!this.voiceOn || this.muted || !('speechSynthesis' in window) || !this.engine.unlocked) return;
     try {
       speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);

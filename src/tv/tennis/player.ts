@@ -45,6 +45,19 @@ export interface SwingState {
   input: SwingInput;
   /** ball position when the swing began (for the magnet warp) */
   serve: boolean;
+  /** a person's swing heard after it was made: contact `age` in the past, wind-up already behind it (no racket magnet to stream) */
+  instant?: boolean;
+  /**
+   * A stroke started on a phone's swing ONSET, before the swing itself is heard: it only animates (no magnet, no
+   * ball, no event; `hit` stays false, `nextSwingOK` is untouched). The heard swing replaces it; with none by
+   * `tc + 0.25` it becomes a feint.
+   */
+  provisional?: boolean;
+  /** a provisional stroke no swing followed: the arm eases from where it is back to the ready stance, from `feintT` until `te` */
+  feint?: boolean;
+  feintT?: number;
+  /** the arm eases in from the pose of the frame before (a stroke that takes over from a provisional one, or starts from the past) */
+  ease?: boolean;
 }
 
 export type AthleticMove = 'lunge' | 'dive' | 'jump';

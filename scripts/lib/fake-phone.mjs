@@ -65,10 +65,11 @@ export function phone() {
     const y = 1 - ((((1.061405429 * k - 1.453152027) * k + 1.421413741) * k - 0.284496736) * k + 0.254829592) * k * Math.exp(-v * v);
     return v >= 0 ? y : -y;
   };
-  // tennis: a forehand turns the phone counter-clockwise (seen from above), peak 950°/s
+  // tennis: a forehand turns the phone counter-clockwise (seen from above), peak 950°/s: a gaussian speed profile,
+  // which is a natural ramp (the swing detector's onset — 4.2 rad/s and climbing fast — comes ~100 ms before the peak)
   const yaw = (t) => {
     if (!sw || sw.kind !== 'tennis') return 0;
-    const W = 950 / D, sig = 0.0833, x = (t - sw.tp) / sig;
+    const W = sw.peak / D, sig = sw.sig, x = (t - sw.tp) / sig;
     return W * sig * (Math.sqrt(Math.PI) / 2) * (1 + erf(x));
   };
   const armPose = (t) => qmul(qaxis([0, 0, 1], yaw(t)), qmul(qaxis([1, 0, 0], theta(t)), qmul(qaxis([0, 0, 1], phi(t)), grip)));
@@ -235,11 +236,15 @@ export function phone() {
       );
     },
     /** a forehand (or a bat swing: the same turn) whose fastest moment is `inMs` from now — or at `at` (Date.now() ms) */
-    tennis({ inMs = 600, at = 0 } = {}) {
+    tennis({ inMs = 600, at = 0, peak = 950, sig = 0.0833 } = {}) {
       if (at) inMs = Math.max(0, at - Date.now());
-      const mine = (sw = { kind: 'tennis', tp: now() + inMs / 1000 });
+      const mine = (sw = { kind: 'tennis', tp: now() + inMs / 1000, peak, sig });
       // (a later swing isn't cut short by this one's timer)
       return new Promise((done) => setTimeout(() => (sw === mine && (sw = null), done()), inMs + 700));
+    },
+    /** a twitch: a quick little turn (360°/s, 30 ms) that starts like a swing and dies below the swing threshold — an onset with no swing */
+    fidget({ inMs = 300 } = {}) {
+      return this.tennis({ inMs, peak: 360, sig: 0.03 });
     },
     /** turn the phone (smoothly, over at least `ms` — never faster than ~2.5 rad/s: aiming, not swinging)
      *  to hold its top along `top`, screen facing `screen` */

@@ -66,6 +66,21 @@ const N = 96;
 const FALLS = 2;
 const FALL_MS = 25;
 
+/**
+ * The swing's ONSET (onStart): the first sample at which a swing that has begun (state 1, speed above
+ * START) is also clearly accelerating, ~100 ms (tennis-strength swings: 115) before the peak that
+ * confirms it. The TV starts the character's stroke on it and lets the confirmed swing decide everything
+ * else. It fires when the speed is at a new high, has only risen over the last `span` ms of samples
+ * (2 samples at 60 Hz, whatever the sensor's rate), is gaining at least `slope` rad/s², and — a
+ * projection: the speed `hor` seconds on at that rate — would reach `proj` × MIN_PEAK (so a fast
+ * riser fires while it is still slow, and a wobble that crawls over START doesn't). A swing that opens
+ * already at `entry` × MIN_PEAK fires on its first sample. Slope and levels are per sensitivity, like
+ * the detector's own (÷ k). Tuned on captures/veer-20260928-193627 (scripts/replay-capture.ts): with
+ * `hor` × `proj` any looser, false starts pass 5% for a few more ms of lead.
+ *   side   |yaw share| needed to call forehand / backhand at the onset (below: undecided)
+ */
+export const ONSET = { slope: 40, span: 24, hor: 0.08, proj: 1.4, entry: 0.75, side: 0.3 };
+
 export class SwingDetector {
   /** 0.7 = needs big swings … 1.4 = very light swings trigger */
   sensitivity = 1;
@@ -75,6 +90,8 @@ export class SwingDetector {
   upSign = 1;
   onSwing: (e: SwingEvent) => void = () => {};
   onPrep: (side: 'fh' | 'bh') => void = () => {};
+  /** a swing has started (its speed is climbing fast): once per swing, before it is confirmed. `w` rad/s at that sample */
+  onStart: (e: { t: number; side?: 'fh' | 'bh'; w: number; dw: number }) => void = () => {};
   /** live angular speed (rad/s) for UI meters */
   live = 0;
 
@@ -107,6 +124,10 @@ export class SwingDetector {
   private windYaw = 0;
   private windW = 0;
   private windSent = 0;
+  // onset tracking (per swing in progress)
+  private onsetSent = false;
+  private onsetYaw = 0;
+  private onsetW = 0;
 
   reset() {
     this.state = 0;
@@ -129,6 +150,7 @@ export class SwingDetector {
     this.falls = 0;
     this.windPeak = this.windYaw = this.windW = 0;
     this.windSent = 0;
+    this.onsetSent = false;
   }
 
   private idx(back: number) {
@@ -202,6 +224,9 @@ export class SwingDetector {
         this.peakT = s.t;
         this.peakIdx = i;
         this.falls = 0;
+        // (the rotation already accumulated in this run above WIND is the swing's first part)
+        this.beginOnset(this.windYaw, this.windW);
+        this.checkOnset(s.t, w, dt, wUp, k, true);
       }
       return;
     }
@@ -212,6 +237,7 @@ export class SwingDetector {
         this.peakT = s.t;
         this.peakIdx = i;
         this.falls = 0;
+        this.checkOnset(s.t, w, dt, wUp, k, false);
       } else if (
         (falling ? ++this.falls : (this.falls = 0)) >= FALLS && s.t - this.peakT >= FALL_MS && this.peak >= MIN_PEAK ||
         w < this.peak * 0.8 ||
@@ -244,12 +270,58 @@ export class SwingDetector {
       this.peakT = s.t;
       this.peakIdx = i;
       this.falls = 0;
+      this.beginOnset(0, 0);
+      this.checkOnset(s.t, w, dt, wUp, k, true);
       return;
     }
     if ((w < END && s.t > this.peakT + 140) || s.t > this.followUntil) {
       this.state = 0;
       this.cooldownUntil = s.t + 80;
     }
+  }
+
+  private beginOnset(yaw: number, wsum: number) {
+    this.onsetSent = false;
+    this.onsetYaw = yaw;
+    this.onsetW = wsum;
+  }
+
+  /** Called on each new speed high of a swing in progress (state 1); fires onStart once. */
+  private checkOnset(t: number, w: number, dt: number, wUp: number, k: number, entry: boolean) {
+    if (this.onsetSent) return;
+    if (!entry) {
+      this.onsetYaw += wUp * dt;
+      this.onsetW += w * dt;
+    }
+    const minPeak = 7.0 / k;
+    let fire = entry && w >= ONSET.entry * minPeak;
+    let dw = 0;
+    if (!fire) {
+      // the samples the slope is read over: the newest at least `span` ms back (of the last few)
+      const ti = this.T[this.idx(0)];
+      let j = -1;
+      for (let b = 1; b < Math.min(this.count, 7); b++) {
+        const tb = this.T[this.idx(b)];
+        if (ti - tb > 90) break;
+        if (ti - tb >= ONSET.span) {
+          j = b;
+          break;
+        }
+      }
+      if (j > 0) {
+        // (monotone: none of the samples between fell)
+        let up = true;
+        for (let b = j; b > 0 && up; b--) if (this.W[this.idx(b - 1)] < this.W[this.idx(b)] - 0.05) up = false;
+        const slope = ((w - this.W[this.idx(j)]) / (ti - this.T[this.idx(j)])) * 1000;
+        dw = slope;
+        fire = up && slope >= ONSET.slope / k && w + slope * ONSET.hor >= ONSET.proj * minPeak;
+      }
+    }
+    if (!fire) return;
+    this.onsetSent = true;
+    const ratio = this.onsetW > 0 ? this.onsetYaw / this.onsetW : 0;
+    const side = Math.abs(ratio) < ONSET.side ? undefined : ratio * this.handed > 0 ? 'fh' : 'bh';
+    this.onStart({ t, side, w, dw });
   }
 
   private emit(minPeak: number, full: number) {

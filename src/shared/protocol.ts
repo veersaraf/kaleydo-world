@@ -53,6 +53,8 @@ export type PadMsg =
   | { type: 'wave'; power: number }
   /** a backswing: the player is setting up on this side */
   | { type: 'prep'; side: 'fh' | 'bh'; lat: number; ts?: number }
+  /** tennis: a swing has just begun (its rotation is ramping up, ~100 ms before the peak that confirms it) — the character's stroke can start; the 'swing' that follows decides everything. `age` ms since that onset */
+  | { type: 'swing-start'; side?: 'fh' | 'bh'; age: number; lat: number; ts?: number }
   /** live racket orientation in the player's frame (x right, y towards screen, z up):
    *  s = shaft (phone top), n = face (screen normal); while bowling with the grip
    *  held, `arm` = the bowling arm's pendulum angle, radians, −2.2 … 2.2: 0 = hanging

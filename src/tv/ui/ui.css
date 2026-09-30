@@ -9,6 +9,8 @@
   --font: 'Fredoka', system-ui, sans-serif;
   --display: 'Fredoka', system-ui, sans-serif;
   --panel: linear-gradient(160deg, rgba(255, 255, 255, 0.96), rgba(236, 244, 255, 0.94));
+  /* the right edge top-right HUD pieces keep clear of: the sound button sits in the corner */
+  --corner: calc(var(--u) * 8);
   --prism: linear-gradient(90deg, #ff5a8a, #ffb13d, #ffe34d, #4be3a2, #52a7ff, #a07cff, #ff5a8a);
   font-family: var(--font);
   font-size: calc(var(--u) * 2.3);
@@ -221,100 +223,192 @@
   pointer-events: none;
 }
 
-/* join panel */
+/* join panel: scan the code, your phone is the controller */
 .join {
   position: absolute;
   right: calc(var(--u) * 4);
   bottom: calc(var(--u) * 4);
-  width: calc(var(--u) * 44);
-  padding: calc(var(--u) * 3) calc(var(--u) * 3) calc(var(--u) * 2.4);
+  width: calc(var(--u) * 47);
+  padding: calc(var(--u) * 2.6) calc(var(--u) * 2.8) calc(var(--u) * 2);
   display: flex;
   flex-direction: column;
   gap: calc(var(--u) * 1.6);
   pointer-events: auto;
+  text-shadow: none;
 }
 
 .join .top {
   display: flex;
-  gap: calc(var(--u) * 2.2);
+  gap: calc(var(--u) * 2.6);
   align-items: center;
 }
 
+/* (no prism stripe: the card stays quiet) */
+.join.panel::before {
+  content: none;
+}
+
+/* the code sits in a camera viewfinder: four corner brackets that breathe */
 .join .qr {
-  width: calc(var(--u) * 16);
-  height: calc(var(--u) * 16);
+  position: relative;
+  width: calc(var(--u) * 17);
+  height: calc(var(--u) * 17);
   flex: none;
-  padding: calc(var(--u) * 1);
-  background: #fff;
-  border-radius: calc(var(--u) * 1.6);
-  box-shadow: inset 0 0 0 calc(var(--u) * 0.3) rgba(20, 20, 60, 0.08);
+  padding: calc(var(--u) * 1.6);
 }
 
 .join .qr img {
   width: 100%;
   height: 100%;
   display: block;
+  border-radius: calc(var(--u) * 0.6);
+  image-rendering: pixelated;
+}
+
+.join .vf {
+  position: absolute;
+  width: calc(var(--u) * 3.4);
+  height: calc(var(--u) * 3.4);
+  border: calc(var(--u) * 0.55) solid var(--accent);
+  animation: vf-breathe 2.4s ease-in-out infinite;
+}
+
+.join .vf.tl {
+  top: 0;
+  left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  border-top-left-radius: calc(var(--u) * 1.4);
+  --dx: -1;
+  --dy: -1;
+}
+
+.join .vf.tr {
+  top: 0;
+  right: 0;
+  border-left: 0;
+  border-bottom: 0;
+  border-top-right-radius: calc(var(--u) * 1.4);
+  --dx: 1;
+  --dy: -1;
+}
+
+.join .vf.bl {
+  bottom: 0;
+  left: 0;
+  border-right: 0;
+  border-top: 0;
+  border-bottom-left-radius: calc(var(--u) * 1.4);
+  --dx: -1;
+  --dy: 1;
+}
+
+.join .vf.br {
+  bottom: 0;
+  right: 0;
+  border-left: 0;
+  border-top: 0;
+  border-bottom-right-radius: calc(var(--u) * 1.4);
+  --dx: 1;
+  --dy: 1;
+}
+
+@keyframes vf-breathe {
+  50% {
+    transform: translate(calc(var(--dx) * var(--u) * 0.45), calc(var(--dy) * var(--u) * 0.45));
+  }
+}
+
+.join .say {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 0.8);
 }
 
 .join h3 {
   margin: 0;
-  font-size: calc(var(--u) * 2.8);
+  font-size: calc(var(--u) * 3.6);
+  line-height: 1;
+  letter-spacing: -0.01em;
 }
 
 .join p {
-  margin: calc(var(--u) * 0.6) 0 0;
-  font-size: calc(var(--u) * 1.8);
-  opacity: 0.7;
-  line-height: 1.35;
+  margin: 0;
+  font-size: calc(var(--u) * 1.9);
+  line-height: 1.3;
+  opacity: 0.65;
 }
 
+/* the fallback: small, quiet, for whoever needs it */
 .join .url {
-  font-size: calc(var(--u) * 1.7);
-  font-weight: 600;
-  color: var(--accent);
-  word-break: break-all;
+  margin-top: calc(var(--u) * -0.2);
+  padding-top: calc(var(--u) * 1.3);
+  border-top: 1px solid rgba(20, 20, 60, 0.08);
+  font-size: calc(var(--u) * 1.45);
+  line-height: 1.3;
+  opacity: 0.5;
+  overflow-wrap: anywhere;
 }
 
+.join .url b {
+  font-weight: 600;
+}
+
+/* the four seats: a face per phone, a numbered ring per open seat */
 .seats {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: calc(var(--u) * 1);
+  display: flex;
+  gap: calc(var(--u) * 0.9);
+  margin-top: calc(var(--u) * 0.8);
 }
 
 .seat {
-  border-radius: calc(var(--u) * 1.6);
-  padding: calc(var(--u) * 1) calc(var(--u) * 0.6);
-  text-align: center;
-  background: rgba(20, 20, 60, 0.06);
-  font-size: calc(var(--u) * 1.7);
-  min-height: calc(var(--u) * 8.4);
+  position: relative;
+  width: calc(var(--u) * 4.4);
+  flex: none;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: calc(var(--u) * 0.4);
+  gap: calc(var(--u) * 0.3);
+  font-size: calc(var(--u) * 1.3);
 }
 
-.seat b {
-  font-size: calc(var(--u) * 2.4);
+.seat > b,
+.seat > .sface {
+  width: calc(var(--u) * 4.4);
+  height: calc(var(--u) * 4.4);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
 }
 
-.seat.on {
+.seat > b {
+  font-size: calc(var(--u) * 1.9);
+  font-weight: 600;
+  color: rgba(20, 20, 60, 0.3);
+  border: calc(var(--u) * 0.3) dashed rgba(20, 20, 60, 0.18);
+}
+
+.seat.on > b,
+.seat.on > .sface {
+  border: 0;
   background: var(--c);
   color: #fff;
-  box-shadow: 0 calc(var(--u) * 0.5) 0 color-mix(in oklab, var(--c) 60%, black);
+  box-shadow: 0 0 0 calc(var(--u) * 0.3) #fff, 0 0 0 calc(var(--u) * 0.6) var(--c);
   animation: seat-pop 0.5s cubic-bezier(0.2, 2, 0.4, 1);
 }
 
 .seat.off {
-  opacity: 0.5;
+  opacity: 0.45;
 }
 
 .seat .nm {
-  max-width: 100%;
+  max-width: calc(var(--u) * 5.6);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 600;
+  opacity: 0.7;
 }
 
 @keyframes seat-pop {
@@ -886,7 +980,7 @@
 
 .rally {
   position: absolute;
-  right: calc(var(--u) * 3.4);
+  right: var(--corner);
   top: calc(var(--u) * 3.4);
   display: flex;
   flex-direction: column;
@@ -1453,7 +1547,7 @@ kbd {
 
 .lab {
   position: absolute;
-  right: calc(var(--u) * 3);
+  right: var(--corner);
   top: calc(var(--u) * 3);
   width: calc(var(--u) * 46);
   padding: calc(var(--u) * 2.4) calc(var(--u) * 2.6) calc(var(--u) * 2);
@@ -1845,7 +1939,7 @@ kbd {
   position: absolute;
   top: calc(var(--u) * 2.4);
   left: calc(var(--u) * 3);
-  right: calc(var(--u) * 3);
+  right: var(--corner);
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: start;
@@ -2024,7 +2118,7 @@ kbd {
 .awind {
   position: absolute;
   top: calc(var(--u) * 2.4);
-  right: calc(var(--u) * 3);
+  right: var(--corner);
   display: flex;
   align-items: center;
   gap: calc(var(--u) * 1);
@@ -2128,10 +2222,6 @@ kbd {
 /* a phone's seat shows the player's face */
 .seat .sface {
   display: block;
-  width: calc(var(--u) * 4.6);
-  height: calc(var(--u) * 4.6);
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.25);
   overflow: hidden;
 }
 
@@ -2444,7 +2534,7 @@ kbd {
 .hrreplay {
   position: absolute;
   top: calc(var(--u) * 2.6);
-  right: calc(var(--u) * 3);
+  right: var(--corner);
   display: flex;
   align-items: center;
   gap: calc(var(--u) * 0.9);
@@ -2512,8 +2602,7 @@ kbd {
 .home .join {
   top: calc(var(--u) * 3.4);
   bottom: auto;
-  right: calc(var(--u) * 4);
-  width: calc(var(--u) * 40);
+  right: var(--corner);
 }
 
 .hbottom {
@@ -2680,7 +2769,21 @@ kbd {
   box-shadow: 0 0 0 calc(var(--u) * 0.4) var(--accent, #3aa8ff);
 }
 
-/* the Kaleido toggle on the setup screens */
+/* the Kaleido toggle on the setup screens (what it does, under it, while it's on) */
+.row.kal {
+  flex-wrap: wrap;
+  row-gap: calc(var(--u) * 0.3);
+}
+
+.row.kal .desc {
+  display: none;
+  flex-basis: 100%;
+}
+
+.row.kal.on .desc {
+  display: block;
+}
+
 .row.kal .k {
   display: flex;
   align-items: center;
@@ -3454,4 +3557,222 @@ kbd {
     transform: translateY(calc(var(--u) * -1.2));
     opacity: 0.4;
   }
+}
+
+/* the sound button: always in the top-right corner, quiet until you need it */
+.soundbtn {
+  position: absolute;
+  top: calc(var(--u) * 2.4);
+  right: calc(var(--u) * 2.4);
+  width: calc(var(--u) * 4.4);
+  height: calc(var(--u) * 4.4);
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(15, 14, 40, 0.32);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  color: #fff;
+  opacity: 0.6;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: opacity 0.2s, transform 0.2s, background 0.2s;
+  z-index: 5;
+}
+
+.soundbtn:hover {
+  opacity: 1;
+  transform: scale(1.08);
+  background: rgba(15, 14, 40, 0.5);
+}
+
+.soundbtn:active {
+  transform: scale(0.94);
+}
+
+.soundbtn svg {
+  width: 52%;
+  height: 52%;
+  display: block;
+}
+
+.soundbtn .waves {
+  transition: opacity 0.2s;
+}
+
+.soundbtn .x {
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.soundbtn.muted {
+  opacity: 0.85;
+}
+
+.soundbtn.muted .waves {
+  opacity: 0;
+}
+
+.soundbtn.muted .x {
+  opacity: 1;
+}
+
+/* the swing latency readout (`;` on the TV): a tuning tool, off unless asked for */
+.lat-panel {
+  position: fixed;
+  left: 12px;
+  top: 12px;
+  z-index: 9000;
+  padding: 8px 10px;
+  background: rgba(8, 8, 20, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
+  color: #d8f7ff;
+  font: 12px/1.35 ui-monospace, Menlo, Consolas, monospace;
+  pointer-events: none;
+}
+
+.lat-panel[hidden] {
+  display: none;
+}
+
+.lat-panel b {
+  display: block;
+  margin-bottom: 4px;
+  color: #ffd25e;
+  letter-spacing: 0.08em;
+}
+
+.lat-panel pre {
+  margin: 0;
+  font: inherit;
+  white-space: pre;
+}
+
+/* ------------------------------------------------------------ sport setup */
+
+/* a quiet column on the left: the world you're about to play in stays in view */
+.setup {
+  display: flex;
+  align-items: center;
+  background: linear-gradient(90deg, rgba(12, 12, 32, 0.88) 0%, rgba(12, 12, 32, 0.78) 38%, rgba(12, 12, 32, 0.3) 60%, rgba(12, 12, 32, 0) 78%);
+  color: #fff;
+  text-shadow: 0 1px calc(var(--u) * 1.2) rgba(0, 0, 0, 0.35);
+}
+
+.setup .sheet {
+  width: min(calc(var(--u) * 54), 92vw);
+  margin-left: calc(var(--u) * 7);
+  padding: 0;
+  gap: calc(var(--u) * 0.8);
+}
+
+.setup .sheet h2 {
+  margin: 0;
+  font-size: calc(var(--u) * 6.4);
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.setup .hintline {
+  text-align: left;
+  font-size: calc(var(--u) * 1.9);
+  line-height: 1.4;
+  opacity: 0.6;
+  margin-bottom: calc(var(--u) * 1.4);
+}
+
+.setup .hintline:last-child {
+  margin: calc(var(--u) * 1.2) 0 0;
+  font-size: calc(var(--u) * 1.6);
+  opacity: 0.4;
+}
+
+.setup .teams {
+  justify-content: flex-start;
+  gap: calc(var(--u) * 1.4);
+  padding: 0 0 calc(var(--u) * 1.4);
+}
+
+.setup .chip {
+  padding: calc(var(--u) * 0.6) calc(var(--u) * 1.6);
+  font-size: calc(var(--u) * 1.9);
+  box-shadow: none;
+}
+
+.setup .vs {
+  font-size: calc(var(--u) * 1.8);
+  opacity: 0.45;
+}
+
+/* options: a plain list; the one you're on gets a soft glass pill and its arrows */
+.setup .row {
+  padding: calc(var(--u) * 1.3) calc(var(--u) * 2);
+  margin: 0 calc(var(--u) * -2);
+  border-radius: calc(var(--u) * 1.6);
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.setup .row .k {
+  font-size: calc(var(--u) * 2.3);
+  font-weight: 500;
+  opacity: 0.7;
+}
+
+.setup .row .v {
+  gap: calc(var(--u) * 1);
+  font-size: calc(var(--u) * 2.3);
+  font-weight: 600;
+}
+
+.setup .row .v .arrow {
+  width: auto;
+  height: auto;
+  background: none;
+  font-size: calc(var(--u) * 1.4);
+  opacity: 0;
+  transition: opacity 0.16s;
+}
+
+.setup .row.focus {
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  transform: none;
+}
+
+.setup .row.focus .k {
+  opacity: 1;
+}
+
+.setup .row.focus .arrow {
+  opacity: 0.8;
+  background: none;
+  color: #fff;
+}
+
+.setup .row.disabled {
+  opacity: 0.35;
+}
+
+/* the one action: a white pill */
+.setup .row.go {
+  margin: calc(var(--u) * 1.8) 0 0;
+  text-shadow: none;
+  padding: calc(var(--u) * 1.6) calc(var(--u) * 3);
+  align-self: flex-start;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #16152b;
+  font-size: calc(var(--u) * 2.4);
+  font-weight: 700;
+  box-shadow: none;
+}
+
+.setup .row.go.focus {
+  background: #fff;
+  box-shadow: 0 0 0 calc(var(--u) * 0.4) rgba(255, 255, 255, 0.35);
 }

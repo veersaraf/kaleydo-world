@@ -111,4 +111,50 @@ for (const hz of [30, 100, 200]) {
   const q = (f: number) => a[Math.min(a.length - 1, Math.floor(f * (a.length - 1) + 0.5))];
   console.log(`\ndetection delay after the true peak (${a.length} swings, 60 Hz): p50 ${q(0.5).toFixed(0)} ms, p90 ${q(0.9).toFixed(0)} ms, max ${a[a.length - 1].toFixed(0)} ms`);
 }
+
+// the swing ONSET (onStart): fires once per real swing, ahead of its peak, on its side when it says one — and not for a resting phone or a wind-up alone
+type Start = { t: number; side?: 'fh' | 'bh'; w: number };
+const leads: number[] = [];
+function runOnset(name: string, o: Opts, check: (s: Start[], e: SwingEvent[], lead: number) => boolean) {
+  const d = new SwingDetector();
+  d.upSign = o.ios ? -1 : 1;
+  d.handed = o.handed ?? 1;
+  const evs: SwingEvent[] = [];
+  const starts: Start[] = [];
+  d.onSwing = (e) => evs.push(e);
+  d.onStart = (e) => starts.push(e);
+  for (const s of makeSwing(o)) d.push(s);
+  const lead = evs.length && starts.length ? evs[evs.length - 1].t - starts[starts.length - 1].t : NaN;
+  if (evs.length && starts.length && !o.hz) leads.push(lead);
+  const pass = check(starts, evs, lead);
+  if (!pass) ok = false;
+  console.log(`${pass ? '✓' : '✗'} onset ${name.padEnd(34)} ${starts.length} start${starts.length === 1 ? '' : 's'}${starts.length ? ` (${starts.map((x) => `${x.side ?? '?'} ${x.w.toFixed(1)} rad/s`).join(', ')})` : ''}${Number.isNaN(lead) ? '' : `, ${lead.toFixed(0)} ms before the peak`}`);
+}
+console.log('');
+for (const ios of [false, true]) {
+  const T = ios ? '[iOS]' : '[W3C]';
+  const once = (side?: 'fh' | 'bh', minLead = 55) => (s: Start[], e: SwingEvent[], lead: number) => e.length === 1 && s.length === 1 && lead >= minLead && lead < 200 && (!s[0].side || !side || s[0].side === side);
+  runOnset(`${T} forehand, flat`, { peak: R(950), dur: 0.2, vUp: 0, ios, yaw: 0.85 }, once('fh'));
+  runOnset(`${T} backhand, flat`, { peak: R(950), dur: 0.2, vUp: 0, ios, yaw: -0.85 }, once('bh'));
+  runOnset(`${T} left-hander forehand`, { peak: R(950), dur: 0.2, vUp: 0, ios, yaw: -0.85, handed: -1 }, once('fh'));
+  runOnset(`${T} overhead / serve`, { peak: R(1100), dur: 0.2, vUp: -0.5, ios, yaw: 0.1 }, once(undefined));
+  runOnset(`${T} hard flat`, { peak: R(1300), dur: 0.18, vUp: 0.2, ios, yaw: 0.85 }, once('fh'));
+  runOnset(`${T} gentle (520°/s, 0.24 s)`, { peak: R(520), dur: 0.24, vUp: 1.1, ios, yaw: 0.85 }, once('fh', 40));
+  runOnset(`${T} slow backswing → forehand`, { peak: R(1000), dur: 0.2, vUp: 0.3, ios, yaw: 0.85, backswing: R(260) }, once('fh'));
+  runOnset(`${T} fast backswing → forehand`, { peak: R(1100), dur: 0.2, vUp: 0.3, ios, yaw: 0.85, backswing: R(520) }, (s, e, lead) => e.length >= 1 && s.length >= 1 && lead >= 55 && s[s.length - 1].side !== 'bh');
+  runOnset(`${T} resting phone`, { peak: R(40), dur: 0.3, vUp: 0, ios, yaw: 0.5 }, (s, e) => s.length === 0 && e.length === 0);
+  runOnset(`${T} wind-up alone (260°/s)`, { peak: R(1), dur: 0.2, vUp: 0, ios, yaw: 0.85, backswing: R(260) }, (s, e) => s.length === 0 && e.length === 0);
+  runOnset(`${T} twitch (360°/s, 30 ms): false start`, { peak: R(360), dur: 0.072, vUp: 0, ios, yaw: 0.85 }, (s, e) => s.length === 1 && e.length === 0);
+  runOnset(`${T} small wobble (300°/s)`, { peak: R(300), dur: 0.3, vUp: 0, ios, yaw: 0.85 }, (s, e) => s.length === 0 && e.length === 0);
+}
+for (const hz of [30, 100, 200]) {
+  for (const noise of [0, 0.15, 0.4]) {
+    runOnset(`[${hz} Hz, noise ${noise}] forehand`, { peak: R(950), dur: 0.2, vUp: 0, ios: true, yaw: 0.85, hz, noise, seed: hz + Math.round(noise * 100) }, (s, e, lead) => e.length === 1 && s.length === 1 && lead >= 40 && lead < 200 && s[0].side !== 'bh');
+    runOnset(`[${hz} Hz, noise ${noise}] resting`, { peak: R(40), dur: 0.3, vUp: 0, ios: true, yaw: 0.5, hz, noise, seed: hz + 7 + Math.round(noise * 100) }, (s, e) => s.length === 0 && e.length === 0);
+  }
+}
+{
+  const a = [...leads].sort((x, y) => x - y);
+  console.log(`\nonset lead before the true peak (${a.length} swings, 60 Hz): min ${a[0].toFixed(0)} ms, p50 ${a[Math.floor(a.length / 2)].toFixed(0)} ms, max ${a[a.length - 1].toFixed(0)} ms`);
+}
 console.log(ok ? '\nAll swing checks passed.' : '\nSome swing checks FAILED.');

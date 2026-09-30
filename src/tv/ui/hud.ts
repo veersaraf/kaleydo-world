@@ -465,3 +465,80 @@ export class Hud {
 
   onEvent(_e: MatchEvent) {}
 }
+
+/** what the latency readout shows for a human swing */
+export interface SwingReadout {
+  /** which human swing this is (since the match began) */
+  n: number;
+  /** the phone's detector confirm delay, ms */
+  detector: number;
+  /** phone → relay, ms */
+  uplink: number;
+  /** relay → TV, ms */
+  transit: number;
+  /** the age the TV acted on (clamped), ms */
+  total: number;
+  /** ms the drawn ball is held at the racket */
+  hold: number;
+  /** the swing's timing, −1 (early) … +1 (late) */
+  tau: number;
+  /** ms early (−) or late (+) of the ideal contact, as judged */
+  dtMs: number;
+  hit: boolean;
+  transport: string;
+  /** the median of the last swing ages, ms */
+  median: number;
+  source: string;
+}
+
+/**
+ * A small monospace panel over the TV (top-left), toggled with `;`: for tuning with a real phone,
+ * what the last human swing's age was made of and how it was judged. Off by default; not part of
+ * the HUD proper, so screenshots and tests never see it.
+ */
+export class LatencyPanel {
+  readonly el: HTMLElement;
+  private body: HTMLElement;
+  private on = false;
+  private last: SwingReadout | null = null;
+
+  constructor() {
+    this.body = h('pre', null, '');
+    this.el = h('div', { class: 'lat-panel', hidden: true }, h('b', null, 'SWING LATENCY   ;'), this.body);
+    document.body.append(this.el);
+  }
+
+  get shown() {
+    return this.on;
+  }
+
+  toggle() {
+    this.on = !this.on;
+    this.el.hidden = !this.on;
+    this.draw();
+  }
+
+  /** a human swing was judged */
+  swing(r: SwingReadout) {
+    this.last = r;
+    if (this.on) this.draw();
+  }
+
+  private draw() {
+    const r = this.last;
+    if (!r) {
+      this.body.textContent = 'no swing yet';
+      return;
+    }
+    const f = (v: number) => String(Math.round(v)).padStart(4) + ' ms';
+    this.body.textContent = [
+      `swing #${r.n}  via ${r.transport || '?'}  (${r.source})`,
+      `detector ${f(r.detector)}`,
+      `uplink   ${f(r.uplink)}`,
+      `relay    ${f(r.transit)}`,
+      `age      ${f(r.total)}   median ${Math.round(r.median)} ms`,
+      `hold     ${f(r.hold)}`,
+      `tau      ${r.tau >= 0 ? '+' : ''}${r.tau.toFixed(2)}  (${r.dtMs >= 0 ? '+' : ''}${r.dtMs} ms)  ${r.hit ? 'HIT' : 'miss'}`,
+    ].join('\n');
+  }
+}
