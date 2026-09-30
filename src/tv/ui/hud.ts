@@ -56,6 +56,12 @@ export class Hud {
   private smHitKph: HTMLElement;
   private smLines: HTMLElement;
   private smOn = false;
+  // the first-time demo: one big caption at a time, and the timing ring (the smash cue's look, on the real ball too)
+  private cap: HTMLElement;
+  private capText = '';
+  private tmRing: HTMLElement;
+  private tmCue: HTMLElement;
+  private tmIdle = true;
   /** the smash overlay has been written as off (nothing to do until a cue comes) */
   private smIdle = false;
   /** the last smash hit used the second copy of the HUD's jolt (see restartKick) */
@@ -101,6 +107,9 @@ export class Hud {
     this.smDim = h('div', { class: 'sm-dim' });
     this.smRetCue = h('b', null, 'SWING!');
     this.smRet = h('div', { class: 'sm-ret' }, h('i', { class: 'r1' }), h('i', { class: 'r2' }), h('i', { class: 'tk' }), this.smRetCue);
+    this.cap = h('div', { class: 'coach-cap' });
+    this.tmCue = h('b', null, 'SWING!');
+    this.tmRing = h('div', { class: 'sm-ret tm' }, h('i', { class: 'r1' }), h('i', { class: 'r2' }), h('i', { class: 'tk' }), this.tmCue);
     this.smTitle = h('div', { class: 'sm-title' }, h('b', null, 'SMASH!'), h('span', null, 'swing hard as the ring closes'));
     this.smLines = h('div', { class: 'sm-lines' });
     this.smHitWord = h('b', null, 'SMASH!');
@@ -116,7 +125,9 @@ export class Hud {
       this.tagLayer,
       this.bug,
       this.smRet,
+      this.tmRing,
       this.floats,
+      this.cap,
       this.callout,
       this.banner,
       this.hint,
@@ -329,6 +340,58 @@ export class Hud {
     this.smRet.style.opacity = Math.min(1, cue.w * 1.4).toFixed(3);
     this.smRet.classList.toggle('hot', hot);
     this.smRetCue.style.opacity = hot && cue.tl > -0.1 ? '1' : '0';
+  }
+
+  /**
+   * The first-time demo's caption: one line, big, popping in (text '' = none). `sub` is a small line under it
+   * (the keys, for the keyboard player). Setting the same text again does nothing.
+   */
+  caption(text: string, sub = '') {
+    const key = text + '|' + sub;
+    if (key === this.capText) return;
+    this.capText = key;
+    this.cap.textContent = '';
+    if (!text) {
+      this.cap.classList.remove('show');
+      return;
+    }
+    this.cap.append(h('b', null, text));
+    if (sub) this.cap.append(h('span', null, sub));
+    replay(this.cap, 'show');
+  }
+
+  /**
+   * Every frame of the first-time demo (and of a newcomer's first two returns): the timing ring closing on the
+   * ball, as a smash chance's does, without the dimming, the slow motion or the banner. `tl` = seconds to contact
+   * (null = no ring).
+   */
+  timingRing(cue: { team: number; tl: number; ball: { x: number; y: number; z: number }; word: string } | null) {
+    if (!cue || cue.tl > 1.15 || cue.tl < -0.12) {
+      if (this.tmIdle) return;
+      this.tmIdle = true;
+      this.tmRing.style.display = 'none';
+      return;
+    }
+    const v = this.viewOf(cue.team);
+    const p = this.project(v.rig, cue.ball.x, cue.ball.y, cue.ball.z);
+    if (p.behind || p.y < -0.2) {
+      if (!this.tmIdle) this.tmRing.style.display = 'none';
+      this.tmIdle = true;
+      return;
+    }
+    this.tmIdle = false;
+    const close = Math.min(1, Math.max(0, cue.tl / 1.1));
+    const hot = cue.tl < 0.32;
+    const r = this.tmRing;
+    r.style.display = 'block';
+    r.style.left = `${((v.x + Math.min(0.98, Math.max(0.02, p.x)) * v.w) * 100).toFixed(2)}%`;
+    r.style.top = `${(Math.min(0.97, Math.max(0.03, p.y)) * 100).toFixed(2)}%`;
+    r.style.setProperty('--s', (0.7 + close * 2.4).toFixed(3));
+    r.style.setProperty('--spin', `${(this.time * 140) % 360}deg`);
+    r.style.opacity = Math.min(1, (1.15 - cue.tl) * 4).toFixed(3);
+    r.classList.toggle('hot', hot);
+    if (this.tmCue.textContent !== cue.word) this.tmCue.textContent = cue.word;
+    this.tmCue.style.opacity = hot && cue.tl > -0.1 ? '1' : '0';
   }
 
   /** The smash lands on the racket: speed lines, a flash of the word, the speed. */

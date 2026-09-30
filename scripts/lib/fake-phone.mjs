@@ -25,6 +25,11 @@
 export function phone() {
   const D = 180 / Math.PI;
   const cfg = () => window.__phoneConfig || {};
+  // This phone has played before: the first-time tennis demo (src/tv/tennis/demo.ts) is not for it. The pad remembers that in
+  // localStorage and tells the TV in its hello; set window.__phoneConfig = { freshDemo: true } first to be a newcomer.
+  try {
+    if (!cfg().freshDemo) localStorage.setItem('kaleido.demo.tennis', '1');
+  } catch {}
   const qmul = (a, b) => [
     a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
     a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],

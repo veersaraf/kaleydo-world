@@ -6,6 +6,11 @@ import { PLAYER_COLORS } from '../../shared/protocol';
 import type { TVLink } from './link';
 import type { SlashInput } from '../duel/types';
 
+/** a phone's list of seen demos, as sent: short strings only */
+function cleanDemo(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length < 24).slice(0, 12) : [];
+}
+
 export interface Seat {
   slot: number;
   pid: string | null;
@@ -19,6 +24,12 @@ export interface Seat {
   local: boolean;
   /** appearance chosen on the phone */
   look?: LookPrefs;
+  /**
+   * The first-time demos this phone has seen ('tennis' = all of it; 'tennis:serve', 'tennis:rally' = one part),
+   * as it said in its hello / prefs. undefined = a phone that predates the field (the TV's own
+   * `seenTutorial` stands in for it); the local keyboard seat has none either.
+   */
+  demoSeen?: string[];
   lastSeen: number;
 }
 
@@ -382,12 +393,14 @@ export class Input {
         seat.handed = m.handed;
         seat.motion = m.motion;
         if (m.look) seat.look = m.look;
+        if (m.demo) seat.demoSeen = cleanDemo(m.demo);
         this.onSeatsChanged();
         break;
       case 'prefs':
         seat.name = m.name || seat.name;
         seat.handed = m.handed;
         if (m.look) seat.look = m.look;
+        if (m.demo) seat.demoSeen = cleanDemo(m.demo);
         this.onSeatsChanged();
         break;
       case 'swing':

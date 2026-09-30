@@ -150,6 +150,12 @@ export class Rig {
   arms: [THREE.Mesh, THREE.Mesh][];
   private girth = 1;
   racket = new THREE.Group();
+  /** the first-time demo's ghost phone, in the racket hand (Pose.ghost shows it) */
+  phone = new THREE.Group();
+  private phoneMats: THREE.MeshBasicMaterial[] = [];
+  /** the racket's throat, frame and strings: the ghost phone stands in for them while it shows */
+  private racketHead: THREE.Object3D[] = [];
+  private ghostShown = -1;
   shadow: THREE.Mesh;
   eyesOpen = new THREE.Group();
   eyesHappy = new THREE.Group();
@@ -301,11 +307,12 @@ export class Rig {
     // racket: grip at origin, shaft along +y, face normal +z
     this.root.add(this.racket);
     mesh(G.handle, grip, this.racket, undefined, [0, 0.07, 0]);
-    mesh(G.throat, racketM, this.racket, undefined, [0, 0.26, 0]);
+    const throat = mesh(G.throat, racketM, this.racket, undefined, [0, 0.26, 0]);
     const frame = mesh(G.frame, racketM, this.racket, [1, 1.27, 1.2], [0, RACKET_SWEET + 0.03, 0]);
     frame.userData.outlineScale = 0.6;
     const str = mesh(G.strings, strings, this.racket, [1, 1.27, 1], [0, RACKET_SWEET + 0.03, 0]);
     str.userData.noOutline = true;
+    this.racketHead = [throat, frame, str];
 
     // feet + legs
     for (let i = 0; i < 2; i++) {
@@ -343,7 +350,63 @@ export class Rig {
     this.shadow.userData.noOutline = true;
 
     if (kit.outline) outlineTree(this.root, kit.outlineColor?.(look) ?? kit.outline.color, kit.outline.width, { emissive: kit.outline.emissive });
+    this.buildPhone();
     this.root.scale.setScalar(this.scale);
+  }
+
+  /**
+   * The first-time demo's phone: a bright, see-through phone that takes the racket head's place in the hand while
+   * Pose.ghost shows it ("your phone IS the racket"), bigger than life so it reads from the stand. Drawn after the
+   * outlines, so it has none. It starts visible so that the world's compile at setPlayers takes its materials in; the
+   * first apply hides it (no draw calls) until Pose.ghost shows it.
+   */
+  private buildPhone() {
+    const W = 0.4,
+      H = 0.8,
+      T = 0.085,
+      R = 0.085;
+    const rr = (w: number, h: number, r: number) => {
+      const s = new THREE.Shape();
+      const x = -w / 2,
+        y = -h / 2;
+      s.moveTo(x + r, y);
+      s.lineTo(x + w - r, y);
+      s.quadraticCurveTo(x + w, y, x + w, y + r);
+      s.lineTo(x + w, y + h - r);
+      s.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      s.lineTo(x + r, y + h);
+      s.quadraticCurveTo(x, y + h, x, y + h - r);
+      s.lineTo(x, y + r);
+      s.quadraticCurveTo(x, y, x + r, y);
+      return s;
+    };
+    const mat = (color: string, opacity: number) => {
+      const m = new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, fog: false, toneMapped: false, side: THREE.DoubleSide });
+      m.userData.base = opacity;
+      this.phoneMats.push(m);
+      this.materials.push(m);
+      return m;
+    };
+    const geo = new THREE.ExtrudeGeometry(rr(W, H, R), { depth: T, bevelEnabled: false });
+    // a dark frame round a screen in the player's colour: what a phone is, at a glance
+    const body = new THREE.Mesh(geo, mat('#1d1c33', 0.95));
+    body.position.z = -T / 2;
+    const screen = new THREE.Mesh(new THREE.ShapeGeometry(rr(W * 0.82, H * 0.88, R * 0.6)), mat(this.look.shirt, 0.96));
+    screen.position.set(0, -H * 0.01, T / 2 + 0.003);
+    const back = screen.clone();
+    back.position.z = -T / 2 - 0.003;
+    const rim = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color: '#ffffff', transparent: true, opacity: 1, depthWrite: false, fog: false, toneMapped: false }));
+    rim.position.z = -T / 2;
+    this.materials.push(rim.material as THREE.Material);
+    for (const o of [body, screen, back, rim]) {
+      o.userData.noOutline = true;
+      o.renderOrder = 6;
+      this.phone.add(o);
+    }
+    // gripped by its foot, the top along the racket shaft
+    this.phone.position.set(0, H / 2 + 0.06, 0);
+    this.phone.scale.setScalar(1e-4);
+    this.racket.add(this.phone);
   }
 
   private buildHair(
@@ -458,6 +521,17 @@ export class Rig {
     tmpM.makeBasis(tmpX, tmpY, tmpZ);
     this.racket.quaternion.setFromRotationMatrix(tmpM);
     this.racket.position.copy(this.hands[0].position);
+    // the demo's ghost phone
+    const g = p.ghost ?? 0;
+    if (g !== this.ghostShown) {
+      this.ghostShown = g;
+      // (visible while the world compiles its materials at setPlayers — the first apply comes after that — then it is out of the draw)
+      this.phone.visible = g > 0.01;
+      this.phone.scale.setScalar(g > 0.01 ? 0.6 + 0.4 * g : 1e-4);
+      for (const m of this.phoneMats) m.opacity = (m.userData.base as number) * Math.min(1, g);
+      // (the racket's head gives way to the phone once it is mostly there)
+      for (const o of this.racketHead) o.visible = g < 0.5;
+    }
 
     // feet and legs
     for (let i = 0; i < 2; i++) {

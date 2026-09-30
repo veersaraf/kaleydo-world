@@ -5,6 +5,8 @@ const out = process.argv[2];
 const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--use-angle=metal', '--autoplay-policy=no-user-gesture-required'] });
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 const logs = [];
+// (a phone that has played before: no first-time demo — the pad remembers it, see src/tv/tennis/demo.ts)
+await ctx.addInitScript(() => { try { localStorage.setItem('kaleido.demo.tennis', '1'); } catch {} });
 const tv = await ctx.newPage();
 tv.on('pageerror', (e) => logs.push('[tv] ' + e.message));
 await tv.goto(BASE + '/');

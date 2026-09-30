@@ -8,7 +8,9 @@ import { CodeEntry, GuestLobby } from './ui/room';
 import { QuickPanel } from './ui/quick';
 import type { App } from './app';
 import type { Btn } from './core/input';
-import type { MatchConfig, MatchEvent, PlayerSpec } from './tennis/match';
+import type { Match, MatchConfig, MatchEvent, PlayerSpec } from './tennis/match';
+import type { DemoHooks, DemoKind, DemoStep } from './tennis/demo';
+import type { TPlayer } from './tennis/player';
 import { AI_LEVELS } from './tennis/ai';
 import { randomLook } from './chars/look';
 import { WORLDS, worldDef } from './worlds';
@@ -49,6 +51,8 @@ export interface Settings {
   split: boolean;
   world: string;
   seenTutorial: boolean;
+  /** the first-time tennis demo, as this TV remembers it for the keyboard player and for phones that don't say (older ones): 'tennis' (all of it), 'tennis:serve', 'tennis:rally' */
+  demoSeen: string[];
   /** Kaleydo mode: big moments shatter the world into the next one (every sport) */
   kaleido: boolean;
   /** tennis Pace: Rush (every hit in a rally builds heat and speeds the ball up) */
@@ -72,6 +76,7 @@ const DEFAULTS: Settings = {
   split: true,
   world: 'park',
   seenTutorial: false,
+  demoSeen: [],
   kaleido: true,
   rush: false,
   muted: false,
@@ -174,6 +179,19 @@ export class Flow {
   private lastCfg: { cfg: MatchConfig; world: string } | null = null;
   private tossHintShown = false;
   private resultsShown = false;
+  // ---- the first-time demo (src/tv/tennis/demo.ts)
+  /** 'slot:kind' of the demos started since the last "Show me" (or since the TV opened): each plays once */
+  private demoRan = new Set<string>();
+  /** "Show me": the demos play once more for everyone, whatever the phones remember */
+  private demoForce = false;
+  /** the demo playing: whose, and the step it is on (what the phone and the captions say) */
+  private demoCur: { slot: number; keys: boolean; step: DemoStep } | null = null;
+  /** returns still to be shown a timing ring, per player slot (set when the rally demo ran to its end) */
+  private rings = new Map<number, number>();
+  /** hits so far in the match, the hit whose flight a ring was last decided for, and whether it got one */
+  private hitSeq = 0;
+  private ringSeg = -1;
+  private ringOn = false;
   // ---- online: this TV is a guest in another TV's match (src/tv/net/guest.ts)
   private guestRun: NetStart | null = null;
   private guestPrevMode: 'quick' | 'kaleido' = 'quick';
@@ -521,6 +539,8 @@ export class Flow {
       this.app.endReplay();
       return;
     }
+    // (the first-time demo takes an A: its player's skips it)
+    if (b === 'a' && this.app.demoTaken(slot)) return;
     if (b === 'home' || b === 'plus' || b === 'b') this.pause();
     if (b === 'a') {
       this.app.match?.startNow();
@@ -1366,11 +1386,24 @@ export class Flow {
     const tabs = h('div', { class: 'row help-tabs' }, h('span', { class: 'k' }, 'Sport'), h('span', { class: 'v' }, h('span', { class: 'arrow' }, '◀'), h('span', null, page.name), h('span', { class: 'arrow' }, '▶')));
     const flip = (d: number) => this.go(this.helpScreen((sport + d + pages.length) % pages.length));
     const back = h('div', { class: 'row go' }, 'Got it');
+    // tennis: the first-time demo again (it plays at your next serve)
+    const show = sport === 0 ? h('div', { class: 'row go' }, 'Show me') : null;
     const nav = new Nav([
       { el: tabs, onLeft: () => flip(-1), onRight: () => flip(1), onSelect: () => flip(1) },
+      ...(show
+        ? [
+            {
+              el: show,
+              onSelect: () => {
+                this.showDemoAgain();
+                this.go(this.setupScreen(this.settings.kaleido ? 'kaleido' : 'quick'));
+              },
+            },
+          ]
+        : []),
       { el: back, onSelect: () => this.go(this.mainMenu()) },
     ]);
-    const sheet = h('div', { class: 'sheet panel' }, h('h2', null, 'How to play'), tabs, h('div', { class: 'help-grid' }, ...page.tips), page.keys, back);
+    const sheet = h('div', { class: 'sheet panel' }, h('h2', null, 'How to play'), tabs, h('div', { class: 'help-grid' }, ...page.tips), page.keys, h('div', { class: 'help-btns' }, ...(show ? [show] : []), back));
     return this.navScreen('help', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'How to play', hint: '◀ ▶ sport · A to go back' });
   }
 
@@ -1510,6 +1543,10 @@ export class Flow {
     this.pointsSinceShift = 0;
     this.resultsShown = false;
     this.tossHintShown = false;
+    this.demoCur = null;
+    this.hitSeq = 0;
+    this.ringSeg = -1;
+    this.ringOn = false;
     if (this.mode === 'kaleido') {
       this.kaleidoOrder = [world, ...this.shuffledWorlds().filter((w) => w !== world)];
       this.kaleidoIdx = 0;
@@ -1534,7 +1571,8 @@ export class Flow {
     const def = worldDef(world);
     this.hud.showBanner(def, `${this.teams[0].name}  vs  ${this.teams[1].name}`);
     this.hud.setScore(this.app.match!);
-    if (!this.settings.seenTutorial) {
+    // (the first serve shows the first-time demo to whoever hasn't seen it; the old one-line hint is for practice)
+    if (cfg.practice && !this.settings.seenTutorial) {
       this.hud.setHint('Swing your phone like a racket when the ball comes to you');
     }
     this.syncScoreboard();
@@ -2904,6 +2942,7 @@ export class Flow {
     const pan = (x: number) => Math.max(-1, Math.min(1, x / 8));
     switch (e.type) {
       case 'hit': {
+        this.hitSeq++;
         if (this.lab && e.p.human) this.labReadout({ kind: 'hit', stroke: e.stroke, dtMs: e.dtMs, kph: e.kph, crossed: e.crossed, perfect: e.perfect });
         this.hitTimes.push(m.t);
         if (this.hitTimes.length > 8) this.hitTimes.shift();
@@ -2945,7 +2984,7 @@ export class Flow {
             const label = e.rocket ? 'ROCKET SERVE!' : e.perfect ? 'PERFECT!' : e.tau < -0.55 ? 'EARLY' : e.tau > 0.55 ? 'LATE' : e.kind === 'lob' ? 'LOB' : e.kind === 'drop' ? 'DROP SHOT' : e.kind === 'smash' ? 'SMASH!' : e.serve ? '' : '';
             const sub = e.serve ? '' : `${strokeName.toUpperCase()}${spinName.toUpperCase()}`;
             if ((label || sub) && e.kind !== 'smash') this.hud?.float(label ? `${label}${sub ? ' · ' + sub : ''}` : sub, { x: e.pos.x, y: e.pos.y + 0.9, z: e.pos.z }, e.perfect ? 'perfect' : label ? '' : 'soft', e.p.team);
-            if (!this.settings.seenTutorial && this.stats.fastest[e.p.team] > 0) {
+            if (this.lab && !this.settings.seenTutorial && this.stats.fastest[e.p.team] > 0) {
               this.settings.seenTutorial = true;
               this.save();
               this.hud?.setHint('');
@@ -3123,9 +3162,138 @@ export class Flow {
         this.syncPads();
         break;
       case 'serve-ready':
+        if (real) this.maybeDemo(m);
         this.syncPads(true);
         break;
     }
+  }
+
+  // ---------------------------------------------------------------- the first-time demo
+
+  /** Has this player seen this part of the demo? (a phone says so itself; the keyboard player and older phones, the TV's settings) */
+  private demoSeenBy(p: TPlayer, kind: DemoKind): boolean {
+    const key = `${p.slot}:${kind}`;
+    if (this.demoRan.has(key)) return true;
+    if (this.demoForce) return false;
+    const seat = this.app.input.seats[p.slot];
+    const list = seat && !seat.local && seat.demoSeen ? seat.demoSeen : this.settings.seenTutorial ? ['tennis'] : this.settings.demoSeen;
+    return list.includes('tennis') || list.includes(`tennis:${kind}`);
+  }
+
+  /**
+   * At the first serve of a point: the demo for a human who hasn't seen it. Their own character does it, where they stand,
+   * while the match waits. The server sees how to serve; a player who receives first, how to return (and the serve demo
+   * comes at their first service game). Never in attract, in practice, or for CPUs, and never in a guest's shadow match.
+   */
+  private maybeDemo(m: Match) {
+    const app = this.app;
+    if (app.attract || app.demo || app.replay || this.guestRun || this.screen || this.lab || m.cfg.practice || m.second || app.sport !== 'tennis') return;
+    const srv = m.server;
+    let who: TPlayer | null = null;
+    let kind: DemoKind = 'serve';
+    if (srv.human && !this.demoSeenBy(srv, 'serve')) who = srv;
+    else {
+      kind = 'rally';
+      who = m.team((1 - srv.team) as 0 | 1).find((r) => r.human && !this.demoSeenBy(r, 'rally')) ?? null;
+    }
+    if (!who) return;
+    const p = who;
+    const seat = app.input.seats[p.slot];
+    if (!seat || (!seat.local && !seat.pid)) return;
+    const keys = seat.local;
+    const hooks: DemoHooks = {
+      step: (st) => this.demoStepShown(p, keys, st),
+      beat: (b, pan) => this.demoBeat(p, b, pan),
+      end: (skipped, completed) => this.demoEnded(p, kind, keys, skipped, completed),
+    };
+    if (!app.startDemo(m.players.indexOf(p), kind, keys, hooks)) return;
+    this.demoRan.add(`${p.slot}:${kind}`);
+  }
+
+  private demoStepShown(p: TPlayer, keys: boolean, step: DemoStep) {
+    this.demoCur = { slot: p.slot, keys, step };
+    this.hud?.caption(step.text);
+    this.audio?.sfx.ui('move');
+    // (a guest TV's HUD says it too)
+    this.app.net.hud(step.text, undefined, 'small');
+    this.syncPads(true);
+  }
+
+  private demoBeat(p: TPlayer, kind: 'toss' | 'hit' | 'bounce', pan: number) {
+    const a = this.audio;
+    const seat = this.app.input.seats[p.slot];
+    if (kind === 'toss') {
+      a?.sfx.swish(0.45, pan);
+      if (seat?.pid) this.app.link.toPad(seat.pid, { type: 'fx', fx: 'toss' });
+    } else if (kind === 'hit') {
+      a?.sfx.hit(0.7, false, pan, false);
+      this.app.rig.kick(0.08);
+      if (seat?.pid) this.app.link.toPad(seat.pid, { type: 'fx', fx: 'hit', power: 0.7 });
+    } else a?.sfx.bounce(5, pan);
+  }
+
+  /** The demo ran out or was skipped: remember it, give the ball back, and let the match go on. */
+  private demoEnded(p: TPlayer, kind: DemoKind, keys: boolean, skipped: boolean, completed: boolean) {
+    this.app.endDemo();
+    this.demoCur = null;
+    this.hud?.caption('');
+    this.hud?.setHint('');
+    this.hud?.timingRing(null);
+    // a skip means "I know this": all of it is seen; running to the end, that part of it
+    const seen = skipped ? ['tennis'] : completed ? [`tennis:${kind}`] : [];
+    if (seen.length) {
+      const seat = this.app.input.seats[p.slot];
+      if (seat && !seat.local && seat.demoSeen) seat.demoSeen = [...new Set([...seat.demoSeen, ...seen])];
+      else {
+        this.settings.demoSeen = [...new Set([...this.settings.demoSeen, ...seen])];
+        this.save();
+      }
+    }
+    // the first two returns after the rally demo get the timing ring on the real ball
+    if (kind === 'rally' && completed && !skipped) this.rings.set(p.slot, 2);
+    if (skipped) this.rings.delete(p.slot);
+    this.audio?.sfx.ui(skipped ? 'back' : 'select');
+    this.syncPads(true);
+  }
+
+  /** "Show me" in How to play: the demos play again at the next serve, whatever this TV or the phones remember. */
+  private showDemoAgain() {
+    this.demoRan.clear();
+    this.demoForce = true;
+    this.rings.clear();
+    this.toast('The demo plays at your next serve', '#ffc53d');
+  }
+
+  /**
+   * Every frame of a match: a newcomer's first two returns get the timing ring (the smash cue's look, on the real
+   * ball; no slow motion) so they see the beat for real once or twice; then never again.
+   */
+  private ringFrame(m: Match) {
+    const hud = this.hud;
+    if (!hud) return;
+    let shown = false;
+    if (this.rings.size && !this.app.demo && !this.app.smashCue && m.state === 'play' && m.ball.live) {
+      for (const [slot, left] of this.rings) {
+        const p = m.players.find((q) => q.human && q.slot === slot);
+        const plan = p?.plan;
+        if (!p || !plan || p.swing) continue;
+        // a new flight that is coming at them is a return: counted the moment it is first seen
+        if (this.ringSeg !== this.hitSeq) {
+          this.ringSeg = this.hitSeq;
+          this.ringOn = !!m.ball.lastHitter && m.ball.lastHitter.team !== p.team;
+          if (this.ringOn) {
+            if (left <= 1) this.rings.delete(slot);
+            else this.rings.set(slot, left - 1);
+          }
+        }
+        if (!this.ringOn) continue;
+        const seat = this.app.input.seats[slot];
+        hud.timingRing({ team: p.team, tl: plan.t - m.t, ball: m.ballView(m.t, this.cueBall), word: seat?.local ? 'SPACE!' : 'SWING!' });
+        shown = true;
+        break;
+      }
+    }
+    if (!shown) hud.timingRing(null);
   }
 
   /** Prepare a world shortly — at a moment when a hiccup can't interrupt a rally. */
@@ -3175,6 +3343,7 @@ export class Flow {
       if (!seat || !seat.pid || !seat.connected) continue;
       let mode: PadMode = 'menu';
       let lock = false;
+      let step: string | undefined;
       let title = this.screen?.pad?.title;
       let hint = this.screen?.pad?.hint;
       const g = this.app.bowl;
@@ -3246,7 +3415,20 @@ export class Flow {
         hint = 'replay';
       } else if (!this.screen && m && !this.app.attract) {
         const mine = m.players.filter((p) => p.slot === seat.slot);
-        if (!mine.length) {
+        const dm = this.app.demo;
+        if (dm && !dm.done && this.demoCur) {
+          // the first-time demo: its player's phone acts it out; the others wait
+          if (this.demoCur.slot === seat.slot) {
+            mode = 'demo';
+            title = this.demoCur.step.text;
+            hint = this.demoCur.step.hint;
+            step = this.demoCur.step.id;
+          } else {
+            mode = 'watch';
+            title = 'Quick demo';
+            hint = `${dm.coach.name} is learning the ropes`;
+          }
+        } else if (!mine.length) {
           mode = 'watch';
           title = 'Watching';
           hint = 'Enjoy the match';
@@ -3260,10 +3442,10 @@ export class Flow {
           hint = 'Swing like a racket';
         }
       }
-      const key = `${mode}|${title}|${hint}|${lock}`;
+      const key = `${mode}|${title}|${hint}|${lock}|${step ?? ''}`;
       if (!force && this.padModes.get(seat.pid) === key) continue;
       this.padModes.set(seat.pid, key);
-      this.app.link.toPad(seat.pid, lock ? { type: 'mode', mode, title, hint, lock } : { type: 'mode', mode, title, hint });
+      this.app.link.toPad(seat.pid, lock ? { type: 'mode', mode, title, hint, lock } : step ? { type: 'mode', mode, title, hint, step } : { type: 'mode', mode, title, hint });
     }
   }
 
@@ -3281,7 +3463,18 @@ export class Flow {
     if (m && !this.app.attract && this.hud) {
       // serve hint
       const srv = m.server;
-      if ((m.state === 'serve' || m.state === 'intro') && srv?.human) {
+      const demo = this.app.demo;
+      if (demo) {
+        // the demo: how to skip it (its caption is up top)
+        this.hud.setHint(this.demoCur?.keys ? 'press <b>SPACE</b> to skip' : 'swing your phone, or press <b>A</b>, to skip');
+        this.hud.timingRing(demo.ringTl === null ? null : { team: demo.coach.team, tl: demo.ringTl, ball: demo.ball, word: this.demoCur?.keys ? 'SPACE!' : 'SWING!' });
+      } else if (this.demoCur) {
+        // (the match was restarted or left under it: the captions go)
+        this.demoCur = null;
+        this.hud.caption('');
+        this.hud.setHint('');
+        this.hud.timingRing(null);
+      } else if ((m.state === 'serve' || m.state === 'intro') && srv?.human) {
         // the "Server" badge by the player says what to do; keep the bottom of the screen clear
         this.hud.setHint('');
       } else if (m.state === 'toss' && srv?.human) {
@@ -3298,7 +3491,8 @@ export class Flow {
       // (a guest TV's own seats are not the host's: its phones are told by the roster)
       const seat = srv?.human ? this.app.input.seats[srv.slot] : null;
       const tossHint = this.guestRun ? (srv && this.mine(srv) && this.guestOwns(srv.slot) ? 'lift your phone to toss' : '') : !seat ? '' : seat.local ? 'Space to toss' : 'lift your phone to toss';
-      this.hud.track(m, dt, tossHint);
+      this.hud.track(m, dt, demo ? '' : tossHint);
+      if (!demo) this.ringFrame(m);
       if (m.state === 'serve' && !this.tossHintShown) this.tossHintShown = true;
     }
     // attract mode showcases the worlds — and the sports, one after another

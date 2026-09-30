@@ -4033,3 +4033,83 @@ kbd {
 .online .join .friends {
   display: none;
 }
+
+/* ------------------------------------------------------------ the first-time demo */
+
+/* one big caption at a time, up where the toss and the ball's flight stay clear of it */
+.coach-cap {
+  position: absolute;
+  left: 50%;
+  top: calc(var(--u) * 15);
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--u) * 1.4);
+  width: max-content;
+  max-width: 92%;
+  text-align: center;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.coach-cap b {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: calc(var(--u) * 8.6);
+  line-height: 1.02;
+  color: #fff;
+  -webkit-text-stroke: calc(var(--u) * 1.1) var(--ink);
+  paint-order: stroke fill;
+  text-shadow:
+    0 calc(var(--u) * 1) 0 var(--ink),
+    0 calc(var(--u) * 2.6) calc(var(--u) * 3) rgba(10, 8, 40, 0.45);
+}
+
+.coach-cap span {
+  padding: calc(var(--u) * 0.7) calc(var(--u) * 2.2);
+  border-radius: 999px;
+  background: rgba(15, 14, 40, 0.74);
+  color: #fff;
+  font-weight: 700;
+  font-size: calc(var(--u) * 2.4);
+  letter-spacing: 0.04em;
+}
+
+.coach-cap.show {
+  animation: coach-cap 0.6s cubic-bezier(0.2, 1.5, 0.3, 1) both;
+}
+
+@keyframes coach-cap {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(calc(var(--u) * -3)) scale(1.9) rotate(-5deg);
+  }
+  45% {
+    opacity: 1;
+    transform: translateX(-50%) scale(0.95) rotate(1.5deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1) rotate(-1deg);
+  }
+}
+
+.hud.split .coach-cap b {
+  font-size: calc(var(--u) * 5.8);
+}
+
+/* the timing ring of the demo and of a newcomer's first returns: the smash cue's look, in the player's colours of the day */
+.sm-ret.tm b {
+  font-size: calc(var(--u) * 3.8);
+}
+
+/* How to play: "Show me" beside "Got it" */
+.help-btns {
+  display: flex;
+  gap: calc(var(--u) * 1.6);
+}
+
+.help-btns .row.go {
+  flex: 1;
+}

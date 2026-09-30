@@ -50,6 +50,13 @@ export class CameraRig {
    */
   smash: { team: number; x: number; z: number; fh: number; cx: number; cy: number; cz: number; after: number; lx?: number; lz?: number } | null = null;
   private smashW = 0;
+  /**
+   * A player the camera leans in on (the first-time demo sets it, null when none): it eases in a little closer and
+   * a touch lower on them, then lets go.
+   */
+  focus: { x: number; z: number } | null = null;
+  private focusW = 0;
+  private focusAt = { x: 0, z: 0 };
   /** 0 → 1 once the smash is struck: the camera rises to watch it land */
   private afterW = 0;
   // scratch (update runs every frame: nothing in it makes a vector)
@@ -151,6 +158,19 @@ export class CameraRig {
           tl.lerp(this.v1.set(w.x, 1.1, w.z), k);
           fov = lerp(fov, 30, k);
         }
+      }
+      // a demo: lean in on the player it is about
+      if (this.focus) {
+        this.focusAt.x = this.focus.x;
+        this.focusAt.z = this.focus.z;
+      }
+      this.focusW = damp(this.focusW, this.focus && !this.split ? 1 : 0, this.focus ? 2.2 : 3, dt);
+      if (this.focusW > 0.002) {
+        const k = smooth(this.focusW);
+        const fs = this.focusAt.z < 0 ? -1 : 1;
+        tp.lerp(this.v1.set(this.focusAt.x * 0.55, 4.7, this.focusAt.z + fs * 8.6), 0.5 * k);
+        tl.lerp(this.v1.set(this.focusAt.x * 0.6, 1.1, this.focusAt.z - fs * 6.5), 0.42 * k);
+        fov = lerp(fov, 40, k);
       }
       // a smash chance on this side: low behind the player, looking up at the ball
       const sm = this.smash && this.smash.team === this.side && !this.split ? this.smash : null;

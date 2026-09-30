@@ -45,11 +45,11 @@ export const SKIN_TONES = ['#ffdcc2', '#f6c9a4', '#e9b48a', '#d49a6a', '#b77a4e'
 export const HAIR_TONES = ['#2b1d16', '#4a2e1f', '#7a4a26', '#c98a3c', '#e8c16a', '#1c1c24', '#b8b8c8', '#d65a3a', '#6d3fa0', '#3aa8ff'];
 
 export type PadMsg =
-  | { type: 'hello'; name: string; handed: Handed; ver: number; motion: boolean; look?: LookPrefs }
+  | { type: 'hello'; name: string; handed: Handed; ver: number; motion: boolean; look?: LookPrefs; demo?: string[] }
   | SwingMsg
   | { type: 'toss'; lat: number; ts?: number }
   | { type: 'btn'; b: PadButton; down: boolean }
-  | { type: 'prefs'; name: string; handed: Handed; look?: LookPrefs }
+  | { type: 'prefs'; name: string; handed: Handed; look?: LookPrefs; demo?: string[] }
   | { type: 'wave'; power: number }
   /** a backswing: the player is setting up on this side */
   | { type: 'prep'; side: 'fh' | 'bh'; lat: number; ts?: number }
@@ -91,8 +91,9 @@ export type PadMsg =
 /** bowl = your turn to bowl: the grip pad plus move (◀ ▶ = btn left/right) and
  *  aim (↖ ↗ = btn minus/plus) buttons. sword = a duel: swing to attack, hold the
  *  guard pad to block (the sword follows the phone, streamed as 'ori'). bat = at
- *  bat in baseball: swing the phone like a bat (the tennis swing message) */
-export type PadMode = 'menu' | 'play' | 'serve' | 'wait' | 'watch' | 'skip' | 'bowl' | 'sword' | 'bow' | 'bat';
+ *  bat in baseball: swing the phone like a bat (the tennis swing message). demo = the first-time
+ *  tennis demo is playing on the TV: a phone glyph acts out the step (`step` in the 'mode' message) */
+export type PadMode = 'menu' | 'play' | 'serve' | 'wait' | 'watch' | 'skip' | 'bowl' | 'sword' | 'bow' | 'bat' | 'demo';
 
 export type PadFx =
   | 'hit'
@@ -120,7 +121,7 @@ export type TVMsg =
   | { type: 'full' }
   /** lock: show the panel but don't take input (bowling while your ball rolls,
    *  archery while your arrow flies — the last throw and the verdict stay in view) */
-  | { type: 'mode'; mode: PadMode; title?: string; hint?: string; lock?: boolean }
+  | { type: 'mode'; mode: PadMode; title?: string; hint?: string; lock?: boolean; /** demo: which step of the demo the TV is on ('s1'… the serve demo, 'r1'… the rally demo) */ step?: string }
   | { type: 'fx'; fx: PadFx; power?: number; label?: string; detail?: string }
   | { type: 'score'; line: string }
   /** online: reconnect to room `room` as a remote opened via guest TV `via` ('' = that room's own TV), keeping your seat name and id.

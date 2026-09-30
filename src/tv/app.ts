@@ -50,6 +50,7 @@ import { AI_LEVELS } from './tennis/ai';
 import { randomLook, playerLook, type Look } from './chars/look';
 import { Rng, clamp, damp, lerp, smooth } from './core/math';
 import type { TPlayer, HitPlan } from './tennis/player';
+import { TennisDemo, type DemoKind, type DemoHooks } from './tennis/demo';
 import type { FrameView } from './worlds/base';
 import type { Pose } from './chars/pose';
 import type { MatchState } from './tennis/match';
@@ -88,6 +89,14 @@ export class App {
   onGuestReplay: (on: boolean) => void = () => {};
   attract = true;
   paused = false;
+  /**
+   * The first-time demo playing now (src/tv/tennis/demo.ts; the flow starts it at a serve): the match's clock is held,
+   * the demo's coach stands in for the player's pose and its scripted ball for the ball. Its own input is taken here:
+   * the coach's player swinging, tossing or pressing A skips it.
+   */
+  demo: TennisDemo | null = null;
+  /** performance.now() until which the skipping player's swing / toss / start that follow the one that skipped are swallowed */
+  private demoGuard = 0;
   private last = 0;
   /** the tab came back: the first frame counts as one sixtieth, not as the whole time it was away */
   private resumed = false;
@@ -238,11 +247,18 @@ export class App {
       lp.toggle();
       if (this.latLast) lp.swing(this.latLast);
     });
-    this.input.onToss = (slot) => this.match && !this.paused && this.match.humanToss(slot);
-    this.input.onPrep = (slot, side) => this.match && !this.paused && !this.attract && this.match.humanPrep(slot, side);
+    this.input.onToss = (slot) => {
+      if (this.demoTaken(slot)) return;
+      if (this.match && !this.paused) this.match.humanToss(slot);
+    };
+    this.input.onPrep = (slot, side) => {
+      if (this.demoTaken(slot, false)) return;
+      if (this.match && !this.paused && !this.attract) this.match.humanPrep(slot, side);
+    };
     // a phone's swing has begun: the character's stroke starts now (the confirmed swing, ~100 ms on, still decides everything)
     this.input.onSwingStart = (slot, side, age) => {
       const m = this.match;
+      if (this.demoTaken(slot)) return;
       if (!m || this.sport !== 'tennis' || this.paused || this.attract) return;
       m.humanSwingStart(slot, side, m.t - age * this.timeScale + this.slippedSince(age));
     };
@@ -371,6 +387,8 @@ export class App {
     this.smashCue = null;
     this.smashAfter = 0;
     this.rig.smash = this.rig2.smash = null;
+    this.demo = null;
+    this.rig.focus = null;
     for (const f of this.rec) this.recPool.push(f);
     this.rec.length = 0;
     this.pendingEvents = [];
@@ -413,7 +431,49 @@ export class App {
   private latPanel: LatencyPanel | null = null;
   private latLast: SwingReadout | null = null;
 
+  /**
+   * The first-time demo takes (swallows) input: a swing, a toss or an A from the demo's own player skips it
+   * (`skips`: the ones that do; a wind-up only waits), and whatever of the same gesture follows in the next
+   * moments is swallowed too, so the swing that skipped does not also toss the real ball. Anyone else's input is
+   * held back while it plays. Returns true when the input is taken.
+   */
+  demoTaken(slot: number, skips = true): boolean {
+    const d = this.demo;
+    if (d && !d.done) {
+      if (skips && slot === d.coach.slot) {
+        this.demoGuardSlot = slot;
+        this.demoGuard = performance.now() + 650;
+        d.skip();
+      }
+      return true;
+    }
+    return slot === this.demoGuardSlot && performance.now() < this.demoGuard;
+  }
+  private demoGuardSlot = -1;
+
+  /** Begin a demo for match player `index` (the flow decides whom and which; see Flow.maybeDemo). The match's clock is held from now. */
+  startDemo(index: number, kind: DemoKind, keys: boolean, hooks: DemoHooks): TennisDemo | null {
+    const m = this.match;
+    if (!m || this.attract || this.guest || this.demo) return null;
+    const p = m.players[index];
+    if (!p) return null;
+    const d = new TennisDemo(p, index, kind, keys, hooks);
+    this.demo = d;
+    this.rig.focus = d.focus;
+    return d;
+  }
+
+  /** The demo is over (it ran out or was skipped): the real pose and ball come back and the match's clock runs again. */
+  endDemo() {
+    const d = this.demo;
+    if (!d) return;
+    this.demo = null;
+    this.rig.focus = null;
+    if (this.anims[d.index]) this.livePoses[d.index] = this.anims[d.index].pose;
+  }
+
   private swing(e: SwingEv) {
+    if (this.demoTaken(e.slot)) return;
     if (this.sport === 'baseball') {
       const g = this.baseball;
       if (!g || this.paused || this.attract) return;
@@ -1559,7 +1619,15 @@ export class App {
     this.stageSmash(m, realDt);
     // (the ball is drawn held at a human's racket; not in bullet time, which slows the smash down already)
     m.holdOn = this.timeScale >= 0.97;
-    let simDt = this.paused ? 0 : realDt * this.timeScale;
+    // (a demo holds the match's clock: nothing in it moves until the demo is over)
+    const d0 = this.demo;
+    if (d0 && !this.paused) {
+      d0.update(realDt);
+      if (d0.done) this.endDemo();
+    }
+    const demo = this.demo;
+    if (demo) this.livePoses[demo.index] = demo.pose;
+    let simDt = this.paused || demo ? 0 : realDt * this.timeScale;
     if (this.hitstop > 0) {
       this.hitstop -= realDt;
       simDt = 0;
@@ -1591,13 +1659,19 @@ export class App {
       this.onSplit(split);
     }
     const ball = m.ballView(m.t, this.ballV);
+    if (demo) {
+      ball.x = demo.ball.x;
+      ball.y = demo.ball.y;
+      ball.z = demo.ball.z;
+    }
     this.rig.update(m, realDt, this.realT, ball);
     if (split) {
       if (this.rig2.mode !== this.rig.mode) this.rig2.setMode(this.rig.mode);
       this.rig2.update(m, realDt, this.realT, ball);
     }
     let speed = 0;
-    if (!m.ball.holder && m.state !== 'toss') {
+    if (demo) speed = demo.ballSpeed;
+    else if (!m.ball.holder && m.state !== 'toss') {
       const v = segVel(m.ball.seg, m.t, this.velV);
       speed = Math.hypot(v.x, v.y, v.z);
     } else if (m.state === 'toss') speed = 0;
@@ -1616,18 +1690,19 @@ export class App {
     view.realT = this.realT;
     view.realDt = realDt;
     view.ballSpeed = speed;
-    view.ballVisible = true;
-    view.holder = m.ball.holder ? m.players.indexOf(m.ball.holder) : -1;
+    view.ballVisible = demo ? demo.ballVisible : true;
+    view.holder = !demo && m.ball.holder ? m.players.indexOf(m.ball.holder) : -1;
     view.poses = poses;
     view.excitement = m.excitement;
-    view.state = m.state;
+    // (the demo's ball flies as a rally ball does: with its halo and trail)
+    view.state = demo ? 'play' : m.state;
     view.beat = this.beat();
     this.net.frame(poses);
     this.stage.update(view);
     this.stage.render(split ? [this.rig.cam, this.rig2.cam] : this.rig.cam);
     this.onFrame(realDt);
-    // record for instant replays
-    if (!this.attract) {
+    // record for instant replays (not the demo: the match's clock stands still then)
+    if (!this.attract && !demo) {
       const f = this.recPool.pop() ?? { t: 0, ball: { x: 0, y: 0, z: 0 }, speed: 0, holder: -1, poses: [], state: m.state, events: NO_EVENTS };
       f.t = m.t;
       f.ball.x = ball.x;

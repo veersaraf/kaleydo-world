@@ -400,6 +400,37 @@ const bowPanel = h(
   h('div', { class: 'sstage' }, bowTv, drawWrap, bowShot),
 );
 
+// the first-time demo: the TV acts the game out with your own character while this panel acts it out with a phone.
+// What you've seen is remembered here (kaleido.demo.tennis: '1' = all of it, else 'serve' and / or 'rally') and told
+// to the TV in hello / prefs, so it plays once per phone, whichever TV it joins.
+const DEMO_KEY = 'demo.tennis';
+function demoSeen(): string[] {
+  const v = store.get(DEMO_KEY);
+  if (v === '1') return ['tennis'];
+  const parts = v.split(',').filter((x) => x === 'serve' || x === 'rally');
+  return parts.length === 2 ? ['tennis'] : parts.map((x) => 'tennis:' + x);
+}
+function demoMark(part: 'serve' | 'rally' | 'all') {
+  if (part === 'all') return store.set(DEMO_KEY, '1');
+  const have = store.get(DEMO_KEY);
+  if (have === '1') return;
+  const parts = new Set(have.split(',').filter(Boolean));
+  parts.add(part);
+  store.set(DEMO_KEY, parts.size >= 2 ? '1' : [...parts].join(','));
+}
+/** the demo is showing / what it showed last (to know on leaving it whether it ran to its end), and whether this phone skipped it */
+let demoStep = '';
+let demoSkipped = false;
+const demoTitle = h('div', { class: 'ptitle' }, 'Quick demo');
+const demoHint = h('div', { class: 'phint' }, 'watch the big screen');
+const demoCap = h('div', { class: 'dcap' }, '');
+// the glyph: a phone that acts out the step (its CSS animation is chosen by the panel's data-step)
+const demoPhone = h('div', { class: 'dphone' }, h('i', { class: 'dscreen' }), h('i', { class: 'dnotch' }));
+const demoRing = h('i', { class: 'dring' });
+const demoStage = h('div', { class: 'dstage' }, demoRing, h('div', { class: 'darm' }, demoPhone), h('i', { class: 'dwhoosh' }));
+const demoSkip = h('button', { class: 'toss skip dskip' }, h('b', {}, 'A'), h('span', {}, '— skip'));
+const demoPanel = h('div', { class: 'panel demo' }, panelTop(pauseBtn(), demoTitle, demoHint), h('div', { class: 'sstage' }, demoStage, demoCap), demoSkip);
+
 const panels: Record<PadMode, HTMLElement> = {
   menu: menuPanel,
   play: playPanel,
@@ -411,11 +442,12 @@ const panels: Record<PadMode, HTMLElement> = {
   sword: swordPanel,
   bow: bowPanel,
   bat: playPanel,
+  demo: demoPanel,
 };
 
 const flash = h('div', { class: 'flash' });
 const toast = h('div', { class: 'toast' });
-const shell = h('div', { class: 'shell' }, menuPanel, playPanel, servePanel, waitPanel, skipPanel, bowlPanel, swordPanel, bowPanel, netBar);
+const shell = h('div', { class: 'shell' }, menuPanel, playPanel, servePanel, waitPanel, skipPanel, demoPanel, bowlPanel, swordPanel, bowPanel, netBar);
 const remoteScreen = h(
   'section',
   { class: 'remote' },
@@ -611,7 +643,7 @@ for (const b of sensBtns) {
 }
 
 function sendPrefs() {
-  if (joined) link.send({ type: 'prefs', name: prefs.name || 'Player', handed: prefs.handed, ...(prefs.look ? { look: prefs.look } : {}) });
+  if (joined) link.send({ type: 'prefs', name: prefs.name || 'Player', handed: prefs.handed, ...(prefs.look ? { look: prefs.look } : {}), demo: demoSeen() });
 }
 
 /**
@@ -674,9 +706,11 @@ function smashState(on: boolean | 'hit') {
   else if (on === 'hit') smashTimer = window.setTimeout(() => smashState(false), 1300);
 }
 
-function setMode(m: PadMode, title?: string, hint?: string, lock = false) {
+function setMode(m: PadMode, title?: string, hint?: string, lock = false, step?: string) {
   const prev = mode;
   if (m !== 'play') smashState(false);
+  // leaving the demo: it is remembered if it ran to its end or was skipped here (the next prefs tell the TV)
+  if (prev === 'demo' && m !== 'demo') demoLeft();
   // a new mode, or new words on it: the heading pops (the panel slides in when it changes)
   const sig = `${m === 'watch' ? 'wait' : m === 'bat' ? 'play' : m}|${title ?? ''}|${hint ?? ''}`;
   if (sig !== modeSig && panels[m].classList.contains('on')) {
@@ -739,6 +773,19 @@ function setMode(m: PadMode, title?: string, hint?: string, lock = false) {
     playTitle.textContent = title || 'At bat!';
     playHint.textContent = hint || (motionOK ? 'Hold the phone like a bat · swing as the ball arrives' : 'Swipe across the pad to swing');
   }
+  if (m === 'demo') {
+    if (prev !== 'demo') demoSkipped = false;
+    if (step) {
+      demoStep = step;
+      demoPanel.dataset.step = step;
+      demoPanel.dataset.kind = step[0] === 'r' ? 'rally' : 'serve';
+    }
+    demoTitle.textContent = 'Quick demo';
+    demoHint.textContent = hint || 'watch the big screen';
+    demoCap.textContent = title || '';
+    popAgain(demoCap);
+    sport = 'tennis';
+  }
   if (m === 'skip') {
     skipBtn.querySelector('b')!.textContent = title || 'SKIP';
     skipBtn.querySelector('span')!.textContent = hint || 'replay';
@@ -796,7 +843,7 @@ function setStatus(s: LinkStatus) {
   if (s === 'offline' || s === 'connecting') {
     if (slot < 0) setMode('wait', s === 'connecting' ? 'Connecting…' : 'Disconnected', 'Make sure Kaleydo World is running on your Mac');
   } else if (joined) {
-    link.send({ type: 'hello', name: prefs.name || 'Player', handed: prefs.handed, ver: 1, motion: motionOK, ...(prefs.look ? { look: prefs.look } : {}) });
+    link.send({ type: 'hello', name: prefs.name || 'Player', handed: prefs.handed, ver: 1, motion: motionOK, ...(prefs.look ? { look: prefs.look } : {}), demo: demoSeen() });
   }
 }
 
@@ -815,7 +862,7 @@ function onMessage(m: ServerToPad) {
       setMode('wait', 'Game is full', 'Four remotes are already connected');
       break;
     case 'mode':
-      setMode(m.mode, m.title, m.hint, !!m.lock);
+      setMode(m.mode, m.title, m.hint, !!m.lock, m.step);
       break;
     case 'score':
       scoreLine.textContent = m.line;
@@ -840,6 +887,18 @@ function onMessage(m: ServerToPad) {
         if ((mode !== 'bowl' && mode !== 'bow') || m.fx === 'perfect') showToast(m.label || line, 1800);
       }
       if (m.fx !== 'smash-chance' && m.fx !== 'smash') smashState(false);
+      if (mode === 'demo') {
+        // the demo's beats: the ball tossed, the ball struck. Felt, not read.
+        if (m.fx === 'toss') {
+          audio.toss();
+          haptic(0.4);
+          demoPanel.classList.remove('beat');
+        } else if (m.fx === 'hit') {
+          audio.hit(m.power ?? 0.7);
+          doFlash();
+        }
+        break;
+      }
       switch (m.fx) {
         case 'smash-chance':
           (smashBadge.lastChild as HTMLElement).textContent = 'swing hard!';
@@ -1006,7 +1065,7 @@ link.onMessage = onMessage;
 link.onStatus = setStatus;
 // (moved to another room by the TV: the new TV needs our name, hand and look again)
 link.onRejoin = () => {
-  if (joined) link.send({ type: 'hello', name: prefs.name || 'Player', handed: prefs.handed, ver: 1, motion: motionOK, ...(prefs.look ? { look: prefs.look } : {}) });
+  if (joined) link.send({ type: 'hello', name: prefs.name || 'Player', handed: prefs.handed, ver: 1, motion: motionOK, ...(prefs.look ? { look: prefs.look } : {}), demo: demoSeen() });
 };
 setInterval(() => {
   if (link.status === 'online') netMs.textContent = `${Math.round(link.lat * 2)} ms`;
@@ -1081,6 +1140,24 @@ function doToss() {
 tossBtn.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   doToss();
+});
+
+/** the demo's panel is being left (the TV moved on): it counts as seen when it got to its last step, or when skipped here */
+function demoLeft() {
+  if (demoSkipped) demoMark('all');
+  else if (demoStep === 's4') demoMark('serve');
+  else if (demoStep === 'r4') demoMark('rally');
+  demoStep = '';
+  demoPanel.removeAttribute('data-step');
+  // (the TV keeps its own note of it; this tells it again, for the next TV)
+  sendPrefs();
+}
+demoSkip.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  demoSkipped = true;
+  link.send({ type: 'btn', b: 'a', down: true });
+  link.send({ type: 'btn', b: 'a', down: false });
+  audio.select();
 });
 
 // Lift to toss (Switch Sports-style; lift.ts): while it's your serve, raising the
@@ -1159,6 +1236,8 @@ const swingWanted = () => mode !== 'bowl' && mode !== 'sword' && mode !== 'bow';
 
 function emitSwing(sw: SwingEvent, touch = false) {
   if (!swingWanted()) return;
+  // (a swing during the demo is the TV's cue to skip it: this phone has seen enough)
+  if (mode === 'demo') demoSkipped = true;
   if (!touch && sw.t < noSwingUntil) return;
   const path = touch ? null : swingPath(sw);
   pathOk = path !== null;
@@ -1310,7 +1389,7 @@ let oriDt = 1000 / 60;
 // The idle detector: the phone "moved" when its orientation is more than ~6 degrees from where it was when it last did (a phone on a
 // table stays put; a hand never does for long). In the cloud the timed ping (which keeps a room's Durable Object awake) runs only
 // while the remote is in a play mode or moved in the last 30 s (link.isActive); otherwise the link sends only a keepalive.
-const PING_MODES = new Set<string>(['play', 'serve', 'bowl', 'sword', 'bow', 'bat']);
+const PING_MODES = new Set<string>(['play', 'serve', 'bowl', 'sword', 'bow', 'bat', 'demo']);
 const MOVED_MS = 30_000;
 let movedAt = performance.now();
 let moveRef: [number, number, number, number] | null = null;
@@ -1917,7 +1996,7 @@ joinBtn.addEventListener('click', () => {
     if (!ok) showToast(window.isSecureContext ? 'No motion sensor: swipe to swing' : 'Motion needs https', 2200);
     setMode(mode);
     if (link.status === 'online') {
-      link.send({ type: 'hello', name: prefs.name || 'Player', handed: prefs.handed, ver: 1, motion: motionOK, ...(prefs.look ? { look: prefs.look } : {}) });
+      link.send({ type: 'hello', name: prefs.name || 'Player', handed: prefs.handed, ver: 1, motion: motionOK, ...(prefs.look ? { look: prefs.look } : {}), demo: demoSeen() });
     }
     cancelAnimationFrame(liveRaf);
     liveRaf = 0;

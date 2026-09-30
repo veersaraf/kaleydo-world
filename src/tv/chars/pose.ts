@@ -33,6 +33,8 @@ export interface Pose {
   handed: 1 | -1;
   /** 0 fresh … 1 exhausted (panting, sweat) */
   tired: number;
+  /** the first-time demo: 0..1, how much of a see-through phone shows in the racket hand (absent = none) */
+  ghost?: number;
 }
 
 export function newPose(): Pose {
@@ -68,6 +70,7 @@ export function newPose(): Pose {
     holdingBall: false,
     handed: 1,
     tired: 0,
+    ghost: 0,
   };
 }
 
@@ -107,5 +110,6 @@ export function copyPose(d: Pose, s: Pose): Pose {
   d.holdingBall = s.holdingBall;
   d.handed = s.handed;
   d.tired = s.tired;
+  d.ghost = s.ghost ?? 0;
   return d;
 }

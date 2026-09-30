@@ -52,6 +52,10 @@ play. When it's your serve, **lift the phone** to toss (or tap the big
 button), then swing. It plays the racket "pok" through the phone speaker,
 like the Wii Remote did.
 
+A first-timer gets a short demo at their first serve (or first return): their own
+character acts it out on court, with a see-through phone in hand, while the phone shows the same
+moves — swing or press A to skip. The phone remembers it (`kaleido.demo.tennis`); *How to play → Tennis → Show me* plays it again.
+
 **Optional — faster connection, no warning:** on the phone's join screen open
 *"Optional: remove the security warning"* and follow the three steps to trust
 the Kaleydo World certificate (it appears as "KALEIDO Local CA"). This lets the remote use WebSockets (lower latency).
@@ -298,7 +302,7 @@ node scripts/baseball-phone-e2e.mjs   # a simulated phone bats on the real TV (n
   relays remote input over WebSockets or HTTPS+Server-Sent Events.
 - `src/pad/` — the phone remote: swing, bowling-release and sword-slash
   detection, transport, sounds, UI.
-- `src/tv/tennis/` — closed-form ball physics, shot solver, rules, AI, camera.
+- `src/tv/tennis/` — closed-form ball physics, shot solver, rules, AI, camera, and the first-time demo (`demo.ts`: a scripted "coach" copy of the player; the match knows nothing of it).
 - `src/tv/bowling/` — lane model + Rapier pins, scoring, the referee and CPU
   bowlers, camera, the alley (built in each world's style) and the bowler's
   animation.
