@@ -338,38 +338,72 @@ export class Flow {
    * attract loop, Kaleido shifts and world picks would otherwise stall 50–200 ms).
    */
   private async boot() {
-    const letters = ['K', 'A', 'L', 'E', 'I', 'D', 'O'];
-    const cls = ['lk', 'la', 'll', 'le', 'li', 'ld', 'lo'];
-    const bar = h('i');
-    const el = h(
-      'div',
-      { class: 'boot' },
-      h('div', { class: 'logo' }, ...letters.map((c, i) => h('span', { class: `L ${cls[i]}`, style: `--i:${i}` }, c))),
-      h('div', { class: 'boot-bar' }, bar),
-      h('div', { class: 'boot-txt' }, 'Polishing the worlds…'),
-    );
+    // the intro video plays alongside priming; automated runs (and reduced motion)
+    // skip straight to the finished lockup unless ?intro=1 asks for the video
+    const skipIntro =
+      matchMedia('(prefers-reduced-motion: reduce)').matches ||
+      (navigator.webdriver === true && !new URLSearchParams(location.search).has('intro'));
+    const status = h('div', { class: 'boot-txt' });
+    const el = h('div', { class: 'boot' });
+    let video: HTMLVideoElement | null = null;
+    if (skipIntro) {
+      el.append(h('img', { class: 'boot-intro', src: '/brand/lockup.png', alt: '' }));
+    } else {
+      video = h('video', {
+        class: 'boot-intro',
+        src: '/brand/intro.mp4',
+        poster: '/brand/intro-poster.jpg',
+        muted: true,
+        playsinline: true,
+        autoplay: true,
+        preload: 'auto',
+      });
+      video.muted = true; // the attribute alone doesn't always count for autoplay
+      el.append(video);
+    }
+    el.append(status);
     this.root.append(el);
     // priming stalls frames on purpose: don't let the quality governor react to it
     this.app.quality.hold(Infinity);
     let finished = false;
+    let primed = false;
+    let videoDone = !video;
+    let waitTimer = 0;
     const finish = () => {
       if (finished) return;
       finished = true;
+      window.clearTimeout(waitTimer);
       el.classList.add('done');
       window.setTimeout(() => el.remove(), 700);
       this.app.quality.hold(performance.now() + 1500);
     };
+    const settle = () => {
+      if (primed && videoDone) finish();
+    };
     // never let the loader hold the game hostage (a background tab throttles
     // everything): whatever isn't primed by then carries on behind the title
-    window.setTimeout(finish, 7000);
+    window.setTimeout(finish, 9000);
+    if (video) {
+      const ended = () => {
+        if (videoDone) return;
+        videoDone = true;
+        // the video holds its last frame (the lockup); if priming still runs, say so
+        if (!primed && !finished) waitTimer = window.setTimeout(() => status.classList.add('on'), 400);
+        settle();
+      };
+      video.addEventListener('ended', ended);
+      video.addEventListener('error', ended);
+      video.play().catch(ended);
+    }
     const ids = WORLDS.map((w) => w.id);
     for (let i = 0; i < ids.length; i++) {
+      status.textContent = `Polishing ${worldDef(ids[i]).name}…`;
       await this.app.stage.prime(ids[i], this.app.rig.cam);
-      bar.style.width = `${((i + 1) / ids.length) * 100}%`;
       // let a frame through so the page stays responsive (hidden tabs get no frames)
       await new Promise((r) => (document.hidden ? window.setTimeout(r, 0) : requestAnimationFrame(() => r(null))));
     }
-    finish();
+    primed = true;
+    settle();
   }
 
   // ---------------------------------------------------------------- persistence
@@ -461,21 +495,10 @@ export class Flow {
   }
 
   private titleScreen(): Screen {
-    const letters = [
-      ['K', 'lk'],
-      ['A', 'la'],
-      ['L', 'll'],
-      ['E', 'le'],
-      ['I', 'li'],
-      ['D', 'ld'],
-      ['O', 'lo'],
-    ];
-    const logo = h('div', { class: 'logo' }, ...letters.map(([c, cls], i) => h('span', { class: `L ${cls}`, style: `--i:${i}` }, c)));
     const el = h(
       'div',
       { class: 'screen title' },
-      logo,
-      h('div', { class: 'subtitle' }, 'WORLD SPORTS'),
+      h('img', { class: 'lockup', src: '/brand/lockup.png', alt: 'Kaleydo World' }),
       h('div', { class: 'press' }, 'Click or press any key — or swing a remote'),
       this.join.el,
     );
@@ -619,7 +642,7 @@ export class Flow {
     const el = h(
       'div',
       { class: 'screen home' },
-      h('div', { class: 'mini-logo' }, h('span', null, 'KALEIDO')),
+      h('img', { class: 'mini-logo', src: '/brand/lockup-small.png', alt: 'Kaleydo World' }),
       h('div', { class: 'hbottom' }, h('div', { class: 'hpills' }, tour, set, online), h('div', { class: 'scards' }, ...cards)),
       this.join.el,
     );
