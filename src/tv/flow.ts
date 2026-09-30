@@ -260,7 +260,7 @@ export class Flow {
       this.guestLobby?.message(m);
       if (m.type === 'pad-join') {
         const seat = app.input.seatOfPid(m.pid);
-        if (seat) this.toast(`P${seat.slot + 1} ${seat.name} joined`, seat.color);
+        if (seat) this.toast(`${seat.name} joined`, seat.color);
         if (app.input.padCount > before) this.audio?.sfx.ui('join');
         this.syncPads(true);
       }
@@ -268,7 +268,7 @@ export class Flow {
         const seat = app.input.seatOfPid(m.pid);
         if (seat) {
           // (a phone that was sent to another room isn't lost: it's on its way)
-          if (!app.link.wasMoved(m.pid)) this.toast(`P${seat.slot + 1}'s remote disconnected`, seat.color);
+          if (!app.link.wasMoved(m.pid)) this.toast(`${this.seatName(seat.slot)}’s phone disconnected`, seat.color);
           if (!this.screen && this.app.match && !this.app.attract && this.app.match.players.some((p) => p.slot === seat.slot)) this.pause();
           this.padLost(seat.slot);
         }
@@ -1015,7 +1015,7 @@ export class Flow {
     const humans = this.app.input.activeSeats.map((s) => s.slot).sort();
     const n = humans.length;
     const P = (i: number) => humans[i];
-    const nm = (s: number) => `P${s + 1}`;
+    const nm = (s: number) => this.seatName(s);
     if (n <= 1) return [{ label: `${nm(P(0) ?? 0)} vs CPU`, t0: [P(0) ?? 0], t1: [] }];
     if (n === 2)
       return [
@@ -1140,6 +1140,12 @@ export class Flow {
     return scr;
   }
 
+  /** what the menus call a player: the name they typed on their phone, else "P1"… */
+  private seatName(slot: number) {
+    const seat = this.app.input.seats[slot];
+    return (!seat?.local && seat?.name?.trim()) || `P${slot + 1}`;
+  }
+
   private teamChips(slots: number[], doubles: boolean) {
     const t = h('div', { class: 'team' });
     if (!slots.length) {
@@ -1148,7 +1154,7 @@ export class Flow {
     }
     for (const s of slots) {
       const seat = this.app.input.seats[s];
-      t.append(h('span', { class: 'chip', style: `--c:${seat?.color ?? '#999'}` }, `P${s + 1} ${seat?.local ? '' : seat?.name ?? ''}`.trim()));
+      t.append(h('span', { class: 'chip', style: `--c:${seat?.color ?? '#999'}` }, this.seatName(s)));
     }
     if (doubles && slots.length === 1) t.append(h('span', { class: 'chip', style: `--c:${this.app.input.seats[slots[0]]?.color ?? '#999'};opacity:.75` }, '×2'));
     return t;
