@@ -23,6 +23,7 @@ import { Crowd, type Stand } from './crowd';
 import { Pass, makeRT, BLACK } from '../render/post';
 import type { MatchEvent } from '../tennis/match';
 import { Rng } from '../core/math';
+import { copyPose, newPose, type Pose } from '../chars/pose';
 import { Wind, motion, sway, swayDepth, type SwayOpts } from './park-env/wind';
 import { Foliage, crownBlobs, clumpGeometry, bushBlobs, tintMask, type Place, type Tone } from './park-env/foliage';
 import { landGeometry, bumpsAt, scatterBumps, smooth, type Bump } from './park-env/land';
@@ -269,7 +270,9 @@ class ClayWorld extends World {
   };
 
   private stepAcc = 0;
-  private lastPoses: import('../chars/pose').Pose[] | null = null;
+  /** the poses held between stop-motion frames: pooled, copied into on each tick (no allocation) */
+  private lastPoses: Pose[] | null = null;
+  private heldPool: Pose[] = [];
   private sunFace!: THREE.Group;
   private snail!: THREE.Group;
   private marks: THREE.Mesh[] = [];
@@ -790,9 +793,19 @@ class ClayWorld extends World {
     if (tick) {
       this.stepAcc %= 1 / 12;
       boil.value = (boil.value + 1) % 64;
-      this.lastPoses = v.poses.map((p) => JSON.parse(JSON.stringify(p)));
+      const n = v.poses.length;
+      while (this.heldPool.length < n) this.heldPool.push(newPose());
+      if (!this.lastPoses || this.lastPoses.length !== n) this.lastPoses = this.heldPool.slice(0, n);
+      for (let i = 0; i < n; i++) copyPose(this.lastPoses[i], v.poses[i]);
     }
-    super.update({ ...v, poses: this.lastPoses! });
+    // (the view is lent the held poses for this update, not copied)
+    const live = v.poses;
+    v.poses = this.lastPoses!;
+    try {
+      super.update(v);
+    } finally {
+      v.poses = live;
+    }
   }
 
   protected animate(v: FrameView) {

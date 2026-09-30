@@ -1,5 +1,6 @@
 // In-match heads-up display: scorebug, callouts, hints, timing feedback.
 
+import * as THREE from 'three';
 import { h, replay } from './dom';
 import type { Match, MatchEvent } from '../tennis/match';
 import type { CameraRig } from '../tennis/camera';
@@ -9,6 +10,16 @@ export interface TeamInfo {
   name: string;
   color: string;
 }
+
+/** what an element was last given, so an unchanged frame writes nothing */
+interface Shown {
+  on: boolean;
+  at: string;
+  opacity: string;
+}
+
+/** a new tag is displayed (no display rule of its own) and placed nowhere yet */
+const FRESH: Shown = { on: true, at: '', opacity: '' };
 
 export class Hud {
   el: HTMLElement;
@@ -45,6 +56,18 @@ export class Hud {
   private smHitKph: HTMLElement;
   private smLines: HTMLElement;
   private smOn = false;
+  /** the smash overlay has been written as off (nothing to do until a cue comes) */
+  private smIdle = false;
+  /** the last smash hit used the second copy of the HUD's jolt (see restartKick) */
+  private kickB = false;
+  private shown = new WeakMap<HTMLElement, Shown>();
+  /** the tag layer's size in CSS pixels (tags are moved with a transform, not left/top) */
+  private lw = 0;
+  private lh = 0;
+  private single: { rig: CameraRig; x: number; w: number; team: number }[];
+  // (one projection result and vector, reused)
+  private pv = new THREE.Vector3();
+  private pr = { x: 0, y: 0, behind: false };
 
   constructor(
     private teams: [TeamInfo, TeamInfo],
@@ -68,6 +91,13 @@ export class Hud {
     this.divider = h('div', { class: 'split-divider' });
     this.tags = [0, 1].map((i) => h('div', { class: `split-tag t${i}`, style: `--c:${teams[i].color}` }, teams[i].name));
     this.tagLayer = h('div', { class: 'layer ptags' });
+    this.single = [{ rig, x: 0, w: 1, team: -1 }];
+    if (typeof ResizeObserver !== 'undefined')
+      new ResizeObserver((es) => {
+        const r = es[es.length - 1].contentRect;
+        this.lw = r.width;
+        this.lh = r.height;
+      }).observe(this.tagLayer);
     this.smDim = h('div', { class: 'sm-dim' });
     this.smRetCue = h('b', null, 'SWING!');
     this.smRet = h('div', { class: 'sm-ret' }, h('i', { class: 'r1' }), h('i', { class: 'r2' }), h('i', { class: 'tk' }), this.smRetCue);
@@ -97,6 +127,41 @@ export class Hud {
     );
   }
 
+  /** Project a world point to normalised screen coords (as CameraRig.project, without allocating). */
+  private project(rig: CameraRig, x: number, y: number, z: number) {
+    const v = this.pv.set(x, y, z).project(rig.cam);
+    const p = this.pr;
+    p.x = (v.x + 1) / 2;
+    p.y = (1 - v.y) / 2;
+    p.behind = v.z > 1;
+    return p;
+  }
+
+  /**
+   * Put a tag at normalised screen coords: moved with the `translate` property (a compositor
+   * property; left/top would lay the page out again), and only written when it changed.
+   */
+  private place(el: HTMLElement, nx: number, ny: number, on: boolean, opacity: string) {
+    let st = this.shown.get(el);
+    if (!st) this.shown.set(el, (st = { ...FRESH }));
+    // (the layer's size arrives from its ResizeObserver just after it first shows)
+    if (on && this.lw <= 0) on = false;
+    if (on !== st.on) {
+      st.on = on;
+      el.style.display = on ? '' : 'none';
+    }
+    if (!on) return;
+    const at = `${(nx * this.lw).toFixed(1)}px ${(ny * this.lh).toFixed(1)}px`;
+    if (at !== st.at) {
+      st.at = at;
+      el.style.translate = at;
+    }
+    if (opacity && opacity !== st.opacity) {
+      st.opacity = opacity;
+      el.style.opacity = opacity;
+    }
+  }
+
   /**
    * Every frame of a match: names over everyone while a point is set up, and a
    * badge by the server's feet saying what to do (fades once the rally starts).
@@ -104,44 +169,48 @@ export class Hud {
   track(m: Match, dt: number, serveHint: string) {
     const setup = m.state === 'serve' || m.state === 'intro' || m.state === 'reset';
     this.tagShow += ((setup ? 1 : 0) - this.tagShow) * Math.min(1, dt * (setup ? 8 : 5));
-    const views = this.views ?? [{ rig: this.rig, x: 0, w: 1, team: -1 }];
+    const views = this.views ?? this.single;
+    const tagsOn = this.tagShow > 0.02;
+    const opacity = this.tagShow.toFixed(2);
     for (let vi = 0; vi < views.length; vi++) {
       const v = views[vi];
       const els = (this.nameEls[vi] ??= []);
-      m.players.forEach((p, i) => {
+      for (let i = 0; i < m.players.length; i++) {
+        const p = m.players[i];
         let el = els[i];
         if (!el) {
           el = els[i] = h('div', { class: 'ptag', style: `--c:${this.teams[p.team].color}` }, p.name);
           this.tagLayer.append(el);
         }
-        const pr = v.rig.project({ x: p.x, y: 2.2 * (p.look.height || 1), z: p.z });
-        const on = this.tagShow > 0.02 && !pr.behind && pr.x > 0.02 && pr.x < 0.98 && pr.y > 0.02;
-        el.style.display = on ? '' : 'none';
-        if (on) {
-          el.style.left = `${((v.x + pr.x * v.w) * 100).toFixed(2)}%`;
-          el.style.top = `${(pr.y * 100).toFixed(2)}%`;
-          el.style.opacity = this.tagShow.toFixed(2);
+        // (nothing to project while the names are hidden)
+        if (!tagsOn) {
+          this.place(el, 0, 0, false, '');
+          continue;
         }
-      });
+        const pr = this.project(v.rig, p.x, 2.2 * (p.look.height || 1), p.z);
+        const on = !pr.behind && pr.x > 0.02 && pr.x < 0.98 && pr.y > 0.02;
+        this.place(el, v.x + pr.x * v.w, pr.y, on, opacity);
+      }
       let badge = this.badgeEls[vi];
       if (!badge) {
         badge = this.badgeEls[vi] = h('div', { class: 'sbadge' }, h('b', null, 'Server'), h('span'));
         this.tagLayer.append(badge);
       }
       const srv = m.server;
-      const bp = srv ? v.rig.project({ x: srv.x + 0.55, y: 0.25, z: srv.z }) : null;
-      const bon = !!srv && !!bp && m.state === 'serve' && !bp.behind && bp.x > 0.02 && bp.x < 0.98;
-      badge.style.display = bon ? '' : 'none';
-      if (bon && bp) {
-        badge.style.left = `${((v.x + bp.x * v.w) * 100).toFixed(2)}%`;
-        badge.style.top = `${(bp.y * 100).toFixed(2)}%`;
-        badge.style.setProperty('--c', this.teams[srv.team].color);
-        const hint = srv.human ? serveHint : '';
-        if (hint !== this.badgeText) {
-          this.badgeText = hint;
-          for (const b of this.badgeEls) (b.lastChild as HTMLElement).textContent = hint;
+      const bon = !!srv && m.state === 'serve';
+      if (bon) {
+        const bp = this.project(v.rig, srv.x + 0.55, 0.25, srv.z);
+        const vis = !bp.behind && bp.x > 0.02 && bp.x < 0.98;
+        this.place(badge, v.x + bp.x * v.w, bp.y, vis, '');
+        if (vis) {
+          badge.style.setProperty('--c', this.teams[srv.team].color);
+          const hint = srv.human ? serveHint : '';
+          if (hint !== this.badgeText) {
+            this.badgeText = hint;
+            for (const b of this.badgeEls) (b.lastChild as HTMLElement).textContent = hint;
+          }
         }
-      }
+      } else this.place(badge, 0, 0, false, '');
     }
   }
 
@@ -199,7 +268,7 @@ export class Hud {
   /** Pop some text over a point in the world. With a split screen, `team`
    *  picks whose view it belongs to (default: every view that can see it). */
   float(text: string, world: { x: number; y: number; z: number }, cls = '', team?: number) {
-    const views = this.views ?? [{ rig: this.rig, x: 0, w: 1, team: -1 }];
+    const views = this.views ?? this.single;
     for (const v of views) {
       if (team !== undefined && v.team >= 0 && v.team !== team) continue;
       const p = v.rig.project(world);
@@ -212,7 +281,7 @@ export class Hud {
 
   /** the view (whole screen, or a split-screen half) a team's player watches */
   private viewOf(team: number) {
-    const views = this.views ?? [{ rig: this.rig, x: 0, w: 1, team: -1 }];
+    const views = this.views ?? this.single;
     return views.find((v) => v.team === team) ?? views[0];
   }
 
@@ -231,15 +300,19 @@ export class Hud {
       } else this.smTitle.classList.remove('show');
     }
     if (!cue || !on) {
+      // off, and already written as off: nothing to touch (this runs every frame of a match)
+      if (this.smIdle) return;
+      this.smIdle = true;
       this.smDim.style.opacity = '0';
       this.smRet.style.display = 'none';
       return;
     }
+    this.smIdle = false;
     const v = this.viewOf(cue.team);
+    const p = this.project(v.rig, cue.ball.x, cue.ball.y, cue.ball.z);
     this.smDim.style.left = `${v.x * 100}%`;
     this.smDim.style.width = `${v.w * 100}%`;
     this.smDim.style.opacity = (cue.w * 0.95).toFixed(3);
-    const p = v.rig.project(cue.ball);
     if (p.behind || p.y < -0.2) {
       this.smRet.style.display = 'none';
       return;
@@ -269,16 +342,20 @@ export class Hud {
     this.smLines.style.width = `${v.w * 100}%`;
     this.smLines.style.setProperty('--x', `${(((x - v.x) / v.w) * 100).toFixed(1)}%`);
     this.smLines.classList.toggle('lite', !mine);
-    replay(this.smLines, 'show');
     this.smHitWord.textContent = !mine ? 'SMASH' : perfect ? 'PERFECT SMASH!' : 'SMASH!';
     this.smHitKph.textContent = `${Math.round(kph)} km/h`;
     this.smHit.style.left = `${((v.x + v.w * 0.5) * 100).toFixed(2)}%`;
     this.smHit.classList.toggle('lite', !mine);
     this.smHit.classList.toggle('perfect', perfect && mine);
-    replay(this.smHit, 'show');
-    this.el.classList.remove('smash-kick');
-    void this.el.offsetWidth;
-    if (mine) this.el.classList.add('smash-kick');
+    // restart both overlays' animations with one style flush (on the leaf, not the whole HUD)
+    this.smLines.classList.remove('show');
+    this.smHit.classList.remove('show');
+    void this.smHit.offsetWidth;
+    this.smLines.classList.add('show');
+    this.smHit.classList.add('show');
+    // the HUD's jolt alternates between two identical animations: a new name restarts it, no flush
+    this.el.classList.remove('smash-kick', 'smash-kick-b');
+    if (mine) this.el.classList.add((this.kickB = !this.kickB) ? 'smash-kick' : 'smash-kick-b');
   }
 
   private labEl: HTMLElement | null = null;

@@ -109,6 +109,7 @@ class CosmicWorld extends World {
     this.buildStands();
 
     this.bloom = new Bloom(5);
+    this.bloomIsLook = true;
     this.bloom.threshold = 1.0;
     const f = this.final.u;
     f.uBloom.value = 0.75;

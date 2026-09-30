@@ -1673,6 +1673,9 @@ kbd {
 
 .ptags .ptag {
   position: absolute;
+  /* moved with the translate property from the top-left corner (hud.ts) */
+  left: 0;
+  top: 0;
   transform: translate(-50%, -100%);
   padding: calc(var(--u) * 0.35) calc(var(--u) * 1.1);
   border-radius: 99px;
@@ -1698,6 +1701,8 @@ kbd {
 
 .ptags .sbadge {
   position: absolute;
+  left: 0;
+  top: 0;
   transform: translate(0, -50%);
   display: flex;
   align-items: center;
@@ -3108,7 +3113,24 @@ kbd {
   animation: sm-kick 0.32s cubic-bezier(0.3, 1.8, 0.4, 1);
 }
 
+/* (the same jolt under another name: hud.ts alternates them so a second hit restarts it without a reflow) */
+.hud.smash-kick-b {
+  animation: sm-kick-b 0.32s cubic-bezier(0.3, 1.8, 0.4, 1);
+}
+
 @keyframes sm-kick {
+  0% {
+    transform: translate(calc(var(--u) * -1.2), calc(var(--u) * 0.9));
+  }
+  30% {
+    transform: translate(calc(var(--u) * 0.9), calc(var(--u) * -0.7));
+  }
+  60% {
+    transform: translate(calc(var(--u) * -0.4), calc(var(--u) * 0.3));
+  }
+}
+
+@keyframes sm-kick-b {
   0% {
     transform: translate(calc(var(--u) * -1.2), calc(var(--u) * 0.9));
   }

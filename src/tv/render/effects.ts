@@ -117,15 +117,22 @@ export interface FxTier {
   shaftScale: number;
   /** sun shadow map size */
   shadowMap: number;
+  /**
+   * The bloom: 0 = off (kept as a short glow in the worlds where it is the look), 1 = a short
+   * chain from quarter resolution, 2 = the full chain from half resolution.
+   */
+  bloom: 0 | 1 | 2;
+  /** how much optional scenery to draw (World.detail: grass reach, clouds, foliage…) */
+  detail: number;
 }
 
 /** What each effects tier (LEVELS[i].fx) turns on. Cheap things (IBL, grade, glare,
  *  contact shadows) are on in every tier. */
 export const FX_TIERS: FxTier[] = [
-  { ao: 0, aoScale: 0.5, shafts: 0, shaftScale: 0.25, shadowMap: 1024 },
-  { ao: 0, aoScale: 0.5, shafts: 16, shaftScale: 0.25, shadowMap: 2048 },
-  { ao: 8, aoScale: 0.5, shafts: 24, shaftScale: 0.25, shadowMap: 2048 },
-  { ao: 12, aoScale: 0.5, shafts: 32, shaftScale: 0.5, shadowMap: 2048 },
+  { ao: 0, aoScale: 0.5, shafts: 0, shaftScale: 0.25, shadowMap: 1024, bloom: 0, detail: 0.5 },
+  { ao: 0, aoScale: 0.5, shafts: 16, shaftScale: 0.25, shadowMap: 1024, bloom: 1, detail: 0.65 },
+  { ao: 8, aoScale: 0.5, shafts: 24, shaftScale: 0.25, shadowMap: 2048, bloom: 2, detail: 1 },
+  { ao: 12, aoScale: 0.5, shafts: 32, shaftScale: 0.5, shadowMap: 2048, bloom: 2, detail: 1 },
 ];
 
 // ---------------------------------------------------------------- image-based light

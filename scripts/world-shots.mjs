@@ -1,6 +1,7 @@
 // Deterministic screenshots of every world from fixed cameras (visual A/B).
 //   node scripts/world-shots.mjs <outDir> <suffix> [query]
 //   WORLDS=plaza,park  only these; SPORT=duel  a sport's showcase instead of tennis
+//   LEVEL=0  the quality ladder's rung to draw at (default: where a 1x screen starts, level 3)
 // Frames are stepped by hand on a virtual clock with seeded randomness, so two runs of the same
 // build give the same pixels and a difference between two builds is a real one.
 import { chromium } from 'playwright-core';
@@ -41,16 +42,20 @@ await tv.evaluate(() => localStorage.setItem('kaleido.settings', JSON.stringify(
 await tv.goto(BASE + '/' + query);
 await tv.waitForFunction(() => document.querySelector('.boot.done') || !document.querySelector('.boot'), null, { timeout: 30000 });
 await tv.waitForTimeout(1000);
-await tv.evaluate(() => {
+await tv.evaluate((LEVEL) => {
   const k = window.kaleido;
   window.__orig = k.frame.bind(k);
   k.frame = () => undefined; // the real loop idles; frames are stepped below
   k.quality.update = () => null;
+  if (LEVEL !== undefined) {
+    k.quality.level = LEVEL;
+    k.applyQuality();
+  }
   window.__vt = 5000;
   window.__step = (n) => {
     for (let i = 0; i < n; i++) window.__orig((window.__vt += 1000 / 60));
   };
-});
+}, process.env.LEVEL === undefined ? undefined : +process.env.LEVEL);
 const cams = {
   main: { pos: [0, 5.5, 21.7], look: [0, 0.55, -4.2], fov: 38 },
   far: { pos: [0, 5.5, -21.7], look: [0, 0.55, 4.2], fov: 38 },

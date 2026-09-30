@@ -243,9 +243,17 @@ export class Stage {
     return !!this.next;
   }
 
-  /** the world on screen, and the one it's shattering into during a transition */
+  /**
+   * The worlds the game dresses for the sport being played (venue, gear) and animates: the one on
+   * screen, the one it is shattering into, and the one waiting in the wings (`warm`). Building a
+   * ballpark or an arena and compiling its programs in the first frame of a shatter, into a world
+   * that hasn't got them yet, is a stall of up to a second; the game prepares whatever this
+   * lists, so listing the warm world has it done during the wait instead.
+   */
   get shown(): World[] {
-    return this.next ? (this.current ? [this.current, this.next] : [this.next]) : this.current ? [this.current] : [];
+    const w = this.warmWorld;
+    const live = this.next ? (this.current ? [this.current, this.next] : [this.next]) : this.current ? [this.current] : [];
+    return w && w !== this.current && w !== this.next ? [...live, w] : live;
   }
 
   setWorld(id: string, opts: { transition?: boolean; origin?: { x: number; y: number }; dur?: number } = {}) {
@@ -337,6 +345,8 @@ export class Stage {
   }
 
   update(v: FrameView) {
+    // (what the game put into the warm world since — gear, a venue — gets its programs compiled now)
+    if (this.warmWorld && this.warmWorld !== this.current && this.warmWorld !== this.next) this.warmWorld.watchMaterials();
     this.current?.update(v);
     if (this.next) {
       this.next.update(v);
