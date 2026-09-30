@@ -22,14 +22,14 @@
 <div id="stage"><canvas id="gl"></canvas><svg id="words"></svg></div>
 <div id="ui">
   <button id="play">Replay</button>
-  <label>time <input id="scrub" type="range" min="0" max="6" step="0.01" value="0" /><span id="tv">0.00s</span></label>
+  <label>time <input id="scrub" type="range" min="0" max="5" step="0.01" value="0" /><span id="tv">0.00s</span></label>
   <label>speed <select id="speed"><option>0.25</option><option>0.5</option><option selected>1</option></select></label>
 </div>
 <script type="module">
 // Motion prototype for the KALEYDO WORLD intro (placeholder low-poly globe, real lettering).
-// Timeline (seconds): 0–1.1 the big globe slides in from the right, partly off screen, spinning fast;
-// 1.1–2.2 it keeps turning and the spin eases; 1.9–3.3 it shrinks and glides to centre;
-// 2.7–3.9 KALEYDO drops in letter by letter over the top, WORLD rises in under it; then an idle loop.
+// Timeline (seconds): 0–0.9 the big globe slides in from the right, partly off screen, turning;
+// 1.0–2.75 one complete eased revolution while it shrinks and glides to centre (1.15–2.65);
+// 2.1–3.2 KALEYDO drops in letter by letter over the top, WORLD rises in under it; then an idle loop.
 import '@fontsource/fredoka/700.css';
 import * as THREE from 'three';
 
@@ -166,7 +166,7 @@ function layout(letters, size, sweep, cx, apexY, arch, track, progress, from) {
 }
 
 // ---------------------------------------------------------------- the timeline
-const DUR = 6;
+const DUR = 5;
 function frame(t) {
   const W = innerWidth, H = innerHeight, aspect = W / H;
   cam.left = -aspect; cam.right = aspect; cam.top = 1; cam.bottom = -1;
@@ -175,24 +175,23 @@ function frame(t) {
   const kf = Math.min(1, (aspect * 0.8) / 1.25);
 
   // 1) slide in big from the right, partly off screen
-  const slide = easeOutCubic(seg(t, 0, 1.1));
+  const slide = easeOutCubic(seg(t, 0, 0.9));
   const big = { r: 1.35 * kf, x: aspect * 0.42, y: -0.18 };
   let r = big.r, x = lerp(aspect + big.r * 1.1, big.x, slide), y = big.y;
   // 3) shrink and glide to the centre
-  const shrink = easeInOutCubic(seg(t, 1.9, 3.3));
+  const shrink = easeInOutCubic(seg(t, 1.15, 2.65));
   r = lerp(r, END.r * kf, shrink);
   x = lerp(x, END.x, shrink);
   y = lerp(y, END.y, shrink);
   // settle: a tiny overshoot in scale at the landing, then a gentle bob
-  const land = seg(t, 3.1, 3.9);
+  const land = seg(t, 2.45, 3.25);
   r *= 1 + Math.sin(land * Math.PI) * 0.025 * (1 - land);
-  y += Math.sin(Math.max(0, t - 3.6) * 1.6) * 0.012 * seg(t, 3.6, 4.4);
+  y += Math.sin(Math.max(0, t - 2.9) * 1.6) * 0.012 * seg(t, 2.9, 3.7);
   globe.position.set(x, y, 0);
   globe.scale.setScalar(r);
 
-  // 2) spin: fast on entry, easing to a calm idle turn (integrated angle so it never jumps)
-  const w0 = 5.2, w1 = 0.35, k = 1.4; // rad/s start, idle, decay rate
-  const ang = w1 * t + ((w0 - w1) / k) * (1 - Math.exp(-k * t));
+  // 2) spin: a quick turn on entry, then one complete eased revolution while it shrinks, then a calm idle turn
+  const ang = 0.35 * t + 1.3 * (1 - Math.exp(-3 * t)) + Math.PI * 2 * easeInOutCubic(seg(t, 1.0, 2.75));
   planet.rotation.y = -2.2 + ang;
   moonPivot.rotation.y = ang * 1.6;
   renderer.setSize(W, H, false);
@@ -201,7 +200,7 @@ function frame(t) {
   // 4) words: sizes and arcs scale with the final globe; positions follow the globe as it lands
   const px = H / 2; // px per unit
   const gcx = W / 2 + x * px, gcy = H / 2 - y * px, gr = r * px;
-  const wordsIn = seg(t, 2.7, 4.2);
+  const wordsIn = seg(t, 2.05, 3.5);
   const topSize = END.r * kf * px * 0.62, botSize = END.r * kf * px * 0.42;
   const stagger = (i, n, start, step) => {
     const lt = t - start - i * step;
@@ -209,9 +208,9 @@ function frame(t) {
     return { pos: s, scale: 0.6 + 0.4 * clamp(s, 0, 1.2), op: clamp(lt / 0.12) };
   };
   // KALEYDO: a gentle arch whose baseline dips into the globe's top edge; drops in from above
-  layout(TOP, topSize, 48, gcx, gcy - gr * 0.84, 1, 0.02, (i) => stagger(i, TOP.length, 2.75, 0.065), topSize * 1.4);
+  layout(TOP, topSize, 48, gcx, gcy - gr * 0.84, 1, 0.02, (i) => stagger(i, TOP.length, 2.1, 0.065), topSize * 1.4);
   // WORLD: a gentle smile whose letters cover the globe's bottom edge; rises in from below
-  layout(BOT, botSize, 40, gcx, gcy + gr * 0.9 + botSize * 0.72, -1, 0.14, (i) => stagger(i, BOT.length, 3.15, 0.07), botSize * 1.6);
+  layout(BOT, botSize, 40, gcx, gcy + gr * 0.9 + botSize * 0.72, -1, 0.14, (i) => stagger(i, BOT.length, 2.5, 0.07), botSize * 1.6);
   svg.style.visibility = wordsIn > 0 ? 'visible' : 'hidden';
 }
 
