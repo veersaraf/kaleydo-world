@@ -41,6 +41,9 @@ const SCAN = 24;
 const AHEAD = 8;
 /** an event's time is rounded to the ms: a flight that starts at the event (a toss, a hit) is taken from ~2 ms before it */
 const SEG_SLACK = 0.002;
+/** a racket magnet shorter than this isn't one: a hit heard after the swing was made resolves on the spot (t0 = tc) */
+const MIN_MAGNET = 0.005;
+const isMagnet = (w: Snap['warp']) => w.p >= 0 && w.tc - w.t0 >= MIN_MAGNET;
 /** no snapshot for this long: we say we are reconnecting */
 const STALL_MS = 1500;
 /** how far past the newest snapshot the shown time may run, ms: none — a hit or a bounce the news of which is behind a late snapshot would
@@ -228,6 +231,8 @@ export class GuestStream {
   push(buf: ArrayBuffer): boolean {
     const s = this.at(this.serial + 1);
     if (!decodeSnap(buf, s)) return false;
+    // (a frame delivered twice would fire its events twice)
+    if (this.lastSeq >= 0 && s.seq === this.lastSeq) return false;
     s.serial = ++this.serial;
     s.arrived = this.clock.perf();
     if (this.lastSeq >= 0) {
@@ -237,7 +242,7 @@ export class GuestStream {
     this.lastSeq = s.seq;
     for (const ev of s.events) {
       this.pending.push({ ev, carrier: s });
-      if (ev.type === 'hit' && ev.warp) {
+      if (ev.type === 'hit' && ev.warp && ev.warp.tc - ev.warp.t0 >= MIN_MAGNET) {
         this.hitWarps.push({ p: ev.p, t0: ev.warp.t0, tc: ev.warp.tc, cx: ev.pos.x, cy: ev.pos.y, cz: ev.pos.z });
         if (this.hitWarps.length > 8) this.hitWarps.shift();
       }
@@ -449,11 +454,11 @@ export class GuestStream {
         X = S;
         foundX = true;
       }
-      if (!Z && S.warp.p >= 0 && S.warp.t0 <= t && t < S.warp.tc) Z = S.warp;
+      if (!Z && isMagnet(S.warp) && S.warp.t0 <= t && t < S.warp.tc) Z = S.warp;
       if (!exact && S.t === t) exact = S;
       if (foundX && (Z || n > 6) && (exact || S.t < t)) break;
     }
-    if (exact) Z = exact.warp.p >= 0 && exact.warp.t0 <= t && t < exact.warp.tc ? exact.warp : null;
+    if (exact) Z = isMagnet(exact.warp) && exact.warp.t0 <= t && t < exact.warp.tc ? exact.warp : null;
     else if (!Z) Z = this.hitWarps.find((w) => w.t0 <= t && t < w.tc) ?? null;
     sync.set(m, X, Z);
   }
