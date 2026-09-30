@@ -9,6 +9,16 @@ import type { GuestInfo, GuestToHost, HostToGuest, LobbyMsg, MatchmakingEvent, P
 
 export const ROOM_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
+// Keepalive without waking the room (cloud/worker.ts is on the WebSocket Hibernation API: an idle room is asleep and bills nothing).
+// The timed ping (`{type:'ping', t}`, answered with the relay's clock) wakes it, so in the cloud it is sent only while something is
+// going on; otherwise the fixed text KEEPALIVE goes out every KA_MS and is answered by the runtime itself, the room staying asleep.
+/** the exact text the room answers without waking (cloud/worker.ts) */
+const KEEPALIVE = 'ka';
+const KA_MS = 40_000;
+/** "active": something other than a keepalive came from the room (a phone or guest joined, left or sent anything; a guest hears its
+ *  host) in the last ACTIVE_MS, or `busy()` says a match is running. Then the timed ping runs every 2 s; a burst starts it. */
+const ACTIVE_MS = 60_000;
+
 export class TVLink {
   ws: WebSocket | null = null;
   online = false;
@@ -42,6 +52,8 @@ export class TVLink {
   onHostMessage: (m: HostToGuest | ArrayBuffer) => void = () => {};
   /** quick match: the lobby's word while this TV waits for an opponent, and — for a guest — the host's word that the pairing is over */
   onMatchmaking: (m: MatchmakingEvent) => void = () => {};
+  /** a match is running (the app may set it: the timed ping then runs whatever the room says; by default only the room's traffic counts) */
+  busy: () => boolean = () => false;
   onMessage: (m: ServerToTV) => void = () => {};
   onStatus: (online: boolean) => void = () => {};
   private retry = 0;
@@ -53,6 +65,15 @@ export class TVLink {
   private rosterSig = '';
   private reopenTimer = 0;
   private pingTimers: number[] = [];
+  /** cloud: the last `mode` message sent to each phone (pid -> its JSON), so an identical repeat isn't sent */
+  private lastMode = new Map<string, string>();
+  /** the beat that decides, each second, between the timed ping and the keepalive */
+  private tickTimer = 0;
+  private wasActive = false;
+  private lastPing = 0;
+  private txAt = 0;
+  /** when the room last had something to say that wasn't a keepalive or a pong (Date.now(), 0 = never) */
+  private activeAt = 0;
   private clock: { rtt: number; off: number }[] = [];
   private mm: WebSocket | null = null;
   /** phones sent a 'move' (pid -> when): their leaving the old room is expected, not a lost remote */
@@ -124,9 +145,12 @@ export class TVLink {
       if (this.ws !== ws) return;
       // the host's match snapshot (a guest only)
       if (typeof ev.data !== 'string') {
+        this.activeAt = Date.now();
         if (this.role === 'guest') this.onHostMessage(ev.data as ArrayBuffer);
         return;
       }
+      // the keepalive's answer: nothing to read, nothing to count
+      if (ev.data === KEEPALIVE) return;
       let m: ServerToTV;
       try {
         m = JSON.parse(ev.data);
@@ -138,6 +162,8 @@ export class TVLink {
         this.clockSample(m.t, m.st);
         return;
       }
+      // (the room's own housekeeping isn't activity; a phone or a guest doing anything is)
+      if (m.type !== 'hello' && m.type !== 'net' && m.type !== 'replaced' && m.type !== 'room-taken' && m.type !== 'no-room') this.activeAt = Date.now();
       if (this.role === 'guest') {
         this.guestMessage(m);
         return;
@@ -148,6 +174,9 @@ export class TVLink {
         this.caUrl = m.caUrl;
       }
       if (m.type === 'hello') this.pads = m.pads.map((p) => ({ ...p }));
+      // (a phone that (re)joined has nothing yet)
+      if (m.type === 'hello') this.lastMode.clear();
+      else if (m.type === 'pad-join' || m.type === 'pad-leave') this.lastMode.delete(m.pid);
       if (m.type === 'replaced') this.stopped = true;
       // someone else's room: make up another
       if (m.type === 'room-taken') this.newRoom();
@@ -435,23 +464,50 @@ export class TVLink {
     } else go();
   }
 
-  /** pings the server to learn its clock: a quick burst at connect (the first messages are timed against
-   *  a guess until then), then every 2 s */
+  /** pings the server to learn its clock: a quick burst at connect (the first messages are timed against a guess until then), then
+   *  every 2 s while the room is active. In the cloud an idle TV sends only the keepalive, every KA_MS (see KEEPALIVE); the burst
+   *  runs again when it becomes active. Locally (no rooms, nothing to wake) it pings every 2 s as ever. */
   private startPings(ws: WebSocket) {
     this.stopPings();
-    const ping = () => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping', t: Date.now() }));
-    };
-    for (const ms of [0, 300, 700, 1500]) this.pingTimers.push(window.setTimeout(ping, ms));
-    this.pingTimers.push(window.setTimeout(() => this.pingTimers.push(window.setInterval(ping, 2000)), 1500));
+    this.burst(ws);
+    this.tickTimer = window.setInterval(() => this.tick(ws), 1000);
+  }
+
+  private ping(ws: WebSocket) {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    this.lastPing = this.txAt = Date.now();
+    ws.send(JSON.stringify({ type: 'ping', t: this.lastPing }));
+  }
+
+  private burst(ws: WebSocket) {
+    for (const t of this.pingTimers) clearTimeout(t);
+    this.pingTimers = [];
+    this.wasActive = true;
+    this.lastPing = this.txAt = Date.now();
+    // (the last samples are from before a quiet spell: the clock is measured afresh)
+    this.clock = [];
+    for (const ms of [0, 300, 700, 1500]) this.pingTimers.push(window.setTimeout(() => this.ping(ws), ms));
+  }
+
+  private tick(ws: WebSocket) {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    const now = Date.now();
+    if (!this.cloud || this.busy() || now - this.activeAt < ACTIVE_MS) {
+      if (!this.wasActive) this.burst(ws);
+      else if (now - this.lastPing >= 2000) this.ping(ws);
+    } else {
+      this.wasActive = false;
+      if (now - this.txAt >= KA_MS) {
+        this.txAt = now;
+        ws.send(KEEPALIVE);
+      }
+    }
   }
 
   private stopPings() {
-    for (const t of this.pingTimers) {
-      clearTimeout(t);
-      clearInterval(t);
-    }
+    for (const t of this.pingTimers) clearTimeout(t);
     this.pingTimers = [];
+    clearInterval(this.tickTimer);
   }
 
   /** one pong: the server stamped `st` somewhere between our send (`t`) and now, taken as the middle.
@@ -467,7 +523,16 @@ export class TVLink {
   }
 
   toPad(pid: string, msg: TVMsg) {
-    if (this.role !== 'guest' && this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: 'to-pad', pid, msg }));
+    if (this.role === 'guest' || this.ws?.readyState !== WebSocket.OPEN) return;
+    // In the cloud every message to a phone is a message the room has to wake for. The flow re-sends a phone's `mode` (same words) whenever the
+    // seats are touched — every ~10 s on the home screen — and a phone that has it needs nothing: an identical repeat is dropped, until the phone
+    // (re)joins or the link reopens (the cache is cleared then: a phone that reconnected must be told again).
+    if (this.cloud && msg.type === 'mode') {
+      const sig = JSON.stringify(msg);
+      if (this.lastMode.get(pid) === sig) return;
+      this.lastMode.set(pid, sig);
+    }
+    this.ws.send(JSON.stringify({ type: 'to-pad', pid, msg }));
   }
 
   toAll(msg: TVMsg) {

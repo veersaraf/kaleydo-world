@@ -191,6 +191,42 @@ Then point a domain at it in the Cloudflare dashboard (Workers → kaleido →
 Settings → Domains & Routes). The free plan is plenty for a hobby game.
 `node scripts/cloud-e2e.mjs` checks a running cloud copy end to end.
 
+### Idle costs nothing (WebSocket Hibernation)
+
+Both Durable Objects (`Room`, `Lobby`) use Cloudflare's WebSocket Hibernation API. A classic
+WebSocket keeps its object in memory, and an object in memory bills 128 MB × wall-clock
+seconds — a TV parked on the home screen would use ~10,800 of the free plan's 13,000 GB-s a
+day. Now the runtime holds the sockets and the object sleeps (no duration billed) until a
+message arrives; what it must remember lives in storage (the room's key, code and origin) and in
+each socket's attachment (role, id, name, `via`), and the in-memory `tv` / `pads` / `guests` are
+rebuilt from those by `ready()` at the top of every handler.
+
+What wakes it: any message a client sends *except* the exact text `ka`, which the runtime
+answers with `ka` itself (`setWebSocketAutoResponse`). So the clients send only `ka`, every 40 s,
+while idle, and the timed `{type:'ping', t}` (which needs the relay's clock) only while active:
+- **TV** (`src/tv/core/link.ts`): the connect burst, then every 2 s while *active* — `busy()`
+  says a match runs, or in the 60 s after the room last had anything to say besides a keepalive
+  or a pong (a phone or guest joined, left or sent something; a guest hears its host). Idle: `ka`.
+  A TV also drops an identical repeat of a phone's `mode` message (the flow re-sends it every
+  ~10 s), since every message to a phone is one the room wakes for.
+- **Phone** (`src/pad/link.ts`, `src/pad/main.ts`): the burst, then every 2 s while its mode is a
+  play mode (`play serve bowl sword bow bat`) or it moved (orientation changed > ~6°) in the last 30 s.
+  Idle: `ka`. The pose stream (`ori`) no longer runs in menus (the TV draws no pose there), so a
+  phone on a table in a menu sends nothing but `ka`. Becoming active sends the burst again, so
+  `lat` and the clock offset are fresh before the first swing.
+- **Lobby**: the queue is a row per TV in storage (mirrored in its socket's attachment); an alarm
+  is set only while someone waits, for the next moment something can change by itself (a waiting
+  TV reaching 20 s, else a 30 s heartbeat); TVs are told the queue's size the moment it changes.
+  No one waiting, no alarm: the object sleeps.
+
+Testing: `wrangler dev --var DEV:1` makes each room count what reaches its handlers
+(`/api/room-stats?room=CODE`); `node scripts/hibernate-e2e.mjs` parks a TV and a phone for a
+minute and asserts the count stays 0 (then wakes the room with a match and checks the swing's
+age). Add `--var HIBERNATE_DEBUG:1` and every handler rebuilds its state from storage and
+attachments, as after an eviction, so the whole e2e set can run with no memory between events.
+(Local `wrangler dev` closes a hibernatable socket from the server side without ending the
+TCP connection, so a Node client stays CLOSING; browsers get their close event.)
+
 ### Play online with friends
 
 In the cloud version, **Play online** (on the home screen) lets a friend's TV
@@ -207,7 +243,7 @@ has no rooms.
 **Quick match.** Nobody to send a code to? On Play online, the third card, **Quick
 match** (it needs a phone joined on your TV), puts your TV in a queue held by one
 Durable Object (`cloud/lobby.ts`, the `LOBBY` binding) and shows "Looking for an
-opponent… 0:07". On each arrival and every 5 s the lobby pairs the longest-waiting TV with
+opponent… 0:07". On each arrival (and at the moment a waiting TV has waited 20 s) the lobby pairs the longest-waiting TV with
 the earliest-arrived other one on the same continent (as Cloudflare's edge reports it;
 after 20 s, with anyone), and the one that has waited longer **hosts**: its room already
 exists, so the other TV simply joins it as a guest. The guest's phone needs no rescan: a TV that

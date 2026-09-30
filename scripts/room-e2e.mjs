@@ -29,12 +29,16 @@ class Sock {
   constructor(url) {
     this.msgs = [];
     this.bins = [];
-    this.closed = false;
+    this.done = false;
     this.ws = new WebSocket(url);
     this.ws.binaryType = 'arraybuffer';
     this.opened = new Promise((res) => (this.ws.onopen = () => res(true)));
     this.ws.onmessage = (ev) => (typeof ev.data === 'string' ? this.msgs.push(JSON.parse(ev.data)) : this.bins.push(ev.data));
-    this.ws.onclose = () => (this.closed = true);
+    this.ws.onclose = () => (this.done = true);
+  }
+  /** closed: the close event came, or the server's close frame did and this side answered (a hibernating room's socket is not torn down by the runtime, so a Node client stays CLOSING; a browser gets its close event) */
+  get closed() {
+    return this.done || this.ws.readyState >= 2;
   }
   send(o) {
     this.ws.send(typeof o === 'string' || o instanceof ArrayBuffer ? o : JSON.stringify(o));

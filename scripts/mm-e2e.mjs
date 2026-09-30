@@ -44,13 +44,17 @@ const until = async (f, ms = 8000, step = 50) => {
 class Sock {
   constructor(url) {
     this.msgs = [];
-    this.closed = false;
+    this.done = false;
     this.status = null;
     this.ws = new WebSocket(url);
     this.opened = new Promise((res) => (this.ws.onopen = () => res(true)));
     this.ws.onmessage = (ev) => this.msgs.push(JSON.parse(ev.data));
-    this.ws.onclose = () => (this.closed = true);
+    this.ws.onclose = () => (this.done = true);
     this.ws.onerror = () => (this.failed = true);
+  }
+  /** closed: the close event came, or the server's close frame did and this side answered (a hibernating object's socket is not torn down by the runtime, so a Node client stays CLOSING; a browser gets its close event) */
+  get closed() {
+    return this.done || this.ws.readyState >= 2;
   }
   async until(f, ms = 3000) {
     const t0 = Date.now();

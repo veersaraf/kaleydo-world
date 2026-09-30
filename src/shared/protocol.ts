@@ -183,6 +183,9 @@ export type ServerToTV =
   | { type: 'host-gone' }
   | { type: 'no-room' };
 
+// Besides JSON, every client of a cloud room may send the exact text `ka` (a keepalive): the runtime answers `ka` itself, without waking the room,
+// so an idle client sends only that, every 40 s; the timed `ping` (which wakes the room) only while it is active. `ka` is never parsed.
+
 /** what a TV sends its room (the cloud's relay): to one phone or all, or to its guest TVs (JSON here; a snapshot goes as a binary frame,
  *  forwarded to every guest as it is); a guest TV sends its host any JSON (≤ 4 KB) and pings the relay for its clock */
 export type TVToServer =
