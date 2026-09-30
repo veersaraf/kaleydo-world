@@ -4,7 +4,12 @@
 // saved as PNGs and as one contact sheet; the drawn ball's distance to the plan's ball point is printed per frame.
 // With the swing ONSET on (a build that has it; ONSET=0 leaves it out): the phone's swing-start, made LEAD ms before the swing's peak, is
 // delayed by the same AGE, so it reaches the match LEAD ms sooner than the swing: the character's stroke starts on it.
+// DOUBLES=1: not the Swing Lab but a doubles match, the phone player up at the net with a CPU partner ("P1 (phone) & CPU vs CPU & CPU"): a ball
+// is struck at their zone by an opponent and given to the partner (as replan does when the partner's plan costs less), and the strip is
+// of the net player POACHING it: the swing's onset takes the ball, the drawn ball waits at their racket for the swing (a volley's slower hold),
+// the swing lands. The swing is made so that its peak is at the moment T the ball is at the racket (BEAT ms off it).
 //   BASE=http://localhost:3400 AGE=80 node scripts/hit-strip.mjs <outDir> [tag=after]
+//   BASE=http://localhost:3400 AGE=140 DOUBLES=1 node scripts/hit-strip.mjs <outDir> net-volley
 import { chromium } from 'playwright-core';
 import sharp from 'sharp';
 import fs from 'node:fs';
@@ -17,6 +22,7 @@ const AFTER = +(process.env.AFTER || 6);
 // the swing-start is made LEAD ms before the swing's peak (the phone's detector: ~100 ms on a normal swing)
 const LEAD = +(process.env.LEAD || 100);
 const ONSET = process.env.ONSET !== '0';
+const DOUBLES = process.env.DOUBLES === '1';
 // BEAT: ms the swing is made before (-) or after (+) the plan's contact time (a perfect one, |tau| < .16, freezes the frame a moment)
 const BEAT = +(process.env.BEAT || 0);
 const W = +(process.env.CROPW || 560);
@@ -31,28 +37,108 @@ await tv.goto(BASE + '/');
 await tv.evaluate(() => localStorage.setItem('kaleido.settings', JSON.stringify({ seenTutorial: true })));
 await tv.goto(BASE + '/');
 await tv.waitForTimeout(1500);
-await tv.evaluate(() => window.flow.beginSwingLab());
+if (!DOUBLES) await tv.evaluate(() => window.flow.beginSwingLab());
+else
+  await tv.evaluate(async () => {
+    const f = window.flow;
+    const k = window.kaleido;
+    f.settings.doubles = true;
+    f.settings.level = 'club';
+    const cfg = f.buildConfig();
+    // (one phone in doubles plays both partners: make the first-listed partner a CPU, and the phone the second, who plays the net)
+    const cpu = { ...cfg.players[2], team: 0, name: 'CPU', look: cfg.players[1].look };
+    cfg.players = [cpu, cfg.players[0], cfg.players[2], cfg.players[3]];
+    cfg.teamNames = [`${cfg.players[1].name} & CPU`, 'CPU & CPU'];
+    cfg.firstServer = 1;
+    cfg.introTime = 0.3;
+    f.beginMatch(k.stage.current?.def.id ?? 'plaza', false, cfg);
+  });
 await tv.waitForTimeout(2500);
 // take over the frame loop: from here on a frame is a call to __step()
 await tv.evaluate(() => {
   window.requestAnimationFrame = (cb) => { window.__tick = cb; return 1; };
 });
 await tv.waitForTimeout(300);
-await tv.evaluate(([age, beat, lead, onset]) => {
+await tv.evaluate(([age, beat, lead, onset, dbl]) => {
   const k = window.kaleido;
   const m = k.match;
   const human = m.players.find((q) => q.human);
+  const mate = m.players.find((q) => q.team === human.team && q !== human);
   const tmp = { x: 0, y: 0, z: 0 };
   const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
   const S = (window.__S = { phase: 'wait', tS: 0, arrived: -1, plan: null, n: 0 });
+  // (the swing must be able to be made in time: T not sooner than the onset can arrive)
+  const poachRoom = (T) => T - lead / 1000 + age / 1000 > m.t;
   let ts = performance.now();
+  // ---- DOUBLES: an opponent's ball is fed at the net player and given to the partner; the moment T the swing's peak should be at (the net player
+  // can get to the ball, from where they stand, with the swing's onset arriving `age` after it) is looked for on the flight
+  const D = (window.__D = { fid: 0, seen: -1, lastFeed: -9, cand: null, log: [] });
+  D.ready = !dbl;
+  if (dbl) {
+    (async () => {
+      const { buildShot } = await import('/src/tv/tennis/shot.ts');
+      const { COURT } = await import('/src/tv/tennis/court.ts');
+      let seed = 777;
+      const rnd = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
+      const fix = () => {
+        // the net player: at their net spot, role net, never serving
+        if (m.server === human) { const [hx, hz, cx, cz] = [human.x, human.z, mate.x, mate.z]; human.place(cx, cz); mate.place(hx, hz); [human.role, mate.role] = [mate.role, human.role]; m.server = mate; mate.holding = true; human.holding = false; m.ball.holder = mate; }
+        else if (human.role === 'back') { const [hx, hz, cx, cz] = [human.x, human.z, mate.x, mate.z]; human.place(cx, cz); mate.place(hx, hz); [human.role, mate.role] = [mate.role, human.role]; }
+      };
+      const sp = m.setupPoint.bind(m);
+      m.setupPoint = () => { sp(); fix(); };
+      fix();
+      D.feed = () => {
+        const opp = m.players.find((q) => q.team === 1 && q.role === 'back') ?? m.players.find((q) => q.team === 1);
+        if (m.state !== 'play') { m.setupPoint(); m.setState('play'); }
+        human.place(Math.max(-3, Math.min(3, human.x)), human.team === 0 ? 3.4 : -3.4);
+        mate.athletic = null;
+        const side = human.team === 0 ? 1 : -1;
+        const z0 = -side * (COURT.halfL + 0.4);
+        const x0 = (rnd() - 0.5) * 5;
+        const xNet = Math.max(-3.9, Math.min(3.9, human.x + (rnd() - 0.5) * 3.2));
+        const tz = side * (6.8 + rnd() * 3.4);
+        const fr = (0 - z0) / (tz - z0);
+        const tx = Math.max(-4.0, Math.min(4.0, x0 + (xNet - x0) / fr));
+        const seg = buildShot({ x: x0, y: 1.05, z: z0 }, { tx, tz, speed: 16 + rnd() * 8, spin: 0.25, clear: 0.55, maxApex: 4.2 }, m.t);
+        const b = m.ball;
+        b.holder = null; m.server.holding = false; b.serve = false; b.letPending = false; b.pop = false; b.smash = 0; b.live = true; b.visible = true;
+        b.lastHitTeam = 1 - human.team; b.lastHitter = opp; b.bounces = [0, 0]; b.netted = false; m.pendingHit = null;
+        m.newFlight(seg); m.replan(); m.rally = 1; D.fid++; D.lastFeed = m.t;
+        // the ball is the partner's (as replan gives it when their plan costs less)
+        if (human.plan) {
+          const plan = mate.planFrom(m.path, m.t, mate.ctrl.ai.react, { mustBounce: false, doubles: true, smash: m.ball.pop });
+          if (plan) { m.stepAside(human, mate); mate.plan = plan; mate.reactUntil = m.t + mate.ctrl.ai.react; }
+        }
+      };
+      D.poachable = (T) => {
+        const leadS = lead / 1000, agex = age / 1000;
+        const arr = T - leadS + agex, tMin = arr + 0.01;
+        const plan = human.planFrom(m.path, tMin - 0.08, arr - tMin + 0.1, { mustBounce: false, doubles: true, smash: m.ball.pop, at: Math.max(T - leadS + 0.1, tMin), spread: 0.12, stretch: 1.2 });
+        // (for a clean strip: a low volley whose ball point is where the swing will land)
+        const want = Math.max(T - leadS + 0.1, tMin);
+        return plan && plan.reachable && plan.volley && plan.stroke !== 'oh' && plan.by < 1.5 && Math.abs(plan.t - want) < 0.05 ? plan : null;
+      };
+      D.ready = true;
+    })();
+  }
   // a session's swings have taught the match how old they are (its hold follows the median; none before the hold existed)
   if (m.swingAges) for (let i = 0; i < 8; i++) m.swingAges.push(age / 1000);
   window.__step = () => {
     ts += 1000 / 60;
     window.__tick(ts);
     const p = human.plan;
-    if (S.phase === 'wait' && p && m.state === 'play' && p.t - m.t > 0.2 && p.t - m.t < 0.3) {
+    if (dbl && S.phase === 'wait' && D.ready) {
+      // (feed a ball whenever none is going; look once per ball for the moment the net player can take it)
+      if ((m.state !== 'play' || !m.ball.live) && m.t - D.lastFeed > 1.2) D.feed();
+      else if (m.state === 'play' && m.ball.live && D.fid !== D.seen && m.ball.lastHitTeam !== human.team) {
+        D.seen = D.fid;
+        for (let T = m.t + 0.25; T < m.t + 1.3; T += 0.02) {
+          const pl = D.poachable(T);
+          if (pl && poachRoom(T) ) { S.phase = 'run'; S.tS = T + beat / 1000; S.plan = { x: pl.bx, y: pl.by, z: pl.bz, stroke: pl.stroke }; S.x = human.x; S.z = human.z; const pr = k.rig.project({ x: human.x, y: 1.2, z: human.z }); S.cx = pr.x; S.cy = pr.y; S.mateHad = !!mate.plan; break; }
+        }
+      }
+    } else if (S.phase === 'wait' && p && m.state === 'play' && p.t - m.t > 0.2 && p.t - m.t < 0.3) {
       S.phase = 'run';
       S.tS = p.t + beat / 1000; // the swing is made on the beat (or BEAT ms off it)
       S.plan = { x: p.bx, y: p.by, z: p.bz, stroke: p.stroke };
@@ -82,10 +168,11 @@ await tv.evaluate(([age, beat, lead, onset]) => {
       k.swing({ slot: human.slot, power: 0.8, spin: 0.2, age: m.t - S.tS, source: 'pad', side: S.plan.stroke === 'bh' ? 'bh' : 'fh' });
     }
     const sw = human.swing;
+    row.plan = human.plan ? (human.plan.holdFrom !== undefined ? 'poached' : 'plan') : mate.plan ? 'mate' : '-';
     row.sw = sw ? `${sw.provisional ? (sw.feint ? 'feint' : 'prov') : sw.hit ? 'hit' : 'miss'} t0 ${Math.round((sw.t0 - S.tS) * 1000)} tc ${Math.round((sw.tc - S.tS) * 1000)}` : '';
     return { phase: 'run', row, arrived: S.arrived };
   };
-}, [AGE, BEAT, LEAD, ONSET]);
+}, [AGE, BEAT, LEAD, ONSET, DOUBLES]);
 const shots = [];
 let arrivedN = -1;
 for (let f = 0; f < 3000; f++) {
@@ -107,7 +194,7 @@ console.log(`(d) stroke phase when the swing arrives (fraction of the wind-up do
 console.log('frame  ms after the beat   drawn ball (x,y,z)      true z   dist to plan point   swing');
 for (const s of sel) {
   const r = s.row;
-  console.log(`${String(r.n - arrivedN).padStart(4)}   ${String(r.dt).padStart(5)}   ${r.x.toFixed(2).padStart(6)} ${r.y.toFixed(2).padStart(5)} ${r.z.toFixed(2).padStart(6)}   ${r.tz.toFixed(2).padStart(6)}   ${r.dPlan.toFixed(2).padStart(5)} m   ${r.start ? '<- onset heard   ' : ''}${r.arrive ? '<- swing heard   ' : ''}${r.sw}`);
+  console.log(`${String(r.n - arrivedN).padStart(4)}   ${String(r.dt).padStart(5)}   ${r.x.toFixed(2).padStart(6)} ${r.y.toFixed(2).padStart(5)} ${r.z.toFixed(2).padStart(6)}   ${r.tz.toFixed(2).padStart(6)}   ${r.dPlan.toFixed(2).padStart(5)} m   ${r.start ? '<- onset heard   ' : ''}${r.arrive ? '<- swing heard   ' : ''}${r.sw}${DOUBLES ? '  [ball is ' + r.plan + ']' : ''}`);
   fs.writeFileSync(`${OUT}/${TAG}-f${String(r.n - arrivedN).replace('-', 'm')}.png`, s.buf);
 }
 // the contact sheet: 4 columns, frames in order, each labelled with its offset from the arrival

@@ -26,6 +26,10 @@ export interface HitPlan {
   cost: number;
   /** horizontal ball speed at contact, m/s */
   speed: number;
+  /** taken for a swing already made (a human poaching a ball whose swing was heard late): the drawn ball is not held for it */
+  nohold?: boolean;
+  /** taken from a swing's onset (a human poaching a ball): the drawn ball is held from this sim time, not from `lead` before the contact (it would jump back) */
+  holdFrom?: number;
 }
 
 export interface SwingState {
@@ -187,6 +191,17 @@ export class TPlayer {
     return d / v + v / a;
   }
 
+  /** The furthest a player can get from standing in `t` seconds (timeToCover's inverse). */
+  coverIn(t: number) {
+    if (t <= 0) return 0;
+    const v = this.maxSpeed * this.pace;
+    const a = this.accel;
+    // (accelerate and brake all the way: d = a t² / 4, up to the distance at which the top speed is reached)
+    const dAcc = (v * v) / a;
+    const dShort = (a * t * t) / 4;
+    return dShort < dAcc ? dShort : v * (t - v / a);
+  }
+
   step(dt: number) {
     const dx = this.tx - this.x;
     const dz = this.tz - this.z;
@@ -228,7 +243,22 @@ export class TPlayer {
    * (The candidates are weighed in two scratch plans; only the winner is copied out, so a
    * call makes one object however long the path.)
    */
-  planFrom(path: PathBuf, now: number, react: number, opts: { mustBounce: boolean; doubles: boolean; prefer?: Stroke; smash?: boolean }): HitPlan | null {
+  planFrom(
+    path: PathBuf,
+    now: number,
+    react: number,
+    opts: {
+      mustBounce: boolean;
+      doubles: boolean;
+      prefer?: Stroke;
+      smash?: boolean;
+      /** a time the contact is meant for (a person's swing): only balls within `spread` s of it, and the nearest to it preferred */
+      at?: number;
+      spread?: number;
+      /** metres a ball may be out of running reach and still count as reachable (the lunge a stretched player makes): a poach's */
+      stretch?: number;
+    },
+  ): HitPlan | null {
     const fwd = this.fwd;
     const team0 = this.team === 0;
     const best = SCRATCH_BEST;
@@ -244,6 +274,7 @@ export class TPlayer {
       if (s.t < now + 0.08) continue;
       if (opts.mustBounce && s.bounces === 0) continue;
       if (s.y < 0.22 || s.y > 3.0) continue;
+      if (opts.at !== undefined && Math.abs(s.t - opts.at) > (opts.spread ?? 0.2)) continue;
       const volley = s.bounces === 0;
       const overhead = s.y > 1.95;
 
@@ -269,7 +300,7 @@ export class TPlayer {
         const d = hyp2(sx - this.x, sz - this.z);
         const avail = s.t - now - react;
         const need = this.timeToCover(d);
-        const reachable = need <= avail + 0.02;
+        const reachable = need <= avail + 0.02 || (opts.stretch !== undefined && d - this.coverIn(avail) <= opts.stretch);
         const hIdeal = overhead ? 2.35 : REACH.idealH;
         let cost = 1.7 * Math.abs(s.y - hIdeal);
         cost += 0.45 * clamp(need / Math.max(0.05, avail), 0, 2);
@@ -281,6 +312,7 @@ export class TPlayer {
         if (volley && overhead) cost += nearNet || opts.smash ? -0.4 : 0.3;
         // prefer taking it earlier (on the rise) rather than drifting back
         cost += 0.22 * (s.t - now);
+        if (opts.at !== undefined) cost += 10 * Math.abs(s.t - opts.at);
         if (reachable) {
           if (!hasBest || cost < best.cost) {
             fill(best, path, i, s, stroke, volley, sx, sz, true, cost);

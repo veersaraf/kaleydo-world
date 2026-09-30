@@ -157,4 +157,32 @@ for (const hz of [30, 100, 200]) {
   const a = [...leads].sort((x, y) => x - y);
   console.log(`\nonset lead before the true peak (${a.length} swings, 60 Hz): min ${a[0].toFixed(0)} ms, p50 ${a[Math.floor(a.length / 2)].toFixed(0)} ms, max ${a[a.length - 1].toFixed(0)} ms`);
 }
+// a volley is a short punch: ~150 ms in all, a peak of 9-12 rad/s (520-690 deg/s). Its speed is over the detector's START only ~60 ms before the peak, so
+// its onset comes later ahead of the peak than a full swing's, but it must come, once, on its side
+{
+  const punchLeads: number[] = [];
+  let missed = 0;
+  for (const ios of [false, true]) {
+    const T = ios ? '[iOS]' : '[W3C]';
+    for (const [pk, dur] of [[7.5, 0.15], [9, 0.15], [10.5, 0.15], [12, 0.15], [10.5, 0.12], [12, 0.18], [9, 0.1]] as [number, number][]) {
+      for (const [name, yaw, side] of [['fh', 0.85, 'fh'], ['bh', -0.85, 'bh']] as [string, number, 'fh' | 'bh'][]) {
+        const d = new SwingDetector();
+        d.upSign = ios ? -1 : 1;
+        const evs: SwingEvent[] = [];
+        const starts: Start[] = [];
+        d.onSwing = (e) => evs.push(e);
+        d.onStart = (e) => starts.push(e);
+        for (const s of makeSwing({ peak: pk, dur, vUp: 0, ios, yaw })) d.push(s);
+        const lead = evs.length && starts.length ? evs[evs.length - 1].t - starts[starts.length - 1].t : NaN;
+        const pass = evs.length === 1 && starts.length === 1 && lead >= 30 && lead < 200 && (!starts[0].side || starts[0].side === side);
+        if (!pass) ok = false;
+        if (Number.isNaN(lead)) missed++;
+        else punchLeads.push(lead);
+        console.log(`${pass ? '\u2713' : '\u2717'} onset ${T} punch ${name} ${pk} rad/s, ${Math.round(dur * 1000)} ms`.padEnd(52) + ` ${starts.length} start${starts.length === 1 ? '' : 's'}${starts.length ? ` (${starts[0].side ?? '?'} ${starts[0].w.toFixed(1)} rad/s)` : ''}${Number.isNaN(lead) ? '' : `, ${lead.toFixed(0)} ms before the peak`}`);
+      }
+    }
+  }
+  const a = [...punchLeads].sort((x, y) => x - y);
+  console.log(`\npunch onset lead (${a.length} punches, ${missed} missed): min ${a[0].toFixed(0)} ms, p50 ${a[Math.floor(a.length / 2)].toFixed(0)} ms, max ${a[a.length - 1].toFixed(0)} ms`);
+}
 console.log(ok ? '\nAll swing checks passed.' : '\nSome swing checks FAILED.');
