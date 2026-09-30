@@ -73,8 +73,6 @@ const REST_ANG = 0.3;
 /** everything must stay at rest this long (a wobbling pin is briefly still at each end of its wobble) */
 const REST_HOLD = 0.35;
 const SETTLE_TIMEOUT = 4;
-/** after a rack the solver keeps stepping this long, so the pins seat on the deck before the idle skip may apply */
-const RACK_SEAT = 0.5;
 /** impact speeds worth a sound: ball–pin, and pin–pin (quieter clacks are dropped) */
 const HIT_MIN = 0.5;
 const HIT_MIN_PINS = 0.8;
@@ -210,8 +208,6 @@ export class BowlPhysics {
   private acc = 0;
   private tThrow = 0;
   private tPins = 0;
-  /** when the pins were last racked (a pin put to sleep right after a teleport has no deck yet) */
-  private tRack = -1e9;
   private restT = 0;
   private snapshot: boolean[] | null = null;
   /** per-body velocity before the current step, for impact speeds (0 = ball, 1..10 = pins) */
@@ -376,7 +372,6 @@ export class BowlPhysics {
     this.ballBody.setEnabled(false);
     this.ballBody.setLinearDamping(0);
     this.ballBody.setAngularDamping(0);
-    this.tRack = this.t;
     this.mode = 'hand';
     this.phase = 'ready';
     this.restT = 0;
@@ -459,8 +454,8 @@ export class BowlPhysics {
     this.t += H;
     if (this.mode === 'lane') this.laneStep();
     else if (this.mode === 'gutter') this.gutterStep();
-    // stepped unless nothing in the world can move: fresh racks settle onto the deck first
-    if (!this.worldIdle()) this.worldStep();
+    // always stepped: fresh racks settle onto the deck (cheap once asleep)
+    this.worldStep();
     if (this.phase === 'lane') {
       const bz = this.mode === 'rapier' ? this.ballBody.translation(this.tv).z : this.b.z;
       // the ball's front reaches the head pin (or a gutter ball reaches the pit)
@@ -569,22 +564,6 @@ export class BowlPhysics {
     this.snapshot = this.countStanding();
     this.phase = 'settled';
     this.onEvent({ type: 'settled' });
-  }
-
-  /**
-   * True when a solver step would change nothing: the ball is not a Rapier body (it is in
-   * the hand or on our lane model), every pin in play is asleep, and the last rack is old
-   * enough for the pins to have seated. A step with no awake body moves nothing and raises no
-   * events. (Rapier keeps some hidden state that counts solver steps, so a throw after skipped
-   * steps can scatter the pins differently in the last digits: the same physics, another draw.)
-   */
-  private worldIdle(): boolean {
-    if (this.ballBody.isEnabled() || this.t - this.tRack < RACK_SEAT) return false;
-    for (let i = 0; i < 10; i++) {
-      const body = this.pins[i];
-      if (body.isEnabled() && !body.isSleeping()) return false;
-    }
-    return true;
   }
 
   private worldStep() {
