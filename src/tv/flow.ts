@@ -1040,7 +1040,7 @@ export class Flow {
     void mode;
     const title = h('h2', null, 'Tennis');
     const desc = h('div', { class: 'hintline' }, 'Choose your match, then pick a world.');
-    const kal = this.kaleidoRow();
+    const kal = this.kaleidoRow(() => refresh());
     const teamsView = h('div', { class: 'teams' });
     const row = (k: string) => {
       const v = h('span');
@@ -1053,6 +1053,8 @@ export class Flow {
     const rLen = row('Match');
     const go = h('div', { class: 'row go' }, 'Choose a world ▶');
     const refresh = () => {
+      // (Kaleido picks the worlds itself: no world screen to go to)
+      go.textContent = S.kaleido ? 'Play ▶' : 'Choose a world ▶';
       const ps = this.presets();
       S.teamPreset = Math.min(S.teamPreset, ps.length - 1);
       const p = ps[S.teamPreset];
