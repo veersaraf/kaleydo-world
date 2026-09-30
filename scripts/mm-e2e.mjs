@@ -146,10 +146,10 @@ const toOnline = async (p) => {
   await p.keyboard.press('Enter');
   return screenIs(p, 'online');
 };
-/** on Play online: to the third card, and press it */
+/** on Play online: down to Quick match (the third choice), and press it */
 const pressQuick = async (p) => {
-  await p.keyboard.press('ArrowRight');
-  await p.keyboard.press('ArrowRight');
+  await p.keyboard.press('ArrowDown');
+  await p.keyboard.press('ArrowDown');
   await sleep(120);
   await p.keyboard.press('Enter');
 };
@@ -174,8 +174,8 @@ await pressQuick(B);
 await sleep(600);
 check('without a phone, Quick match stays on Play online (and says so)', (await screenIs(B, 'online', 1500)) && !(await B.evaluate(() => window.kaleido.link.searching)) && (await queueLen()) === 0);
 check('…the card itself says it needs a phone', /needs a phone/i.test((await B.textContent('.onote')) || ''));
-await B.keyboard.press('ArrowLeft');
-await B.keyboard.press('ArrowLeft');
+await B.keyboard.press('ArrowUp');
+await B.keyboard.press('ArrowUp');
 
 const pA = await phoneFor(A, 'padA');
 const pB = await phoneFor(B, 'padB');
@@ -235,7 +235,7 @@ for (const p of [A, B])
   await p.evaluate(() => {
     window.__said = new Set();
     setInterval(() => {
-      for (const sel of ['.qhead', '.qsub', '.lsub', '.lstatus']) {
+      for (const sel of ['.qhead', '.qsub', '.lhead', '.lsub', '.lstatus']) {
         const t = document.querySelector(sel)?.textContent;
         if (t) window.__said.add(t);
       }

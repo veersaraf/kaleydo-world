@@ -26,7 +26,8 @@ export class QuickPanel {
     this.timer = h('div', { class: 'qtimer' });
     this.sub = h('div', { class: 'qsub' });
     this.phones = h('div', { class: 'qphones' });
-    this.el = h('div', { class: 'screen center quick' }, h('div', { class: 'sheet panel' }, this.head, h('div', { class: 'qspin' }, h('i'), h('i'), h('i')), this.timer, this.sub, this.phones, h('div', { class: 'rhint' }, 'B — cancel')));
+    // (a radar: rings go out from the middle while it looks)
+    this.el = h('div', { class: 'screen pausemenu quick' }, h('div', { class: 'sheet' }, h('div', { class: 'qradar' }, h('i'), h('i'), h('i'), h('b')), this.head, this.timer, this.sub, this.phones, h('div', { class: 'rhint' }, 'B cancel')));
     this.update();
   }
 
@@ -50,7 +51,7 @@ export class QuickPanel {
     const sig = JSON.stringify([s, ph]);
     if (sig === this.sig) return;
     this.sig = sig;
-    this.el.className = `screen center quick ${s.kind}`;
+    this.el.className = `screen pausemenu quick ${s.kind}`;
     this.head.textContent = s.kind === 'search' ? 'Looking for an opponent…' : `Found ${s.name}!`;
     this.sub.textContent = s.kind === 'search' ? (s.n > 1 ? `${s.n} TVs waiting` : 'Waiting for someone to press Quick match') : s.kind === 'found' ? 'Waiting for their phone…' : 'Waiting for their phone to come back…';
     clear(this.phones);

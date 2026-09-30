@@ -177,7 +177,7 @@ const toCodeEntry = async (p) => {
   }
   await p.keyboard.press('Enter');
   if (!(await screenIs(p, 'online'))) return false;
-  await p.keyboard.press('ArrowRight');
+  await p.keyboard.press('ArrowDown');
   await sleep(100);
   await p.keyboard.press('Enter');
   return screenIs(p, 'joincode');
@@ -198,7 +198,7 @@ check('the code fills in from the keyboard', (await guest.$$eval('.rcell b', (bs
 await guest.keyboard.press('Enter');
 check('Enter joins: the guest lobby comes up', await screenIs(guest, 'lobby'));
 await guest.waitForSelector('.screen.lobby.in', { timeout: 8000 }).catch(() => null);
-const lob = await guest.evaluate(() => ({ head: document.querySelector('.lhead')?.textContent, role: window.kaleido.link.role, room: window.kaleido.link.room, url: window.kaleido.link.joinUrl, cls: document.querySelector('.screen.lobby')?.className }));
+const lob = await guest.evaluate(() => ({ head: document.querySelector('.screen.lobby .sheet')?.textContent, role: window.kaleido.link.role, room: window.kaleido.link.room, url: window.kaleido.link.joinUrl, cls: document.querySelector('.screen.lobby')?.className }));
 check('the lobby says which room', lob.head?.includes(CODE) && lob.role === 'guest' && lob.room === CODE && /lobby in/.test(lob.cls), JSON.stringify(lob));
 check('the guest’s QR link opens the HOST’s room', lob.url?.includes('/c?room=' + CODE), lob.url);
 check('the host has the guest', await host.waitForFunction(() => window.kaleido.link.guests.length === 1, null, { timeout: 8000 }).then(() => true).catch(() => false), JSON.stringify(await host.evaluate(() => window.kaleido.link.guests)));
@@ -216,7 +216,7 @@ const gseats = await guest.evaluate(() => window.kaleido.input.activeSeats.filte
 check('…and not on the guest TV', gseats === 0, `${gseats} phones there`);
 const inLobby = await guest.waitForFunction(() => document.querySelectorAll('.lroster .lcol:first-child .lp').length === 1, null, { timeout: 8000 }).then(() => true).catch(() => false);
 const lp = await guest.evaluate(() => [...document.querySelectorAll('.lroster .lcol:first-child .lp')].map((e) => ({ t: e.textContent, c: e.style.getPropertyValue('--c') })));
-check('the guest’s lobby lists that phone, in its colour', inLobby && /^#[0-9a-f]{6}$/i.test(lp[0]?.c) && /P1/.test(lp[0]?.t), JSON.stringify(lp));
+check('the guest’s lobby lists that phone, in its colour', inLobby && /^#[0-9a-f]{6}$/i.test(lp[0]?.c) && /\S/.test(lp[0]?.t ?? ''), JSON.stringify(lp));
 const tvs = await guest.$$eval('.lroster .lcol:nth-child(2) .lp', (e) => e.map((x) => x.textContent));
 check('the lobby lists the TVs, this one marked', tvs.length === 2 && tvs.some((t) => t.includes('you')), JSON.stringify(tvs));
 await sleep(500);
@@ -308,11 +308,11 @@ check('…and the guest’s lobby is in the room again', await guest.waitForSele
 
 // the host leaves
 await host.context().close();
-check('the host closing gives the guest "The host left"', await guest.waitForFunction(() => /host left/.test(document.querySelector('.lsub')?.textContent || '') && document.querySelector('.screen.lobby.hostgone'), null, { timeout: 8000 }).then(() => true).catch(() => false));
+check('the host closing gives the guest "The host left"', await guest.waitForFunction(() => /host left/.test(document.querySelector('.lhead')?.textContent || '') && document.querySelector('.screen.lobby.hostgone'), null, { timeout: 8000 }).then(() => true).catch(() => false));
 await shot(guest, '5-host-left');
 await guest.keyboard.press('Enter'); // A: back
 check('A goes back to Play online, hosting this TV’s own room again', (await screenIs(guest, 'online')) && (await guest.evaluate(() => window.kaleido.link.role === 'host' && window.kaleido.link.room !== 'x')));
-await guest.keyboard.press('ArrowRight');
+await guest.keyboard.press('ArrowDown');
 await guest.keyboard.press('Enter');
 await guest.keyboard.type(CODE);
 await guest.keyboard.press('Enter');
@@ -372,7 +372,7 @@ check('Escape in a lobby leaves the room', (await screenIs(guest, 'online')) && 
   check('…its link is in B’s room again, with no via', st2.room === roomB && st2.via === '' && st2.url.includes(`room=${roomB}`) && !st2.url.includes('via='), JSON.stringify(st2));
   check('…and A has no phones left', await A.waitForFunction(() => window.kaleido.input.activeSeats.every((s) => s.local || !s.pid), null, { timeout: 5000 }).then(() => true).catch(() => false));
   // a wrong code: the phone follows, finds nobody, and comes back
-  await Bt.keyboard.press('ArrowRight');
+  await Bt.keyboard.press('ArrowDown');
   await Bt.keyboard.press('Enter');
   await Bt.keyboard.type('ZZZZZ');
   await Bt.keyboard.press('Enter');

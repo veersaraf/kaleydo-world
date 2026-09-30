@@ -766,55 +766,67 @@ export class Flow {
   /** "Play online": host a room (this TV's own — the QR code, the code, the friends watching) or join a friend's */
   private onlineScreen(): Screen {
     const link = this.app.link;
+    // this TV always has a room: its code is the heart of the screen, and "Pick a sport" starts a game in it
     const code = h('div', { class: 'rcode big' }, ...(link.room ?? '').split('').map((c) => h('b', null, c)));
     const friends = h('div', { class: 'ofriends' });
-    const host = h(
+    const start = h('div', { class: 'row go' }, 'Pick a sport ▶');
+    const ns = 'http://www.w3.org/2000/svg';
+    const glyph = (d: string) => {
+      const svg = document.createElementNS(ns, 'svg');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      svg.innerHTML = `<path d="${d}"/>`;
+      return svg;
+    };
+    const opt = (ico: SVGSVGElement, title: string, sub: HTMLElement) =>
+      h('div', { class: 'oopt' }, h('i', { class: 'oico' }, ico), h('span', { class: 'otxt' }, h('b', null, title), sub), h('span', { class: 'ochev' }, '▶'));
+    const qnote = h('small', { class: 'onote' });
+    const join = opt(glyph('M10 17l5-5-5-5M15 12H3M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5'), 'Join a friend’s room', h('small', null, 'Type the code on their screen'));
+    const quick = opt(glyph('M13 2 4 14h8l-1 8 9-12h-8z'), 'Quick match', qnote);
+    const nav = new Nav([
+      {
+        el: start,
+        onSelect: () => {
+          this.toast(`Room ${link.room} is open — pick a sport`, '#35d49a');
+          this.go(this.mainMenu());
+        },
+      },
+      { el: join, onSelect: () => this.go(this.joinCodeScreen()) },
+      {
+        el: quick,
+        onSelect: () => {
+          if (!this.app.input.padCount) {
+            // (the match is played with a phone: show the QR code)
+            this.toast('Quick match needs a phone — scan the code first', '#ffc53d');
+            this.join.el.classList.add('nudge');
+            window.setTimeout(() => this.join.el.classList.remove('nudge'), 1800);
+            return;
+          }
+          this.startQuickMatch();
+        },
+      },
+    ]);
+    const sheet = h(
       'div',
-      { class: 'ocard' },
-      h('h3', null, 'Host a room'),
-      h('p', null, 'Friends open Kaleydo World on their own TV, choose Play online → Join a room, and type'),
-      code,
-      friends,
-      h('div', { class: 'ogo' }, 'A — pick a sport'),
+      { class: 'sheet' },
+      h('h2', null, 'Play online'),
+      h('div', { class: 'hintline' }, 'Friends play from their own TV, with their own phones.'),
+      h('div', { class: 'oroom' }, h('div', { class: 'olabel' }, 'Your room'), code, friends),
+      start,
+      h('div', { class: 'oopts' }, join, quick),
+      h('div', { class: 'hintline' }, '▲ ▼ choose · A select · B back'),
     );
-    const join = h('div', { class: 'ocard' }, h('h3', null, 'Join a room'), h('p', null, 'Got a friend’s code? Type it to play in their game, from your own screen and your own phones.'), h('div', { class: 'ogo' }, 'A — enter a code'));
-    const qnote = h('div', { class: 'onote' });
-    const quick = h('div', { class: 'ocard' }, h('h3', null, 'Quick match'), h('p', null, 'Get paired with someone else who’s looking, and play a singles match, right away.'), qnote, h('div', { class: 'ogo' }, 'A — find an opponent'));
-    const nav = new Nav(
-      [
-        {
-          el: host,
-          onSelect: () => {
-            this.toast(`Room ${link.room} is open — pick a sport`, '#35d49a');
-            this.go(this.mainMenu());
-          },
-        },
-        { el: join, onSelect: () => this.go(this.joinCodeScreen()) },
-        {
-          el: quick,
-          onSelect: () => {
-            if (!this.app.input.padCount) {
-              // (the match is played with a phone: show the QR code)
-              this.toast('Quick match needs a phone — scan the code first', '#ffc53d');
-              this.join.el.classList.add('nudge');
-              window.setTimeout(() => this.join.el.classList.remove('nudge'), 1800);
-              return;
-            }
-            this.startQuickMatch();
-          },
-        },
-      ],
-      true,
-    );
-    const el = h('div', { class: 'screen center online' }, h('div', { class: 'sheet panel' }, h('h2', null, 'Play online'), h('div', { class: 'ochoices' }, host, join, quick)), this.join.el);
+    const el = h('div', { class: 'screen setup online' }, sheet, this.join.el);
     this.join.refresh();
     const scr = this.navScreen('online', el, nav, () => this.go(this.mainMenu()), { title: 'Play online', hint: 'A choose · B back' });
     scr.update = () => {
       const n = link.guests.length;
-      friends.textContent = n ? `${n} ${n === 1 ? 'friend’s TV' : 'friends’ TVs'} watching` : 'Nobody has joined yet';
-      qnote.textContent = this.app.input.padCount ? '' : 'Needs a phone: scan the code';
+      friends.textContent = n ? `${n} ${n === 1 ? 'friend’s TV' : 'friends’ TVs'} in your room` : 'Friends type this on their TV to join you';
+      friends.classList.toggle('on', n > 0);
+      qnote.textContent = this.app.input.padCount ? 'A singles match with someone looking right now' : 'Needs a phone: scan the code first';
+      qnote.classList.toggle('warn', !this.app.input.padCount);
       this.join.refresh();
     };
+    scr.update(0);
     return scr;
   }
 

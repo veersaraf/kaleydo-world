@@ -234,6 +234,7 @@
   flex-direction: column;
   gap: calc(var(--u) * 1.6);
   pointer-events: auto;
+  color: var(--ink);
   text-shadow: none;
 }
 
@@ -3367,316 +3368,386 @@ kbd {
   display: none;
 }
 
-.sheet .lead {
-  margin: calc(var(--u) * -0.8) 0 0;
-  font-size: calc(var(--u) * 2);
-  opacity: 0.7;
-  line-height: 1.35;
-}
-
-.online {
-  justify-content: flex-start;
-}
-
-.online .sheet {
-  width: min(calc(var(--u) * 92), 60vw);
-  margin-left: calc(var(--u) * 5);
-}
-
-.ochoices {
-  display: flex;
-  gap: calc(var(--u) * 2);
-}
-
-.ocard {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--u) * 1.2);
-  padding: calc(var(--u) * 2.4);
-  border-radius: calc(var(--u) * 2.4);
-  background: rgba(20, 20, 60, 0.05);
-  cursor: pointer;
-  transition:
-    transform 0.16s,
-    box-shadow 0.16s,
-    background 0.16s;
-}
-
-.ocard h3 {
-  margin: 0;
-  font-size: calc(var(--u) * 3.4);
-  font-family: var(--display);
-}
-
-.ocard p {
-  margin: 0;
-  font-size: calc(var(--u) * 1.8);
-  opacity: 0.7;
-  line-height: 1.35;
-}
-
-.ocard.focus {
-  background: #fff;
-  transform: scale(1.03);
-  box-shadow:
-    0 0 0 calc(var(--u) * 0.45) var(--accent),
-    0 calc(var(--u) * 0.8) calc(var(--u) * 2.4) rgba(20, 20, 60, 0.2);
-}
-
-.ocard .ogo {
-  margin-top: auto;
-  padding-top: calc(var(--u) * 1);
+/* the small label over a room code ("YOUR ROOM", "ROOM W6KXW") */
+.olabel {
+  font-size: calc(var(--u) * 1.5);
   font-weight: 700;
-  color: var(--accent);
-  font-size: calc(var(--u) * 1.9);
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  opacity: 0.55;
 }
 
-.ofriends {
-  font-weight: 700;
-  font-size: calc(var(--u) * 1.9);
-  color: #17966a;
-}
-
-/* a room code, big */
+/* a room code: one tile per letter */
 .rcode {
-  font-family: var(--display);
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  color: var(--accent);
+  display: flex;
+  gap: calc(var(--u) * 0.8);
 }
 
-.rcode.big {
-  display: flex;
-  gap: calc(var(--u) * 0.9);
+.rcode b {
+  width: calc(var(--u) * 7);
+  height: calc(var(--u) * 8.4);
+  display: grid;
+  place-items: center;
+  border-radius: calc(var(--u) * 1.6);
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  font-size: calc(var(--u) * 5);
+  font-weight: 700;
   letter-spacing: 0;
 }
 
-.rcode.big b {
-  display: grid;
-  place-items: center;
-  width: calc(var(--u) * 6.6);
-  height: calc(var(--u) * 8.4);
-  border-radius: calc(var(--u) * 1.4);
-  background: var(--ink);
-  color: #fff;
-  font-size: calc(var(--u) * 5.2);
-  box-shadow: 0 calc(var(--u) * 0.5) 0 rgba(0, 0, 0, 0.25);
+/* ---- Play online: your room first, then the other ways in */
+
+.online .oroom {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 1.2);
+  margin: calc(var(--u) * 0.6) 0 calc(var(--u) * 0.8);
 }
 
-/* typing a code */
-.joincode .sheet {
+.ofriends {
+  display: flex;
   align-items: center;
-  text-align: center;
-  width: min(calc(var(--u) * 84), 92vw);
+  gap: calc(var(--u) * 0.9);
+  font-size: calc(var(--u) * 1.8);
+  opacity: 0.7;
+}
+
+.ofriends::before {
+  content: '';
+  width: calc(var(--u) * 1);
+  height: calc(var(--u) * 1);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.ofriends.on {
+  opacity: 1;
+  font-weight: 600;
+}
+
+.ofriends.on::before {
+  background: #35d49a;
+  box-shadow: 0 0 0 calc(var(--u) * 0.4) rgba(53, 212, 154, 0.25);
+}
+
+.online .row.go {
+  margin-top: calc(var(--u) * 0.6);
+}
+
+.oopts {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 0.6);
+  margin: calc(var(--u) * 2.4) calc(var(--u) * -2) calc(var(--u) * 0.6);
+  padding-top: calc(var(--u) * 1.8);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.oopt {
+  display: grid;
+  grid-template-columns: calc(var(--u) * 4.8) 1fr auto;
+  align-items: center;
+  gap: calc(var(--u) * 1.6);
+  padding: calc(var(--u) * 1.1) calc(var(--u) * 2);
+  border-radius: calc(var(--u) * 1.8);
+  cursor: pointer;
+  transition: background 0.16s;
+}
+
+.oopt.focus {
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+
+.oico {
+  width: calc(var(--u) * 4.8);
+  height: calc(var(--u) * 4.8);
+  display: grid;
+  place-items: center;
+  border-radius: calc(var(--u) * 1.4);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.oico svg {
+  width: 48%;
+  height: 48%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.otxt {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 0.2);
+  min-width: 0;
+}
+
+.otxt b {
+  font-size: calc(var(--u) * 2.3);
+  font-weight: 600;
+}
+
+.otxt small {
+  font-size: calc(var(--u) * 1.6);
+  opacity: 0.6;
+}
+
+.otxt small.warn {
+  color: #ffc53d;
+  opacity: 1;
+}
+
+.ochev {
+  font-size: calc(var(--u) * 1.4);
+  opacity: 0;
+  transition: opacity 0.16s;
+}
+
+.oopt.focus .ochev {
+  opacity: 0.7;
+}
+
+/* ---- Join a friend's room: five letter tiles, centred over the dimmed game */
+
+.pausemenu .lead {
+  margin: calc(var(--u) * -1) 0 0;
+  font-size: calc(var(--u) * 2);
+  opacity: 0.65;
+}
+
+.pausemenu.joincode .sheet h2 {
+  font-size: calc(var(--u) * 4.4);
+  letter-spacing: -0.01em;
+  text-transform: none;
+  opacity: 1;
 }
 
 .rcells {
   display: flex;
-  gap: calc(var(--u) * 1.4);
-  margin: calc(var(--u) * 1) 0;
+  gap: calc(var(--u) * 1.2);
+  margin: calc(var(--u) * 1.4) 0 calc(var(--u) * 0.4);
 }
 
 .rcell {
+  position: relative;
+  width: calc(var(--u) * 9);
+  height: calc(var(--u) * 11);
   display: grid;
   place-items: center;
-  width: calc(var(--u) * 10);
-  height: calc(var(--u) * 13);
   border-radius: calc(var(--u) * 2);
-  background: rgba(20, 20, 60, 0.07);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
   cursor: pointer;
   transition:
-    transform 0.14s,
-    box-shadow 0.14s,
-    background 0.14s;
+    background 0.15s,
+    box-shadow 0.15s,
+    transform 0.15s;
 }
 
 .rcell b {
-  font-family: var(--display);
-  font-size: calc(var(--u) * 8);
-  line-height: 1;
+  font-size: calc(var(--u) * 6);
+  font-weight: 700;
 }
 
 .rcell.full {
-  background: #fff;
+  background: rgba(255, 255, 255, 0.16);
 }
 
 .rcell.cur {
-  transform: translateY(calc(var(--u) * -0.6)) scale(1.06);
-  background: #fff;
-  box-shadow:
-    0 0 0 calc(var(--u) * 0.5) var(--accent),
-    0 calc(var(--u) * 0.8) calc(var(--u) * 2.2) rgba(20, 20, 60, 0.2);
+  background: rgba(255, 255, 255, 0.2);
+  box-shadow: inset 0 0 0 calc(var(--u) * 0.35) #fff;
+  transform: translateY(calc(var(--u) * -0.4));
 }
 
 .rcell.cur:not(.full)::after {
   content: '';
-  width: calc(var(--u) * 0.5);
-  height: calc(var(--u) * 6);
+  position: absolute;
+  width: calc(var(--u) * 0.4);
+  height: 44%;
   border-radius: 99px;
-  background: var(--accent);
-  animation: caret 1s steps(2, jump-none) infinite;
+  background: #fff;
+  animation: caret 1s steps(1) infinite;
 }
 
 @keyframes caret {
-  to {
+  50% {
     opacity: 0;
   }
 }
 
 .rmsg {
-  min-height: calc(var(--u) * 2.8);
-  font-size: calc(var(--u) * 2);
-  font-weight: 600;
-  opacity: 0.75;
+  min-height: calc(var(--u) * 2.6);
+  font-size: calc(var(--u) * 1.9);
+  opacity: 0.7;
 }
 
 .rmsg.bad {
-  color: #d6304a;
+  color: #ff8a9c;
   opacity: 1;
 }
 
 .joincode .row.go {
-  width: 100%;
+  padding: calc(var(--u) * 1.6) calc(var(--u) * 5);
+  border-radius: 99px;
+  background: #fff;
+  color: var(--ink);
+  font-size: calc(var(--u) * 2.6);
+  font-weight: 700;
+  box-shadow: 0 calc(var(--u) * 0.8) calc(var(--u) * 2.4) rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+  transition: opacity 0.2s;
 }
 
 .joincode .row.go.dim {
-  opacity: 0.45;
+  background: rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.6);
+  box-shadow: none;
 }
 
 .rhint {
-  font-size: calc(var(--u) * 1.7);
-  opacity: 0.55;
-  font-weight: 600;
+  font-size: calc(var(--u) * 1.6);
+  opacity: 0.45;
+  text-align: center;
 }
 
-/* the guest lobby */
-.lobby {
-  display: flex;
-  align-items: center;
-}
+/* ---- the guest lobby: which room, who's in it, what happens next */
 
 .lobby .sheet {
-  width: min(calc(var(--u) * 84), 58vw);
-  margin-left: calc(var(--u) * 5);
+  gap: calc(var(--u) * 1);
 }
 
 .lhead {
-  font-family: var(--display);
+  font-size: calc(var(--u) * 5.4);
   font-weight: 700;
-  font-size: calc(var(--u) * 4.6);
-  line-height: 1.1;
-}
-
-.lhead .rcode {
-  font-size: 1.15em;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
 }
 
 .lsub {
-  margin-top: calc(var(--u) * -1);
-  font-size: calc(var(--u) * 2.2);
-  font-weight: 600;
-  opacity: 0.7;
+  font-size: calc(var(--u) * 2);
+  line-height: 1.4;
+  opacity: 0.65;
+  margin-bottom: calc(var(--u) * 1.2);
 }
 
 .lroster {
   display: flex;
-  gap: calc(var(--u) * 3);
+  flex-direction: column;
+  gap: calc(var(--u) * 1.8);
+}
+
+.lroster:empty {
+  display: none;
 }
 
 .lcol {
-  flex: 1;
-  min-width: 0;
   display: flex;
-  flex-direction: column;
-  gap: calc(var(--u) * 0.9);
+  flex-wrap: wrap;
+  gap: calc(var(--u) * 0.8);
 }
 
 .lcol h4 {
-  margin: 0;
-  font-size: calc(var(--u) * 1.8);
+  flex-basis: 100%;
+  margin: 0 0 calc(var(--u) * 0.2);
+  font-size: calc(var(--u) * 1.5);
+  font-weight: 700;
+  letter-spacing: 0.2em;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  opacity: 0.55;
+  opacity: 0.5;
 }
 
+/* a person or a TV: a chip with their colour */
 .lp {
   display: flex;
   align-items: center;
-  gap: calc(var(--u) * 1.1);
-  padding: calc(var(--u) * 0.9) calc(var(--u) * 1.6);
+  gap: calc(var(--u) * 0.9);
+  padding: calc(var(--u) * 0.8) calc(var(--u) * 1.6) calc(var(--u) * 0.8) calc(var(--u) * 1.2);
   border-radius: 99px;
-  background: rgba(20, 20, 60, 0.06);
-  font-weight: 700;
-  font-size: calc(var(--u) * 2.1);
+  background: rgba(255, 255, 255, 0.1);
+  font-size: calc(var(--u) * 2);
+  font-weight: 600;
 }
 
 .lp i {
-  flex: none;
-  width: calc(var(--u) * 2.2);
-  height: calc(var(--u) * 2.2);
+  width: calc(var(--u) * 1.3);
+  height: calc(var(--u) * 1.3);
   border-radius: 50%;
-  background: var(--c, var(--ink));
+  background: var(--c);
+}
+
+.lp.tv {
+  font-size: calc(var(--u) * 1.7);
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .lp.tv i {
-  border-radius: calc(var(--u) * 0.5);
-  background: var(--ink);
-}
-
-.lp span {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  width: calc(var(--u) * 1.6);
+  height: calc(var(--u) * 1.1);
+  border-radius: calc(var(--u) * 0.3);
+  background: rgba(255, 255, 255, 0.5);
 }
 
 .lp small {
+  font-size: calc(var(--u) * 1.3);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   opacity: 0.55;
-  font-weight: 600;
 }
 
 .lnone {
   font-size: calc(var(--u) * 1.8);
   opacity: 0.55;
+}
+
+/* what happens next: a pulsing dot while waiting; a white pill when it's an action (A) */
+.lstatus {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 1);
+  margin-top: calc(var(--u) * 1.6);
+  font-size: calc(var(--u) * 2);
   font-weight: 600;
 }
 
-.lstatus {
-  font-family: var(--display);
+.lstatus:not(.act)::before {
+  content: '';
+  width: calc(var(--u) * 1.1);
+  height: calc(var(--u) * 1.1);
+  border-radius: 50%;
+  background: #35d49a;
+  animation: lpulse 1.4s ease-in-out infinite;
+}
+
+@keyframes lpulse {
+  50% {
+    opacity: 0.3;
+    transform: scale(0.7);
+  }
+}
+
+.lstatus.act {
+  align-self: flex-start;
+  padding: calc(var(--u) * 1.6) calc(var(--u) * 3);
+  border-radius: 99px;
+  background: #fff;
+  color: #16152b;
+  font-size: calc(var(--u) * 2.4);
   font-weight: 700;
-  font-size: calc(var(--u) * 2.8);
-  color: var(--accent);
 }
 
 .lobby.noroom .lhead,
 .lobby.hostgone .lhead {
-  color: #d6304a;
+  color: #ff8a9c;
 }
 
 .lobby.noroom .join {
   display: none;
-}
-
-/* Play online: three cards */
-.online .sheet {
-  width: min(calc(var(--u) * 112), 68vw);
-}
-
-.ocard h3 {
-  font-size: calc(var(--u) * 3);
-}
-
-.ocard p {
-  font-size: calc(var(--u) * 1.6);
-}
-
-.onote {
-  min-height: calc(var(--u) * 2);
-  font-size: calc(var(--u) * 1.6);
-  font-weight: 700;
-  color: #b7791f;
 }
 
 .join.nudge {
@@ -3690,72 +3761,100 @@ kbd {
   }
 }
 
-/* Quick match: waiting for an opponent */
+/* ---- Quick match: a radar while it looks, then who it found */
+
 .quick .sheet {
-  align-items: center;
+  width: min(calc(var(--u) * 64), 90vw);
+  gap: calc(var(--u) * 1.4);
   text-align: center;
-  width: min(calc(var(--u) * 72), 90vw);
+}
+
+.qradar {
+  position: relative;
+  width: calc(var(--u) * 16);
+  height: calc(var(--u) * 16);
+  display: grid;
+  place-items: center;
+  margin-bottom: calc(var(--u) * 1);
+}
+
+.qradar > * {
+  grid-area: 1 / 1;
+}
+
+.qradar i {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: calc(var(--u) * 0.3) solid rgba(255, 255, 255, 0.7);
+  opacity: 0;
+  animation: radar 2.4s cubic-bezier(0.2, 0.6, 0.4, 1) infinite;
+}
+
+.qradar i:nth-child(2) {
+  animation-delay: 0.8s;
+}
+
+.qradar i:nth-child(3) {
+  animation-delay: 1.6s;
+}
+
+@keyframes radar {
+  from {
+    transform: scale(0.25);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+
+.qradar b {
+  width: calc(var(--u) * 3.6);
+  height: calc(var(--u) * 3.6);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 calc(var(--u) * 3) rgba(255, 255, 255, 0.6);
+}
+
+/* found: the rings stop, the middle turns green */
+.quick.found .qradar i,
+.quick.again .qradar i {
+  animation: none;
+}
+
+.quick.found .qradar b,
+.quick.again .qradar b {
+  background: #35d49a;
+  box-shadow: 0 0 calc(var(--u) * 4) rgba(53, 212, 154, 0.7);
+  animation: bump 0.45s cubic-bezier(0.2, 2, 0.4, 1);
 }
 
 .qhead {
-  font-family: var(--display);
+  font-size: calc(var(--u) * 4.4);
   font-weight: 700;
-  font-size: calc(var(--u) * 4.6);
   line-height: 1.1;
 }
 
 .qtimer {
-  font-family: var(--display);
-  font-weight: 700;
-  font-size: calc(var(--u) * 7);
-  color: var(--accent);
+  font-size: calc(var(--u) * 3);
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
+  opacity: 0.8;
 }
 
 .qsub {
-  font-size: calc(var(--u) * 2.2);
-  font-weight: 600;
-  opacity: 0.7;
+  font-size: calc(var(--u) * 2);
+  opacity: 0.6;
 }
 
 .qphones {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: calc(var(--u) * 1);
-}
-
-.qspin {
-  display: flex;
-  gap: calc(var(--u) * 1.2);
-}
-
-.qspin i {
-  width: calc(var(--u) * 1.8);
-  height: calc(var(--u) * 1.8);
-  border-radius: 50%;
-  background: var(--accent);
-  animation: qbob 1s ease-in-out infinite;
-}
-
-.qspin i:nth-child(2) {
-  animation-delay: 0.15s;
-}
-
-.qspin i:nth-child(3) {
-  animation-delay: 0.3s;
-}
-
-.quick.found .qspin i,
-.quick.again .qspin i {
-  background: #17966a;
-}
-
-@keyframes qbob {
-  50% {
-    transform: translateY(calc(var(--u) * -1.2));
-    opacity: 0.4;
-  }
+  gap: calc(var(--u) * 0.8);
+  margin-top: calc(var(--u) * 1);
 }
 
 /* the sound button: always in the top-right corner, quiet until you need it */
@@ -4135,4 +4234,9 @@ kbd {
 
 .hrpips i.foul {
   background: rgba(255, 255, 255, 0.2);
+}
+
+/* (Play online says who's in your room by the code: the join card needn't too) */
+.online .join .friends {
+  display: none;
 }
