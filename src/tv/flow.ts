@@ -18,7 +18,6 @@ import type { Timbre } from './audio/sfx';
 import { Rng } from './core/math';
 import { Color } from 'three';
 import { COURT } from './tennis/court';
-import { TOUR, loadTour, saveTour, type Champion } from './tour';
 import { BowlHud } from './ui/bowlhud';
 import { DuelHud } from './ui/duelhud';
 import { ArcheryHud } from './ui/archeryhud';
@@ -145,7 +144,6 @@ export class Flow {
   /** online rooms: the lobby this TV sits in while it is a guest in another TV's room (null otherwise). The match stream calls hide() when the host's match takes the screen and show() when it ends. */
   guestLobby: GuestLobby | null = null;
   private mode: 'quick' | 'kaleido' = 'quick';
-  private tourIdx = -1;
   private lab = false;
   private lastSwing: { side?: string; power: number; spin: number; attack?: number; path?: number | null; source: string } | null = null;
   private hitTimes: number[] = [];
@@ -155,7 +153,6 @@ export class Flow {
   /** a smash in flight this rally: whose (a human's?), how good, and when it was struck */
   private smashFlight: { team: number; human: boolean; perfect: boolean; t: number; landed: boolean } | null = null;
   private lastSmash: { team: number; human: boolean; t: number } | null = null;
-  private versusEnd: (() => void) | null = null;
   private kaleidoOrder: string[] = [];
   private kaleidoIdx = 0;
   private pointsSinceShift = 0;
@@ -520,8 +517,7 @@ export class Flow {
     }
     if (b === 'home' || b === 'plus' || b === 'b') this.pause();
     if (b === 'a') {
-      if (this.versusEnd) this.versusEnd();
-      else this.app.match?.startNow();
+      this.app.match?.startNow();
     }
   }
 
@@ -649,7 +645,7 @@ export class Flow {
     { id: 'baseball', ico: '⚾', name: 'Home Run Derby', tag: 'Swing for the fences', c: '#6f7dff', c2: '#3a3fcf', beta: true },
   ] as const;
 
-  /** The home screen: a card per sport (the showcase behind switches to the one you're on), the tour and settings. */
+  /** The home screen: a card per sport (the showcase behind switches to the one you're on), and settings. */
   private mainMenu(): Screen {
     const sports = Flow.SPORTS;
     const open = (id: (typeof sports)[number]['id']) => {
@@ -670,17 +666,14 @@ export class Flow {
         'beta' in sp && sp.beta ? h('div', { class: 'beta' }, 'BETA') : '',
       ),
     );
-    const tb = loadTour().beaten;
     const pill = (ico: string, label: string, sub: string) => h('div', { class: 'hpill' }, h('i', null, ico), h('span', null, label), h('small', null, sub));
-    const tour = pill('🏆', 'World Tour', tb >= TOUR.length ? 'The Prism is whole' : `${Math.min(tb, 8)} of 8 shards`);
     // the cloud: play with friends on their own TVs
     const online = this.app.link.cloud ? pill('🌐', 'Play online', this.app.link.guests.length ? `${this.app.link.guests.length} watching` : `Room ${this.app.link.room}`) : null;
     let lastCard = Math.max(0, sports.findIndex((sp) => sp.id === this.app.attractSport));
     const n = sports.length;
     const nav = new Nav(
       [
-        ...sports.map((sp, i) => ({ el: cards[i], onSelect: () => open(sp.id), onDown: () => nav.focus(online && i >= n / 2 ? n + 1 : n) })),
-        { el: tour, onSelect: () => this.go(this.tourScreen()), onUp: () => nav.focus(lastCard) },
+        ...sports.map((sp, i) => ({ el: cards[i], onSelect: () => open(sp.id), onDown: () => nav.focus(n) })),
         ...(online ? [{ el: online, onSelect: () => this.go(this.onlineScreen()), onUp: () => nav.focus(lastCard) }] : []),
       ],
       true,
@@ -703,7 +696,7 @@ export class Flow {
       'div',
       { class: 'screen home' },
       h('img', { class: 'mini-logo', src: '/brand/lockup-small.png', alt: 'Kaleydo World' }),
-      h('div', { class: 'hbottom' }, h('div', { class: 'hpills' }, tour, online), h('div', { class: 'scards' }, ...cards)),
+      h('div', { class: 'hbottom' }, h('div', { class: 'hpills' }, online), h('div', { class: 'scards' }, ...cards)),
       this.join.el,
     );
     this.join.refresh();
@@ -994,7 +987,6 @@ export class Flow {
     mm.peerPid = theirs.pid ?? '';
     mm.away = 0;
     this.quick = null;
-    this.tourIdx = -1;
     this.mode = S.kaleido ? 'kaleido' : 'quick';
     this.beginMatch(S.kaleido ? this.shuffledWorlds()[0] : this.rng.pick(WORLDS).id, false, cfg);
   }
@@ -1333,7 +1325,6 @@ export class Flow {
   }
 
   private resultsScreen(): Screen {
-    if (this.tourIdx >= 0) return this.tourResults();
     const m = this.app.match!;
     const w = m.score.winner as 0 | 1;
     const winTeam = this.teams[w];
@@ -1433,8 +1424,7 @@ export class Flow {
     return { doubles, gamesToWin: S.games, players, teamNames, firstServer: this.rng.chance(0.5) ? 0 : 1, ...(S.rush ? { rush: true } : {}) };
   }
 
-  private beginMatch(world: string, reuse = false, cfgIn?: MatchConfig, versus?: Champion) {
-    if (!cfgIn && !reuse) this.tourIdx = -1;
+  private beginMatch(world: string, reuse = false, cfgIn?: MatchConfig) {
     if (!cfgIn?.practice && !reuse) this.lab = false;
     const cfg = cfgIn ?? (reuse && this.lastCfg ? { ...this.lastCfg.cfg, firstServer: (this.rng.chance(0.5) ? 0 : 1) as 0 | 1 } : this.buildConfig());
     if (reuse && this.lastCfg) this.teams = [...this.teams] as [TeamInfo, TeamInfo];
@@ -1466,11 +1456,9 @@ export class Flow {
     this.hud.setSplit(this.app.splitOn ? this.app.rig2 : null);
     this.hudLayer.append(this.hud.el);
     const def = worldDef(world);
-    this.versusEnd = null;
-    if (versus) this.versusIntro(versus, def);
-    else this.hud.showBanner(def, `${this.teams[0].name}  vs  ${this.teams[1].name}`);
+    this.hud.showBanner(def, `${this.teams[0].name}  vs  ${this.teams[1].name}`);
     this.hud.setScore(this.app.match!);
-    if (!this.settings.seenTutorial && !versus) {
+    if (!this.settings.seenTutorial) {
       this.hud.setHint('Swing your phone like a racket when the ball comes to you');
     }
     this.syncScoreboard();
@@ -1489,9 +1477,7 @@ export class Flow {
    * match (a stream from src/tv/net/guest.ts; this TV doesn't simulate).
    */
   beginGuestMatch(start: NetStart) {
-    this.tourIdx = -1;
     this.lab = false;
-    this.versusEnd = null;
     if (!this.guestRun) this.guestPrevMode = this.mode;
     // (no Kaleydo shifts of our own: the host's `world` messages move the world)
     this.mode = 'quick';
@@ -1707,9 +1693,7 @@ export class Flow {
   private quitToMenu() {
     // (quitting a quick match from the pause menu: the guest is sent home)
     this.mmDone(true);
-    this.tourIdx = -1;
     this.lab = false;
-    this.versusEnd = null;
     this.app.paused = false;
     this.hud?.el.remove();
     this.hud = null;
@@ -2803,7 +2787,6 @@ export class Flow {
       { name: me.name, color: this.app.input.seats[slot]?.color ?? '#ff5a6e' },
       { name: 'Ball machine', color: '#4b4f73' },
     ];
-    this.tourIdx = -1;
     this.mode = 'quick';
     this.lab = true;
     this.beginMatch(this.app.stage.current?.def.id ?? 'plaza', false, cfg);
@@ -2830,177 +2813,6 @@ export class Flow {
     if (e.kind === 'hit' && e.kph) rows.push(['Ball', `${Math.round(e.kph)} km/h${e.perfect ? ' · PERFECT' : ''}`]);
     else if (e.kind === 'whiff') rows.push(['Result', e.why === 'noball' ? 'No ball in play' : e.why === 'reach' ? 'Missed · out of reach' : e.why === 'early' ? 'Missed · too early' : e.why === 'late' ? 'Missed · too late' : 'Missed']);
     this.hud?.setLab('SWING LAB', rows);
-  }
-
-  // ---------------------------------------------------------------- world tour
-
-  private tourScreen(): Screen {
-    const T = loadTour();
-    const cards = TOUR.map((c, i) => {
-      const def = worldDef(c.world);
-      const locked = i > T.beaten;
-      const done = i < T.beaten;
-      const final = i === TOUR.length - 1;
-      return h(
-        'div',
-        { class: `shard ${locked ? 'locked' : ''} ${done ? 'done' : ''} ${final ? 'final' : ''}` },
-        h('div', { class: 'st' }, done ? '★' : locked ? '🔒' : '▶'),
-        h('div', { class: 'num' }, final ? 'FINAL' : `WORLD ${i + 1}`),
-        h('div', { class: 'wn', style: `font-family:${final ? "'Fredoka'" : def.ui.display}` }, final ? 'The Prism' : def.name),
-        h('div', { class: 'cn' }, locked ? '???' : c.name),
-      );
-    });
-    const big = h('div', { class: 'tbig' });
-    const setBig = (i: number) => {
-      const c = TOUR[i];
-      const def = worldDef(c.world);
-      clear(big);
-      if (i > T.beaten) {
-        big.append(h('div', { class: 'cn', style: `font-family:${def.ui.display}` }, '???'), h('div', { class: 'ct' }, 'Restore the previous shard to unlock'));
-      } else {
-        big.append(h('div', { class: 'cn', style: `font-family:${def.ui.display}` }, c.name), h('div', { class: 'ct' }, c.title), h('div', { class: 'cq' }, `“${c.quote}”`));
-      }
-    };
-    const nav = new Nav(
-      TOUR.map((c, i) => ({
-        el: cards[i],
-        onSelect: () => {
-          if (i > T.beaten) {
-            this.sound('error');
-            return;
-          }
-          this.beginTour(i);
-        },
-      })),
-      true,
-    );
-    const start = Math.min(T.beaten, TOUR.length - 1);
-    nav.onChange = (i) => {
-      setBig(i);
-      const w = TOUR[i].world;
-      if (this.app.stage.current?.def.id !== w) {
-        this.app.stage.setWorld(w, { transition: true, origin: { x: (i + 0.5) / TOUR.length, y: 0.8 } });
-        this.audio?.sfx.ui('shift');
-      }
-    };
-    nav.focus(start);
-    setBig(start);
-    if (this.app.stage.current?.def.id !== TOUR[start].world) this.app.stage.setWorld(TOUR[start].world, { transition: true });
-    const restored = Math.min(T.beaten, 8);
-    const el = h(
-      'div',
-      { class: 'screen tour' },
-      h('div', { class: 'headline' }, h('b', null, 'WORLD TOUR'), h('span', null, `The Great Prism shattered into eight worlds. ${restored} of 8 shards restored.`)),
-      big,
-      h('div', { class: 'shards' }, ...cards),
-    );
-    return this.navScreen('tour', el, nav, () => this.go(this.mainMenu()), { title: 'World Tour', hint: '◀ ▶ choose · A play' });
-  }
-
-  private beginTour(i: number) {
-    const c = TOUR[i];
-    const seat = this.app.input.activeSeats[0];
-    const slot = seat ? seat.slot : 0;
-    const me = this.app.humanSpec(slot, 0);
-    const cfg: MatchConfig = {
-      doubles: false,
-      gamesToWin: c.games,
-      players: [me, { team: 1, name: c.name, look: c.look, handed: c.handed, ctrl: { kind: 'cpu', ai: c.ai } }],
-      teamNames: [me.name, c.name],
-      firstServer: 0,
-      introTime: 7.2,
-    };
-    this.teams = [
-      { name: me.name, color: this.app.input.seats[slot]?.color ?? '#ff5a6e' },
-      { name: c.name, color: c.look.shirt },
-    ];
-    this.tourIdx = i;
-    this.mode = c.kaleido ? 'kaleido' : 'quick';
-    this.beginMatch(c.world, false, cfg, c);
-  }
-
-  private versusIntro(c: Champion, def: WorldDef) {
-    const m = this.app.match!;
-    const champ = m.players.find((p) => p.team === 1)!;
-    this.app.rig.versus = champ;
-    this.app.rig.setMode('versus');
-    champ.emote = 'wave';
-    champ.emoteT0 = 0;
-    const voice = 260 + ((TOUR.indexOf(c) * 97) % 420);
-    this.hud?.setHint('');
-    this.hud?.showQuote(c.name, c.title, c.quote, c.look.shirt, (ch) => this.audio?.sfx.blip(ch, voice));
-    let done = false;
-    const end = () => {
-      if (done || this.app.match !== m) return;
-      done = true;
-      this.versusEnd = null;
-      this.hud?.hideQuote();
-      champ.emote = 'none';
-      this.app.rig.setMode('intro');
-      this.hud?.showBanner(def, `${this.teams[0].name}  vs  ${this.teams[1].name}`);
-      // shorten the remaining intro so the fly-in lands right on the first serve
-      m.cfg.introTime = Math.min(m.cfg.introTime ?? 7, m.t + 3.2);
-    };
-    this.versusEnd = end;
-    window.setTimeout(end, Math.min(6500, 1400 + c.quote.length * 45));
-  }
-
-  private tourResults(): Screen {
-    const m = this.app.match!;
-    const i = this.tourIdx;
-    const c = TOUR[i];
-    const won = m.score.winner === 0;
-    const T = loadTour();
-    if (won && T.beaten <= i) {
-      T.beaten = i + 1;
-      saveTour(T);
-    }
-    if (won && i === TOUR.length - 1) return this.endingScreen();
-    const cont = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, won ? 'Continue the tour' : 'Try again')));
-    const map = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Tour map')));
-    const menu = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Main menu')));
-    const nav = new Nav([
-      { el: cont, onSelect: () => (won ? this.go(this.tourScreen()) : this.beginTour(i)) },
-      { el: map, onSelect: () => this.go(this.tourScreen()) },
-      { el: menu, onSelect: () => this.quitToMenu() },
-    ]);
-    const def = worldDef(c.world);
-    const sheet = h(
-      'div',
-      { class: 'sheet panel', style: `--c:${won ? this.teams[0].color : c.look.shirt}` },
-      h('div', { class: 'winner' }, won ? 'Shard restored!' : `${c.name} wins`),
-      h('div', { class: 'final' }, `${m.score.games[0]} – ${m.score.games[1]}`),
-      h('div', { class: 'hintline', style: 'font-size:calc(var(--u)*2.6);opacity:.85' }, won ? `“${c.beatLine}”` : 'So close. Every champion has a weakness — find it.'),
-      h('div', { class: 'hintline' }, won ? `${Math.min(8, i + 1)} of 8 shards restored` : `Longest rally: ${this.stats.longest} shots`),
-      h('div', { class: 'menu' }, cont, map, menu),
-    );
-    return this.navScreen('results', h('div', { class: 'screen center results' }, sheet), nav, () => this.go(this.tourScreen()), { title: won ? 'Shard restored!' : 'Try again', hint: 'A to choose' });
-  }
-
-  private endingScreen(): Screen {
-    const back = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, 'Back to the menu')));
-    const nav = new Nav([{ el: back, onSelect: () => this.quitToMenu() }]);
-    this.audio?.music.jingle('match');
-    this.audio?.sfx.cheer(1);
-    let k = 0;
-    const cycle = window.setInterval(() => {
-      if (this.screen?.name !== 'ending') {
-        clearInterval(cycle);
-        return;
-      }
-      k = (k + 1) % WORLDS.length;
-      this.app.stage.setWorld(WORLDS[k].id, { transition: true, origin: { x: Math.random(), y: Math.random() * 0.6 + 0.2 } });
-      this.audio?.sfx.ui('shift');
-    }, 2600);
-    const el = h(
-      'div',
-      { class: 'screen ending' },
-      h('h1', null, 'The Prism is whole'),
-      h('p', null, 'Eight worlds, eight champions, one ball. The Kaleidoscope turns again — and every world remembers your rallies.'),
-      h('div', { class: 'credits' }, 'KALEYDO WORLD', h('br'), 'Designed & built by Claude for Veer', h('br'), 'Every model, shader, song and sound made from code'),
-      h('div', { class: 'menu' }, back),
-    );
-    return this.navScreen('ending', el, nav, () => this.quitToMenu(), { title: 'Champion!', hint: 'A to continue' });
   }
 
   private freshStats(): Stats {
@@ -3393,9 +3205,7 @@ export class Flow {
     if (m && !this.app.attract && this.hud) {
       // serve hint
       const srv = m.server;
-      if (this.versusEnd) {
-        // champion is talking: keep the screen clear
-      } else if ((m.state === 'serve' || m.state === 'intro') && srv?.human) {
+      if ((m.state === 'serve' || m.state === 'intro') && srv?.human) {
         // the "Server" badge by the player says what to do; keep the bottom of the screen clear
         this.hud.setHint('');
       } else if (m.state === 'toss' && srv?.human) {
@@ -3405,16 +3215,14 @@ export class Flow {
       }
       if (this.audio) this.audio.sfx.setCrowd(m.excitement);
       const cue = this.app.smashCue;
-      if (cue && !this.versusEnd) {
+      if (cue) {
         const seat = this.app.input.seats[cue.p.slot];
         this.hud.smashFrame({ team: cue.p.team, tl: cue.tl, w: cue.w, ball: m.ballView(m.t, this.cueBall), hint: seat?.local && !this.guestRun ? 'press SPACE as the ring closes' : 'swing hard as the ring closes' });
       } else this.hud.smashFrame(null);
-      if (!this.versusEnd) {
-        // (a guest TV's own seats are not the host's: its phones are told by the roster)
-        const seat = srv?.human ? this.app.input.seats[srv.slot] : null;
-        const tossHint = this.guestRun ? (srv && this.mine(srv) && this.guestOwns(srv.slot) ? 'lift your phone to toss' : '') : !seat ? '' : seat.local ? 'Space to toss' : 'lift your phone to toss';
-        this.hud.track(m, dt, tossHint);
-      }
+      // (a guest TV's own seats are not the host's: its phones are told by the roster)
+      const seat = srv?.human ? this.app.input.seats[srv.slot] : null;
+      const tossHint = this.guestRun ? (srv && this.mine(srv) && this.guestOwns(srv.slot) ? 'lift your phone to toss' : '') : !seat ? '' : seat.local ? 'Space to toss' : 'lift your phone to toss';
+      this.hud.track(m, dt, tossHint);
       if (m.state === 'serve' && !this.tossHintShown) this.tossHintShown = true;
     }
     // attract mode showcases the worlds — and the sports, one after another

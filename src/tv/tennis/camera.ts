@@ -6,7 +6,7 @@ import type { Match } from './match';
 import { COURT } from './court';
 import { clamp, damp, lerp, smooth, easeInOutCubic, type V3 } from '../core/math';
 
-export type CamMode = 'play' | 'attract' | 'menu' | 'intro' | 'versus';
+export type CamMode = 'play' | 'attract' | 'menu' | 'intro';
 
 interface Shot {
   pos: THREE.Vector3;
@@ -77,7 +77,6 @@ export class CameraRig {
     if (m === this.mode) return;
     this.mode = m;
     if (m === 'intro') this.introT = 0;
-    if (m === 'versus') this.shotT = 0;
     if (m === 'attract') {
       this.shotT = 0;
       this.shotIdx = (this.shotIdx + 1) % ATTRACT_SHOTS.length;
@@ -124,9 +123,6 @@ export class CameraRig {
     return 44;
   }
 
-  /** the player to frame in 'versus' mode (tour intros) */
-  versus: { x: number; z: number; team: number } | null = null;
-
   /** debug override: fixed camera */
   debug: { pos: [number, number, number]; look: [number, number, number]; fov: number } | null = null;
 
@@ -143,14 +139,7 @@ export class CameraRig {
     let fov = 38;
     let lambda = 3.2;
 
-    if (this.mode === 'versus' && this.versus) {
-      const p = this.versus;
-      const f = p.team === 0 ? -1 : 1;
-      tp.set(p.x + 1.15 * f, 1.5, p.z + f * 3.3);
-      tl.set(p.x, 1.4, p.z);
-      fov = 30;
-      lambda = this.shotT++ === 0 ? 1000 : 5;
-    } else if (this.mode === 'play' || this.mode === 'intro') {
+    if (this.mode === 'play' || this.mode === 'intro') {
       fov = this.playTarget(m, tp, tl, ball);
       // point won: push in a little on the winner
       const dead = m && (m.state === 'dead' || m.state === 'over') && !m.resetKeepScore;

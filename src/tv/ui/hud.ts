@@ -399,38 +399,6 @@ export class Hud {
     }
   }
 
-  private quoteEl: HTMLElement | null = null;
-  private typing = 0;
-
-  /** Champion speech bubble with typewriter text; onChar fires per letter (for voice blips). */
-  showQuote(name: string, title: string, quote: string, color: string, onChar: (ch: string) => void) {
-    this.hideQuote();
-    const text = h('div', { class: 'qtext' });
-    this.quoteEl = h('div', { class: 'quote', style: `--c:${color}` }, h('div', { class: 'qname' }, h('b', null, name), h('span', null, title)), text);
-    this.el.append(this.quoteEl);
-    let i = 0;
-    clearInterval(this.typing);
-    this.typing = window.setInterval(() => {
-      if (i >= quote.length) {
-        clearInterval(this.typing);
-        return;
-      }
-      const ch = quote[i++];
-      text.textContent = quote.slice(0, i);
-      if (/[a-z0-9]/i.test(ch)) onChar(ch);
-    }, 34);
-  }
-
-  hideQuote() {
-    clearInterval(this.typing);
-    if (this.quoteEl) {
-      const q = this.quoteEl;
-      q.classList.add('out');
-      setTimeout(() => q.remove(), 300);
-      this.quoteEl = null;
-    }
-  }
-
   showSpeed(kph: number) {
     this.speed.textContent = `${Math.round(kph)} km/h`;
     replay(this.speed, 'show');

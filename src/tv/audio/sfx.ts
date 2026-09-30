@@ -184,17 +184,6 @@ export class Sfx {
     }
   }
 
-  /** Chatty character voice: one pitched blip per letter. */
-  blip(ch: string, base: number) {
-    const e = this.e;
-    const t = e.now + 0.002;
-    const code = ch.toLowerCase().charCodeAt(0);
-    const vowel = 'aeiou'.includes(ch.toLowerCase());
-    const f = base * Math.pow(2, (((code * 7) % 9) - 4) / 14);
-    e.tone(t, f, vowel ? 0.07 : 0.045, { type: 'triangle', gain: 0.07, to: f * (vowel ? 1.06 : 0.9), bus: e.voice });
-    e.tone(t, f * 2.01, 0.035, { type: 'sine', gain: 0.025, bus: e.voice });
-  }
-
   // ---------------------------------------------------------------- bowling
 
   private rollBed: { src: AudioBufferSourceNode; g: GainNode; f: BiquadFilterNode; p: StereoPannerNode } | null = null;

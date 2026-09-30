@@ -140,8 +140,6 @@ After each swing a meter shows how early or late you were.
 - **Home Run Derby** — everyone bats in turn against a CPU pitcher (friendly,
   tricky or nasty: fastballs, curves, sliders, changeups), 5, 10 or 15 pitches
   each, with an optional CPU slugger. Most home runs wins.
-- **World Tour** — the Great Prism shattered into eight worlds. Beat each
-  world's champion to restore its shard, then face the Prism King.
 - **Kaleydo Rally** — every couple of points, or any PERFECT shot deep in a
   rally, the court shatters like a kaleidoscope into the next world.
 
@@ -316,4 +314,4 @@ node scripts/baseball-phone-e2e.mjs   # a simulated phone bats on the real TV (n
 - `src/tv/worlds/` — one file per world: scenery, materials and its own
   post-processing pipeline.
 - `src/tv/audio/` — synthesised instruments, sequencer, songs, SFX, crowd.
-- `src/tv/flow.ts` — menus, match lifecycle, World Tour, Kaleydo Rally.
+- `src/tv/flow.ts` — menus, match lifecycle, Kaleydo Rally.
