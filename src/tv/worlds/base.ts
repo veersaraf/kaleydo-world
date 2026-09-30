@@ -65,6 +65,8 @@ const SHOT_TINT: Record<string, THREE.Color> = {
 };
 
 const GOLD = new THREE.Color('#ffc21a');
+/** cosmic's Rush fire: warm flames (its own smash fire is violet and cyan plasma) */
+const COSMIC_RUSH_FIRE = ['#ff8a2a', '#ffc23d', '#ff4d1a'].map((x) => new THREE.Color(x).multiplyScalar(1.7));
 const RUSH_FIRE_GLOW = new THREE.Color('#ffb400').multiplyScalar(0.28);
 
 /** a camera for compiling before anything has been drawn */
@@ -709,6 +711,11 @@ export abstract class World {
     this.ballHalo.visible = v.ballVisible && (this.haloOn > 0.01 || glow > 0.01);
     this.fitBall(v.cam);
     if (glow > 0.01) this.ballHalo.scale.multiplyScalar(1 + glow * (0.9 + 0.25 * Math.sin(v.realT * 18)));
+    // a Rush ball on fire wears a bigger, flickering fiery ring: it keeps reading at the far baseline
+    if (this.rushFire && this.ballHalo.visible) {
+      this.ballHalo.scale.multiplyScalar(1.5 + 0.15 * Math.sin(v.realT * 14));
+      hm.uOpacity.value = Math.max(hm.uOpacity.value, this.haloOn * 0.7);
+    }
     // a smash in flight blazes, and so does a Rush ball at full heat (as a human's smash does): flames stream off the ball
     const blaze = this.blaze || (this.rushFire ? 2 : 0);
     if (blaze && v.ballVisible) {
@@ -719,7 +726,9 @@ export abstract class World {
         const n = blaze === 3 ? 6 : blaze === 2 ? 4 : 2;
         // (a glowing world's flames add light: a Rush ball's, that burn for a whole rally, run fainter so they stay flames and don't white out the ball)
         const glow = st.additive && !this.blaze;
-        this.particles.burst({ x: b.position.x, y: b.position.y, z: b.position.z, count: n, speed: [0.3, 1.6], life: [0.2, big ? 0.55 : 0.3], size: [0.14, big ? 0.5 : 0.24], shrink: 0.1, colors: st.fire, shape: st.fireShape, drag: 2.5, gravity: -2.5, alpha: glow ? 0.3 : 0.95 });
+        // a Rush ball's flames grow with the camera's distance (as the ball itself does), so at the far baseline they still read
+        const far = this.blaze ? 1 : THREE.MathUtils.clamp(1 + (b.position.distanceTo(v.cam.position) - 9) * 0.08, 1, glow ? 2.2 : 3);
+        this.particles.burst({ x: b.position.x, y: b.position.y, z: b.position.z, count: n + Math.round((far - 1) * 1.5), speed: [0.3, 1.6], life: [0.2, big ? 0.55 : 0.3], size: [0.14 * far, (big ? 0.5 : 0.24) * far], shrink: 0.1, colors: this.blaze ? st.fire : this.rushColors(), shape: st.fireShape, drag: 2.5, gravity: -2.5, alpha: glow ? 0.3 : 0.95 });
         // a hot core hugging the ball
         if (big && !glow) this.particles.burst({ x: b.position.x, y: b.position.y, z: b.position.z, count: 1, speed: [0, 0], life: [0.07, 0.07], size: [0.55, 0.7], shrink: 0.6, colors: st.fire, shape: 'soft', alpha: 0.8 });
       }
@@ -926,6 +935,10 @@ export abstract class World {
     return this.rush ? 1 + (this.smashStyle.additive ? 0.3 : 0.9) * this.rushHeat : 1;
   }
 
+  private rushColors() {
+    return this.def.id === 'cosmic' ? COSMIC_RUSH_FIRE : this.smashStyle.fire;
+  }
+
   private rushReset() {
     this.rushHeat = 0;
     this.rushFire = false;
@@ -949,7 +962,7 @@ export abstract class World {
       this.rushFire = onFire(this.rushHeat);
       if (this.rushFire && !was) {
         // it catches fire: a burst of flames off the ball
-        P.burst({ x: e.pos.x, y: e.pos.y, z: e.pos.z, count: 16, speed: [1, 3.5], life: [0.25, 0.6], size: [0.2, 0.55], shrink: 0.1, colors: st.fire, shape: st.fireShape, drag: 2.5, gravity: -2.5, alpha: 0.95 });
+        P.burst({ x: e.pos.x, y: e.pos.y, z: e.pos.z, count: 16, speed: [1, 3.5], life: [0.25, 0.6], size: [0.2, 0.55], shrink: 0.1, colors: this.rushColors(), shape: st.fireShape, drag: 2.5, gravity: -2.5, alpha: 0.95 });
         this.flash = Math.max(this.flash, 0.2);
       }
       if (e.perfect && e.kind !== 'smash') {
@@ -959,7 +972,7 @@ export abstract class World {
       }
     } else if (e.type === 'bounce' && this.rushFire && (e.live || e.first)) {
       // a burning ball skips off the court trailing embers
-      P.burst({ x: e.pos.x, y: 0.1, z: e.pos.z, count: 8, speed: [1, 3.2], dir: [0, 1, 0], spread: 0.7, life: [0.25, 0.6], size: [0.12, 0.36], shrink: 0.2, colors: st.fire, shape: st.fireShape, drag: 2.2, gravity: -1.5, alpha: 0.9 });
+      P.burst({ x: e.pos.x, y: 0.1, z: e.pos.z, count: 8, speed: [1, 3.2], dir: [0, 1, 0], spread: 0.7, life: [0.25, 0.6], size: [0.12, 0.36], shrink: 0.2, colors: this.rushColors(), shape: st.fireShape, drag: 2.2, gravity: -1.5, alpha: 0.9 });
     }
   }
 
