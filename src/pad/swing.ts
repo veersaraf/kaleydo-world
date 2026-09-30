@@ -113,6 +113,24 @@ export class SwingDetector {
     this.cooldownUntil = 0;
   }
 
+  /**
+   * Forget everything: the swing in progress, the history, the wind-up. For when the detector
+   * has been left unfed (the phone was in another sport) and its ring holds old motion.
+   */
+  restart() {
+    this.reset();
+    this.count = 0;
+    this.lastT = 0;
+    this.prevW = 0;
+    this.live = 0;
+    this.peak = this.peakT = this.peakIdx = this.start = 0;
+    this.followUntil = 0;
+    this.lastPeak = this.minSince = 0;
+    this.falls = 0;
+    this.windPeak = this.windYaw = this.windW = 0;
+    this.windSent = 0;
+  }
+
   private idx(back: number) {
     return (this.head - 1 - back + N * 4) % N;
   }
@@ -129,8 +147,11 @@ export class SwingDetector {
     const gl = Math.hypot(s.gx, s.gy, s.gz);
     const aUp = gl > 1 ? (s.ax * s.gx + s.ay * s.gy + s.az * s.gz) / gl : 0;
     let ux: number, uy: number, uz: number;
-    if (s.up) [ux, uy, uz] = s.up;
-    else if (gl > 1) {
+    if (s.up) {
+      ux = s.up[0];
+      uy = s.up[1];
+      uz = s.up[2];
+    } else if (gl > 1) {
       ux = (s.gx / gl) * this.upSign;
       uy = (s.gy / gl) * this.upSign;
       uz = (s.gz / gl) * this.upSign;
