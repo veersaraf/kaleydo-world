@@ -10,6 +10,7 @@ import type { Look } from '../chars/look';
 import { Rig, blobShadowTexture } from '../chars/rig';
 import type { MaterialKit } from './types';
 import { Trail, type TrailStyle } from '../render/trail';
+import { heatAfter, onFire } from '../tennis/rush';
 import { Particles } from '../render/particles';
 import { SmashFx, FIRE_STYLE, type SmashStyle } from '../render/smashfx';
 import { Crowd } from './crowd';
@@ -64,6 +65,7 @@ const SHOT_TINT: Record<string, THREE.Color> = {
 };
 
 const GOLD = new THREE.Color('#ffc21a');
+const RUSH_FIRE_GLOW = new THREE.Color('#ffb400').multiplyScalar(0.28);
 
 /** a camera for compiling before anything has been drawn */
 const PROBE_CAM = new THREE.PerspectiveCamera();
@@ -147,6 +149,8 @@ export interface FrameView {
   range?: RangeView;
   /** baseball: the ball and the last hit */
   field?: FieldView;
+  /** tennis Rush: heat builds along the rally, the ball's trail grows with it and at full heat it is on fire */
+  rush?: boolean;
 }
 
 export interface CourtStyle {
@@ -188,6 +192,11 @@ export abstract class World {
   /** a smash is in flight: 1 (a CPU's, lighter), 2 (yours), 3 (yours, perfect) — the ball blazes */
   private blaze = 0;
   private blazeT = 0;
+  /** Rush: the rally's heat (worked out from the hit events, so a guest's TV draws the same as the host's) */
+  private rushHeat = 0;
+  /** Rush: the ball is on fire (full heat): flames off it, bounces included, until the point ends */
+  private rushFire = false;
+  private rush = false;
   /** 0..1: a smash chance is on — the ball glows gold and its ring pulses (set by the app) */
   smashGlow = 0;
   /** the world's own flash colour (a smash flashes in its own) */
@@ -658,6 +667,8 @@ export abstract class World {
 
   update(v: FrameView) {
     this.time = v.realT;
+    this.rush = !!v.rush;
+    if (!this.rush && (this.rushFire || this.rushHeat > 0)) this.rushReset();
     this.watchMaterials();
     for (let i = 0; i < this.rigs.length && i < v.poses.length; i++) this.rigs[i].apply(v.poses[i]);
     this.contact?.update(this.rigs, v.poses);
@@ -698,16 +709,19 @@ export abstract class World {
     this.ballHalo.visible = v.ballVisible && (this.haloOn > 0.01 || glow > 0.01);
     this.fitBall(v.cam);
     if (glow > 0.01) this.ballHalo.scale.multiplyScalar(1 + glow * (0.9 + 0.25 * Math.sin(v.realT * 18)));
-    // a smash in flight blazes: flames stream off the ball
-    if (this.blaze && v.ballVisible) {
+    // a smash in flight blazes, and so does a Rush ball at full heat (as a human's smash does): flames stream off the ball
+    const blaze = this.blaze || (this.rushFire ? 2 : 0);
+    if (blaze && v.ballVisible) {
       this.blazeT += v.realDt;
       if (v.ballSpeed > 4 && v.dt > 0) {
         const st = this.smashStyle;
-        const big = this.blaze > 1;
-        const n = this.blaze === 3 ? 6 : this.blaze === 2 ? 4 : 2;
-        this.particles.burst({ x: b.position.x, y: b.position.y, z: b.position.z, count: n, speed: [0.3, 1.6], life: [0.2, big ? 0.55 : 0.3], size: [0.14, big ? 0.5 : 0.24], shrink: 0.1, colors: st.fire, shape: st.fireShape, drag: 2.5, gravity: -2.5, alpha: 0.95 });
+        const big = blaze > 1;
+        const n = blaze === 3 ? 6 : blaze === 2 ? 4 : 2;
+        // (a glowing world's flames add light: a Rush ball's, that burn for a whole rally, run fainter so they stay flames and don't white out the ball)
+        const glow = st.additive && !this.blaze;
+        this.particles.burst({ x: b.position.x, y: b.position.y, z: b.position.z, count: n, speed: [0.3, 1.6], life: [0.2, big ? 0.55 : 0.3], size: [0.14, big ? 0.5 : 0.24], shrink: 0.1, colors: st.fire, shape: st.fireShape, drag: 2.5, gravity: -2.5, alpha: glow ? 0.3 : 0.95 });
         // a hot core hugging the ball
-        if (big) this.particles.burst({ x: b.position.x, y: b.position.y, z: b.position.z, count: 1, speed: [0, 0], life: [0.07, 0.07], size: [0.55, 0.7], shrink: 0.6, colors: st.fire, shape: 'soft', alpha: 0.8 });
+        if (big && !glow) this.particles.burst({ x: b.position.x, y: b.position.y, z: b.position.z, count: 1, speed: [0, 0], life: [0.07, 0.07], size: [0.55, 0.7], shrink: 0.6, colors: st.fire, shape: 'soft', alpha: 0.8 });
       }
     }
     this.smashFx.update(v.realDt, v.cam);
@@ -814,8 +828,9 @@ export abstract class World {
   /** Colour the trail by the kind of shot (Mario Tennis-style: read the spin at a glance). */
   private tintTrail(e: Extract<MatchEvent, { type: 'hit' }>) {
     const key =
-      e.kind === 'smash' ? 'smash' : e.serve ? (e.rocket ? 'rocket' : 'serve') : e.kind === 'lob' || e.kind === 'wobbly' ? 'lob' : e.kind === 'drop' ? 'drop' : e.shotSpin > 0.25 ? 'topspin' : e.shotSpin < -0.25 ? 'slice' : 'flat';
-    this.trail.tint(SHOT_TINT[key]);
+      e.kind === 'smash' || this.rushFire ? 'smash' : e.serve ? (e.rocket ? 'rocket' : 'serve') : e.kind === 'lob' || e.kind === 'wobbly' ? 'lob' : e.kind === 'drop' ? 'drop' : e.shotSpin > 0.25 ? 'topspin' : e.shotSpin < -0.25 ? 'slice' : 'flat';
+    // (a glowing world's trail adds light: a burning Rush ball's runs a dimmer orange, or the bloom whites the whole streak out)
+    this.trail.tint(this.rushFire && key === 'smash' && e.kind !== 'smash' && this.smashStyle.additive ? RUSH_FIRE_GLOW : SHOT_TINT[key]);
     // a rocket serve and a smash burn: the halo goes fiery instead of team-coloured
     (this.ballHalo.material as THREE.ShaderMaterial).uniforms.uColor.value.copy(key === 'rocket' || key === 'smash' ? SHOT_TINT[key] : this.teamColors[e.p.team]);
     if (key === 'rocket') this.flash = Math.max(this.flash, 0.25);
@@ -844,6 +859,7 @@ export abstract class World {
   private sweatT = 0;
 
   onEvent(e: MatchEvent) {
+    if (this.rush) this.rushEvent(e);
     if (e.type === 'hit') this.tintTrail(e);
     if (e.type === 'land') {
       this.particles.burst({ x: e.pos.x, y: 0.08, z: e.pos.z, count: 14, speed: [0.6, 2.2], dir: [0, 1, 0], spread: 0.95, life: [0.4, 0.9], size: [0.18, 0.4], shrink: 1.8, colors: [this.dustColor], shape: 'soft', alpha: 0.55, drag: 3.5, gravity: -0.4 });
@@ -873,7 +889,7 @@ export abstract class World {
     if (e.type === 'hit') {
       if (e.kind !== 'smash') {
         this.blaze = 0;
-        this.trail.boost = 1;
+        this.trail.boost = this.rushBoost();
         this.flashColor.copy(this.baseFlash);
         return;
       }
@@ -890,7 +906,7 @@ export abstract class World {
     if (e.type === 'bounce' && this.blaze) {
       const k = this.blaze === 1 ? 0.5 : this.blaze === 3 ? 1 : 0.8;
       this.blaze = 0;
-      this.trail.boost = 1.25;
+      this.trail.boost = Math.max(1.25, this.rushBoost());
       if (!e.live && !e.first) return;
       this.smashFx.impact(e.pos.x, e.pos.z, k);
       P.burst({ x: e.pos.x, y: 0.1, z: e.pos.z, count: Math.round(26 * k), speed: [2, 5 + 6 * k], dir: [0, 1, 0], spread: 0.75, life: [0.3, 0.7], size: [0.07, 0.18 + 0.1 * k], shrink: 0.2, colors: st.sparks, shape: st.sparkShape, drag: 2.2, gravity: 9 });
@@ -902,6 +918,48 @@ export abstract class World {
     if (e.type === 'point' || e.type === 'toss') {
       this.blaze = 0;
       this.trail.boost = 1;
+    }
+  }
+
+  /** Rush: how much wider and stronger the trail runs at the rally's heat (1 = the standard game's). */
+  private rushBoost() {
+    return this.rush ? 1 + (this.smashStyle.additive ? 0.3 : 0.9) * this.rushHeat : 1;
+  }
+
+  private rushReset() {
+    this.rushHeat = 0;
+    this.rushFire = false;
+  }
+
+  /**
+   * Rush, in the world: the rally's heat from the hit events, the ball catching fire at
+   * full heat (and staying on fire through bounces until the point ends), and a shockwave
+   * and sparks on a perfect hit. A smash keeps its own set piece.
+   */
+  private rushEvent(e: MatchEvent) {
+    if (e.type === 'toss' || e.type === 'point') {
+      this.rushReset();
+      return;
+    }
+    const st = this.smashStyle;
+    const P = this.particles;
+    if (e.type === 'hit') {
+      const was = this.rushFire;
+      this.rushHeat = heatAfter(this.rushHeat, e);
+      this.rushFire = onFire(this.rushHeat);
+      if (this.rushFire && !was) {
+        // it catches fire: a burst of flames off the ball
+        P.burst({ x: e.pos.x, y: e.pos.y, z: e.pos.z, count: 16, speed: [1, 3.5], life: [0.25, 0.6], size: [0.2, 0.55], shrink: 0.1, colors: st.fire, shape: st.fireShape, drag: 2.5, gravity: -2.5, alpha: 0.95 });
+        this.flash = Math.max(this.flash, 0.2);
+      }
+      if (e.perfect && e.kind !== 'smash') {
+        // (a ring is a flat card facing the camera: lifted, so the court doesn't slice off its lower half)
+        this.smashFx.shock(e.pos.x, Math.max(e.pos.y, 1.2), e.pos.z, 0.55);
+        P.burst({ x: e.pos.x, y: e.pos.y, z: e.pos.z, count: 18, speed: [2.5, 8], life: [0.2, 0.5], size: [0.07, 0.2], shrink: 0.2, colors: st.sparks, shape: st.sparkShape, drag: 2.6, gravity: 3 });
+      }
+    } else if (e.type === 'bounce' && this.rushFire && (e.live || e.first)) {
+      // a burning ball skips off the court trailing embers
+      P.burst({ x: e.pos.x, y: 0.1, z: e.pos.z, count: 8, speed: [1, 3.2], dir: [0, 1, 0], spread: 0.7, life: [0.25, 0.6], size: [0.12, 0.36], shrink: 0.2, colors: st.fire, shape: st.fireShape, drag: 2.2, gravity: -1.5, alpha: 0.9 });
     }
   }
 

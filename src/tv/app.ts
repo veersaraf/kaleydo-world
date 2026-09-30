@@ -1442,6 +1442,7 @@ export class App {
       speed = Math.hypot(v.x, v.y, v.z);
     }
     const view = this.tennisView();
+    view.rush = !!m.cfg.rush;
     view.t = m.t;
     view.dt = g.dt;
     view.realT = this.realT;
@@ -1569,6 +1570,7 @@ export class App {
       a.update(m.t, simDt || 1e-4, ball, m.state);
     }
     const view = this.tennisView();
+    view.rush = !!m.cfg.rush;
     view.t = m.t;
     view.dt = simDt;
     view.realT = this.realT;
