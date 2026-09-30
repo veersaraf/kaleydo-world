@@ -1697,6 +1697,25 @@ section {
   opacity: 0.75;
 }
 
+/* (a narrow phone, an SE: both pills still fit side by side) */
+@container pad (max-width: 369px) {
+  .bowl-row {
+    gap: 6px;
+  }
+  .step {
+    width: 44px;
+    height: 48px;
+  }
+  .stepper > span {
+    min-width: 34px;
+    font-size: 11px;
+  }
+  .step svg {
+    width: 20px;
+    height: 20px;
+  }
+}
+
 /* ------------------------------------------------------------ sword duel */
 
 .panel.sword,
