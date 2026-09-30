@@ -88,6 +88,11 @@ export class App {
   attract = true;
   paused = false;
   private last = 0;
+  /** the tab came back: the first frame counts as one sixtieth, not as the whole time it was away */
+  private resumed = false;
+  /** wall times (ms) the frame being drawn covers */
+  private frameFrom = 0;
+  private frameTo = 0;
   private lastRender = 0;
   private hitstop = 0;
   realT = 0;
@@ -193,6 +198,19 @@ export class App {
   /** real time until the camera lets go after a smash was struck */
   private smashAfter = 0;
   private smashLand = { x: 0, y: 0, z: 0 };
+  // ---- tennis frame scratch (a frame makes no vectors, poses or views of its own)
+  private ballV: V3 = { x: 0, y: 0, z: 0 };
+  private velV: V3 = { x: 0, y: 0, z: 0 };
+  private fv: FrameView | null = null;
+  /**
+   * Sim time a frame did not draw because a hitch would have taken more than MAX_SIM_STEPS steps
+   * at once: [wall start, wall end (ms), seconds dropped]. A swing that arrives afterwards is
+   * placed on the sim's own clock through these (see swing), so its timing is what it would have
+   * been had the sim caught up in one go.
+   */
+  private slips: { from: number; to: number; sec: number }[] = [];
+  /** total sim seconds dropped this match (a counter for the perf scripts) */
+  slipped = 0;
   onReplayEvent: (e: MatchEvent) => void = () => {};
   onReplayEnd: () => void = () => {};
 
@@ -225,6 +243,10 @@ export class App {
     this.link.onHostMessage = (m) => this.guestMessage(m);
     this.link.connect();
     window.addEventListener('resize', () => this.resize());
+    // (a hidden tab gets no frames: when it's back, its first gap is not the whole time away)
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) this.resumed = true;
+    });
     this.resize();
   }
 
@@ -392,7 +414,30 @@ export class App {
     const chance = this.smashCue && this.smashCue.p.slot === e.slot;
     const power = e.source === 'key' && chance && e.power > 0.3 ? Math.max(e.power, 0.92) : e.power;
     // (a swing's age is real time; in bullet time the sim has moved on less)
-    m.humanSwing(e.slot, { power, spin: e.spin, side: e.side, path: e.path }, m.t - clamp(e.age, 0, SWING_AGE_MAX) * this.timeScale);
+    const age = clamp(e.age, 0, SWING_AGE_MAX);
+    m.humanSwing(e.slot, { power, spin: e.spin, side: e.side, path: e.path }, m.t - age * this.timeScale + this.slippedSince(age));
+  }
+
+  /**
+   * Sim seconds dropped by frame hitches since a swing `age` seconds old happened (0 unless there
+   * was a hitch in that time): a hitch frame's dropped time is spread over the wall time it
+   * covered, so a swing in the middle of it sits in the middle of what was drawn.
+   */
+  private slippedSince(age: number): number {
+    const sl = this.slips;
+    if (!sl.length) return 0;
+    const now = performance.now();
+    const at = now - age * 1000;
+    let sec = 0;
+    for (let i = sl.length - 1; i >= 0; i--) {
+      const s = sl[i];
+      if (s.to < now - 1500) {
+        sl.splice(0, i + 1);
+        break;
+      }
+      if (s.to > at) sec += s.sec * clamp((s.to - at) / Math.max(1e-3, s.to - s.from));
+    }
+    return sec;
   }
 
   private event(e: MatchEvent) {
@@ -545,9 +590,13 @@ export class App {
   }
 
   frame(now: number) {
-    const gapMs = this.last ? now - this.last : 0;
+    const gapMs = this.resumed ? 1000 / 60 : this.last ? now - this.last : 0;
+    this.resumed = false;
     const realDt = Math.min(0.1, Math.max(0, gapMs / 1000));
+    const lastFrame = this.last;
     this.last = now;
+    this.frameFrom = lastFrame || now - gapMs;
+    this.frameTo = now;
     this.realT += realDt;
     // (each sport's frame ends by calling onFrame, which can start another sport —
     // the menu's showcase moving on — so hold on to this frame's game)
@@ -1385,29 +1434,26 @@ export class App {
     const g = this.guest!;
     g.advance(realDt);
     this.stageSmash(m, realDt);
-    this.rig.update(m, realDt, this.realT);
-    const ball = m.ballView(m.t, { x: 0, y: 0, z: 0 });
+    const ball = m.ballView(m.t, this.ballV);
+    this.rig.update(m, realDt, this.realT, ball);
     let speed = 0;
     if (!m.ball.holder && m.state !== 'toss') {
-      const v = segVel(m.ball.seg, m.t, { x: 0, y: 0, z: 0 });
+      const v = segVel(m.ball.seg, m.t, this.velV);
       speed = Math.hypot(v.x, v.y, v.z);
     }
-    const view: FrameView = {
-      t: m.t,
-      dt: g.dt,
-      realT: this.realT,
-      realDt,
-      ball,
-      ballSpeed: speed,
-      // (nothing to show until the first snapshot has said where it is)
-      ballVisible: g.ready,
-      holder: m.ball.holder ? m.players.indexOf(m.ball.holder) : -1,
-      poses: g.poses,
-      excitement: m.excitement,
-      state: m.state,
-      cam: this.rig.cam,
-      beat: this.beat(),
-    };
+    const view = this.tennisView();
+    view.t = m.t;
+    view.dt = g.dt;
+    view.realT = this.realT;
+    view.realDt = realDt;
+    view.ballSpeed = speed;
+    // (nothing to show until the first snapshot has said where it is)
+    view.ballVisible = g.ready;
+    view.holder = m.ball.holder ? m.players.indexOf(m.ball.holder) : -1;
+    view.poses = g.poses;
+    view.excitement = m.excitement;
+    view.state = m.state;
+    view.beat = this.beat();
     this.stage.update(view);
     this.stage.render(this.rig.cam);
     this.onFrame(realDt);
@@ -1444,10 +1490,33 @@ export class App {
         : null;
     this.rig.smash = cam;
     this.rig2.smash = cam;
-    for (const w of [this.stage.current, this.stage.next]) if (w) w.smashGlow = cue ? this.smashW : 0;
+    const glow = cue ? this.smashW : 0;
+    if (this.stage.current) this.stage.current.smashGlow = glow;
+    if (this.stage.next) this.stage.next.smashGlow = glow;
+  }
+
+  /** the one FrameView the tennis frames fill in (the worlds read it during the call, none keeps it) */
+  private tennisView(): FrameView {
+    return (this.fv ??= {
+      t: 0,
+      dt: 0,
+      realT: 0,
+      realDt: 0,
+      ball: this.ballV,
+      ballSpeed: 0,
+      ballVisible: true,
+      holder: -1,
+      poses: this.livePoses,
+      excitement: 0,
+      state: 'intro',
+      cam: this.rig.cam,
+      beat: 0,
+    });
   }
 
   private playFrame(m: Match, realDt: number) {
+    // (the engine compiles the planner in the first frames, not in the first rally)
+    if (m.warmLeft > 0) m.warm(4);
     this.stageSmash(m, realDt);
     let simDt = this.paused ? 0 : realDt * this.timeScale;
     if (this.hitstop > 0) {
@@ -1458,8 +1527,18 @@ export class App {
     // at most 1/120 s). Fixed steps without interpolation made the ball move one
     // step on some frames and three on others — visible judder even at 60 fps.
     if (simDt > 0) {
-      const n = Math.max(1, Math.ceil(simDt * 120 - 1e-6));
-      const h = simDt / n;
+      let n = Math.max(1, Math.ceil(simDt * 120 - 1e-6));
+      let h = simDt / n;
+      if (n > MAX_SIM_STEPS) {
+        // after a hitch: draw what the cap covers and let the rest go (the sim runs a little
+        // behind the clock, rather than freezing and then jumping a tenth of a second at once);
+        // swings that came in during the hitch are placed through `slips`
+        const dropped = simDt - MAX_SIM_STEPS / 120;
+        n = MAX_SIM_STEPS;
+        h = 1 / 120;
+        this.slipped += dropped;
+        this.slips.push({ from: this.frameFrom, to: this.frameTo, sec: dropped });
+      }
       for (let i = 0; i < n; i++) m.step(h);
     }
 
@@ -1470,37 +1549,37 @@ export class App {
       this.applyViews();
       this.onSplit(split);
     }
-    this.rig.update(m, realDt, this.realT);
+    const ball = m.ballView(m.t, this.ballV);
+    this.rig.update(m, realDt, this.realT, ball);
     if (split) {
       if (this.rig2.mode !== this.rig.mode) this.rig2.setMode(this.rig.mode);
-      this.rig2.update(m, realDt, this.realT);
+      this.rig2.update(m, realDt, this.realT, ball);
     }
-    const ball = m.ballView(m.t, { x: 0, y: 0, z: 0 });
     let speed = 0;
     if (!m.ball.holder && m.state !== 'toss') {
-      const v = segVel(m.ball.seg, m.t, { x: 0, y: 0, z: 0 });
+      const v = segVel(m.ball.seg, m.t, this.velV);
       speed = Math.hypot(v.x, v.y, v.z);
     } else if (m.state === 'toss') speed = 0;
     const wall = performance.now();
-    const poses = this.anims.map((a) => {
+    // (the animators' own poses, in one list that lives as long as the match)
+    const poses = this.livePoses;
+    for (let i = 0; i < this.anims.length; i++) {
+      const a = this.anims[i];
       a.phone = a.p.human ? this.input.oriNow(a.p.slot, wall) : null;
-      return a.update(m.t, simDt || 1e-4, ball, m.state);
-    });
-    const view: FrameView = {
-      t: m.t,
-      dt: simDt,
-      realT: this.realT,
-      realDt,
-      ball,
-      ballSpeed: speed,
-      ballVisible: true,
-      holder: m.ball.holder ? m.players.indexOf(m.ball.holder) : -1,
-      poses,
-      excitement: m.excitement,
-      state: m.state,
-      cam: this.rig.cam,
-      beat: this.beat(),
-    };
+      a.update(m.t, simDt || 1e-4, ball, m.state);
+    }
+    const view = this.tennisView();
+    view.t = m.t;
+    view.dt = simDt;
+    view.realT = this.realT;
+    view.realDt = realDt;
+    view.ballSpeed = speed;
+    view.ballVisible = true;
+    view.holder = m.ball.holder ? m.players.indexOf(m.ball.holder) : -1;
+    view.poses = poses;
+    view.excitement = m.excitement;
+    view.state = m.state;
+    view.beat = this.beat();
     this.net.frame(poses);
     this.stage.update(view);
     this.stage.render(split ? [this.rig.cam, this.rig2.cam] : this.rig.cam);
@@ -1528,6 +1607,8 @@ export class App {
   }
 }
 
+/** the most sim steps (of 1/120 s) one frame draws, 50 ms as in the other sports: a longer gap after a hitch is cut to this (20 fps and up still plays in real time) */
+const MAX_SIM_STEPS = 6;
 const NO_EVENTS: MatchEvent[] = [];
 const NO_FX: FieldFx[] = [];
 

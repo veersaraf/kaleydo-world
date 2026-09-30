@@ -118,10 +118,13 @@ export function bounceModel(spin: number, surface = 1): BounceModel {
   return { e, f };
 }
 
+const bp: V3 = { x: 0, y: 0, z: 0 };
+const bv: V3 = { x: 0, y: 0, z: 0 };
+
 /** New segment starting at a bounce. */
 export function bounceSeg(s: Seg, tb: number, surface = 1): Seg {
-  const p = segPos(s, tb, { x: 0, y: 0, z: 0 });
-  const v = segVel(s, tb, { x: 0, y: 0, z: 0 });
+  const p = segPos(s, tb, bp);
+  const v = segVel(s, tb, bv);
   const m = bounceModel(s.spin, surface);
   const spin = s.spin * 0.45;
   return {
@@ -174,25 +177,50 @@ export interface PathSample {
 }
 
 /**
- * Predict the ball's future path through up to `maxBounces` bounces.
- * Returns samples every `dt` seconds from `from` to `from + span`.
+ * A predicted path that is written over, not rebuilt: `s[0..n)` are the samples, the objects
+ * (and the array) outlive the flight, so a shot being struck allocates none of them.
  */
-export function predictPath(seg: Seg, from: number, span: number, dt: number, maxBounces = 2, out: PathSample[] = []): PathSample[] {
-  out.length = 0;
+export class PathBuf {
+  s: PathSample[] = [];
+  n = 0;
+  /** the sample slot `i`, made if the buffer hasn't grown that far yet */
+  slot(i: number): PathSample {
+    while (this.s.length <= i) this.s.push({ t: 0, x: 0, y: 0, z: 0, bounces: 0 });
+    return this.s[i];
+  }
+}
+
+const pp: V3 = { x: 0, y: 0, z: 0 };
+
+/**
+ * Predict the ball's future path through up to `maxBounces` bounces.
+ * Fills `out` with samples every `dt` seconds from `from` to `from + span`.
+ */
+export function predictPath(seg: Seg, from: number, span: number, dt: number, maxBounces: number, out: PathBuf): PathBuf {
+  out.n = 0;
   let s = seg;
   let bounces = 0;
   let nextBounce = segTimeDown(s, COURT.ballR, Math.max(from, s.t0));
-  const p: V3 = { x: 0, y: 0, z: 0 };
+  let n = 0;
   for (let t = from; t <= from + span; t += dt) {
     while (nextBounce !== null && t >= nextBounce) {
       bounces++;
-      if (bounces > maxBounces) return out;
+      if (bounces > maxBounces) {
+        out.n = n;
+        return out;
+      }
       s = bounceSeg(s, nextBounce);
       nextBounce = segTimeDown(s, COURT.ballR, s.t0 + 1e-3);
     }
-    segPos(s, t, p);
-    out.push({ t, x: p.x, y: p.y, z: p.z, bounces });
+    segPos(s, t, pp);
+    const o = out.slot(n++);
+    o.t = t;
+    o.x = pp.x;
+    o.y = pp.y;
+    o.z = pp.z;
+    o.bounces = bounces;
   }
+  out.n = n;
   return out;
 }
 

@@ -1,13 +1,14 @@
 // The rules engine and point flow for a tennis match.
 
 import { COURT, netHeightAt, sideOf, inCourt, serviceBox, inBox, serveSideSign, fwdOf } from './court';
-import { type Seg, segPos, segVel, segTimeDown, segTimeAtZ, bounceSeg, predictPath, segApexY, type PathSample } from './ball';
+import { type Seg, segPos, segVel, segTimeDown, segTimeAtZ, bounceSeg, predictPath, segApexY, PathBuf } from './ball';
 import { buildShot, humanShot, serveShot, type Stroke, type SwingInput } from './shot';
 import { TPlayer, type Ctrl, type HitPlan, type AthleticMove } from './player';
 import { aiShot, recoveryPos, AI_LEVELS } from './ai';
 import { Score } from './score';
 import type { Look } from '../chars/look';
 import { clamp, lerp, Rng, smooth, type V3 } from '../core/math';
+import { hyp2, hyp3 } from './hypot';
 
 export type MatchState = 'intro' | 'serve' | 'toss' | 'play' | 'dead' | 'reset' | 'over';
 
@@ -134,7 +135,8 @@ export class Match {
   t = 0;
   rng: Rng;
   ball: BallInfo;
-  path: PathSample[] = [];
+  /** the current flight's predicted path (written over on every shot, never rebuilt) */
+  path = new PathBuf();
   rally = 0;
   second = false;
   onEvent: (e: MatchEvent) => void = () => {};
@@ -157,6 +159,15 @@ export class Match {
   private deadUntil = 0;
   private resetAt = 0;
   private flightJudged: { out: boolean; net: boolean } = { out: false, net: false };
+  /** scratch points (nothing here outlives a call) */
+  private sa: V3 = { x: 0, y: 0, z: 0 };
+  private sb: V3 = { x: 0, y: 0, z: 0 };
+  private sp: V3 = { x: 0, y: 0, z: 0 };
+  private sq: V3 = { x: 0, y: 0, z: 0 };
+  /** ballAt's chain of bounces for one flight: computed once per segment, not per call */
+  private chainSegs: Seg[] = [];
+  private chainNb: (number | null)[] = [];
+  private chainOf: Seg | null = null;
   gravityScale: number;
 
   constructor(cfg: MatchConfig) {
@@ -198,9 +209,38 @@ export class Match {
     if (cfg.attract) this.beginServe();
   }
 
-  team(t: 0 | 1) {
-    return this.players.filter((p) => p.team === t);
+  /** (the same array every time: built once, the players don't change) */
+  /**
+   * Run the path predictor and the planner on a made-up shot, `n` times. Cold, they box every
+   * number they touch (~30 KB of garbage in the frame of each of the first shots); a few hundred
+   * runs get the engine to compile them, so the app spends a few frames of the intro on it (see
+   * `warmLeft`). Nothing in the match changes: they read the players and write scratch.
+   */
+  warm(n: number) {
+    n = Math.min(n, this.warmLeft);
+    this.warmLeft -= n;
+    for (let i = 0; i < n; i++) {
+      const sx = i % 2 ? 1 : -1;
+      const seg: Seg = { t0: 0, px: sx, py: 1.1 + (i % 3) * 0.2, pz: -11, vx: -0.5 * sx, vy: 4.2 + (i % 5) * 0.3, vz: 17 + (i % 7), g: COURT.gravity, k: COURT.drag, spin: 0.3, g0: COURT.gravity };
+      predictPath(seg, 0, 3.6, 1 / 120, 2, this.warmPath);
+      for (const p of this.players) p.planFrom(this.warmPath, 0.02, 0.1, { mustBounce: i % 4 === 0, doubles: this.doubles, prefer: i % 3 === 0 ? 'fh' : undefined, smash: i % 5 === 0 });
+    }
   }
+  /** warm-up runs still owed */
+  warmLeft = 800;
+  private warmPath = new PathBuf();
+
+  team(t: 0 | 1): TPlayer[] {
+    let c = this.teams[t];
+    if (!c || this.teamsN !== this.players.length) {
+      this.teams = [this.players.filter((p) => p.team === 0), this.players.filter((p) => p.team === 1)];
+      this.teamsN = this.players.length;
+      c = this.teams[t];
+    }
+    return c;
+  }
+  private teams: TPlayer[][] = [];
+  private teamsN = -1;
 
   get doubles() {
     return this.cfg.doubles;
@@ -277,7 +317,7 @@ export class Match {
     this.pendingHit = null;
     this.aiSwingAt.clear();
     this.rally = 0;
-    this.path.length = 0;
+    this.path.n = 0;
   }
 
   private beginServe() {
@@ -308,7 +348,7 @@ export class Match {
         if (this.t - this.stateT0 > 0.35) this.toss(this.server);
         return;
       }
-      this.serveSwing(this.server, { ...inp, aim: this.aimFor(this.server, 'serve', inp.path) }, tEvent);
+      this.serveSwing(this.server, { ...inp, aim: this.aimFor(this.server, 'serve', inp.path) }, tEvent, true);
       return;
     }
     if (this.state !== 'play' && this.state !== 'dead') {
@@ -342,7 +382,7 @@ export class Match {
       return;
     }
     const aim = this.aimFor(p, chosen, inp.path);
-    this.scheduleHit(p, { ...plan, stroke: chosen }, { power: inp.power, spin: inp.spin, tau, aim, crossed: chosen !== plan.stroke, dtMs: Math.round(dt * 1000), smash }, tEvent);
+    this.scheduleHit(p, { ...plan, stroke: chosen }, { power: inp.power, spin: inp.spin, tau, aim, crossed: chosen !== plan.stroke, dtMs: Math.round(dt * 1000), smash }, tEvent, true);
   }
 
   /** an overhead on a ball high enough to put away: a smash chance */
@@ -383,7 +423,7 @@ export class Match {
   }
 
   private guessStroke(p: TPlayer): Stroke {
-    const bp = segPos(this.ball.seg, this.t, { x: 0, y: 0, z: 0 });
+    const bp = segPos(this.ball.seg, this.t, this.sa);
     return (bp.x - p.x) * p.fhSign >= 0 ? 'fh' : 'bh';
   }
 
@@ -407,10 +447,17 @@ export class Match {
     this.onEvent({ type: 'whiff', p, tau, dtMs, why });
   }
 
-  private scheduleHit(p: TPlayer, plan: HitPlan, input: SwingInput, tEvent: number) {
-    const tc = Math.max(this.t + 0.03, tEvent);
-    const a = this.ballAt(tc);
-    const b = this.ballAt(plan.t);
+  /**
+   * `late`: the swing is a person's, already made by the time we hear of it (a phone's arrives
+   * 50–200 ms after the peak): contact is now, resolved on the spot. A swing that is still to
+   * happen (a CPU's own, `tEvent` ahead of the clock) needs a moment to be drawn, so contact
+   * waits for it, and never sooner than 30 ms out.
+   */
+  private scheduleHit(p: TPlayer, plan: HitPlan, input: SwingInput, tEvent: number, late = false) {
+    const now = late && tEvent <= this.t;
+    const tc = now ? this.t : Math.max(this.t + 0.03, tEvent);
+    const a = this.ballAt(tc, this.sa);
+    const b = this.ballAt(plan.t, this.sb);
     const w = 0.62;
     p.swing = {
       stroke: plan.stroke,
@@ -427,7 +474,10 @@ export class Match {
     };
     p.lastStroke = plan.stroke;
     p.nextSwingOK = tc + 0.25;
-    this.pendingHit = p;
+    if (now) {
+      p.swing.resolved = true;
+      this.resolveHit(p, tc);
+    } else this.pendingHit = p;
   }
 
   private toss(p: TPlayer) {
@@ -456,7 +506,7 @@ export class Match {
     this.onEvent({ type: 'toss', p });
   }
 
-  private serveSwing(p: TPlayer, inp: { power: number; spin: number; aim?: number }, tEvent: number) {
+  private serveSwing(p: TPlayer, inp: { power: number; spin: number; aim?: number }, tEvent: number, late = false) {
     if (p.swing || this.t < p.nextSwingOK) return;
     const ideal = p.tossT + TOSS_IDEAL;
     const tau = (tEvent - ideal) / (SERVE_WIN * (p.human ? (this.cfg.timingScale ?? 1) : 1));
@@ -464,9 +514,10 @@ export class Match {
       this.whiff(p, 'serve', tau);
       return;
     }
-    const tc = Math.max(this.t + 0.03, tEvent);
-    const a = segPos(this.ball.seg, tc, { x: 0, y: 0, z: 0 });
-    const b = segPos(this.ball.seg, ideal, { x: 0, y: 0, z: 0 });
+    const now = late && tEvent <= this.t;
+    const tc = now ? this.t : Math.max(this.t + 0.03, tEvent);
+    const a = segPos(this.ball.seg, tc, this.sa);
+    const b = segPos(this.ball.seg, ideal, this.sb);
     p.swing = {
       stroke: 'serve',
       t0: this.t,
@@ -481,21 +532,42 @@ export class Match {
       serve: true,
     };
     p.nextSwingOK = tc + 0.3;
-    this.pendingHit = p;
+    if (now) {
+      p.swing.resolved = true;
+      this.resolveHit(p, tc);
+    } else this.pendingHit = p;
   }
 
   // ------------------------------------------------------------ ball helpers
 
-  /** Ball position at time t following the current path through bounces. */
-  ballAt(t: number): V3 {
-    let s = this.ball.seg;
-    let nb = segTimeDown(s, COURT.ballR, s.t0 + 1e-3);
-    let guard = 0;
-    while (nb !== null && t > nb && guard++ < 4) {
-      s = bounceSeg(s, nb);
-      nb = segTimeDown(s, COURT.ballR, s.t0 + 1e-3);
+  /**
+   * Ball position at time t following the current path through bounces (into `out`, or a
+   * fresh point). The bounces of a flight are worked out once, not on every call.
+   */
+  ballAt(t: number, out: V3 = { x: 0, y: 0, z: 0 }): V3 {
+    const first = this.ball.seg;
+    if (this.chainOf !== first) {
+      this.chainOf = first;
+      this.chainSegs.length = 1;
+      this.chainSegs[0] = first;
+      this.chainNb.length = 0;
+      this.chainNb[0] = segTimeDown(first, COURT.ballR, first.t0 + 1e-3);
     }
-    return segPos(s, t, { x: 0, y: 0, z: 0 });
+    const segs = this.chainSegs;
+    const nbs = this.chainNb;
+    let i = 0;
+    let guard = 0;
+    for (;;) {
+      const nb = nbs[i];
+      if (nb === null || !(t > nb) || guard++ >= 4) break;
+      if (i + 1 >= segs.length) {
+        const ns = bounceSeg(segs[i], nb);
+        segs.push(ns);
+        nbs.push(segTimeDown(ns, COURT.ballR, ns.t0 + 1e-3));
+      }
+      i++;
+    }
+    return segPos(segs[i], t, out);
   }
 
   private newFlight(seg: Seg) {
@@ -509,22 +581,26 @@ export class Match {
   /** Predict whether the current flight will be out or netted. */
   private judgeFlight(): { out: boolean; net: boolean } {
     const s = this.ball.seg;
+    const sp = this.sp;
     const R = (1 - this.ball.lastHitTeam) as 0 | 1;
     let net = false;
     if (this.ball.netCrossT !== null) {
-      const p = segPos(s, this.ball.netCrossT, { x: 0, y: 0, z: 0 });
+      const p = segPos(s, this.ball.netCrossT, sp);
       net = p.y - COURT.ballR < netHeightAt(p.x) - 0.005;
     }
     let out = false;
     if (this.ball.nextBounce !== null) {
-      const p = segPos(s, this.ball.nextBounce, { x: 0, y: 0, z: 0 });
+      const p = segPos(s, this.ball.nextBounce, sp);
       if (sideOf(p.z) === R) {
         out = this.ball.serve
           ? !inBox(serviceBox(this.ball.lastHitTeam, this.score.deuceCourt), p.x, p.z, 0.04)
           : !inCourt(p.x, p.z, this.doubles, 0.04);
       }
     }
-    return { out, net };
+    const j = this.flightJudged;
+    j.out = out;
+    j.net = net;
+    return j;
   }
 
   private replan() {
@@ -566,7 +642,7 @@ export class Match {
       } else {
         p.plan = null;
         // hold formation: shade towards the ball side
-        const bx = this.path.length ? this.path[Math.min(this.path.length - 1, 60)].x : 0;
+        const bx = this.path.n ? this.path.s[Math.min(this.path.n - 1, 60)].x : 0;
         const rp = recoveryPos(R, bx, p.role, this.doubles, best?.x ?? 0);
         if (leave && p === best) {
           // watch it go: small step, no chase
@@ -663,7 +739,7 @@ export class Match {
       const tn = b.netCrossT;
       b.netCrossT = null;
       const p = segPos(b.seg, tn, { x: 0, y: 0, z: 0 });
-      const v = segVel(b.seg, tn, { x: 0, y: 0, z: 0 });
+      const v = segVel(b.seg, tn, this.sq);
       const h = netHeightAt(p.x);
       const gap = p.y - COURT.ballR - h;
       if (gap < 0) {
@@ -692,7 +768,7 @@ export class Match {
     while (b.nextBounce !== null && b.nextBounce <= t && guard++ < 4) {
       const tb = b.nextBounce;
       const p = segPos(b.seg, tb, { x: 0, y: 0, z: 0 });
-      const v = segVel(b.seg, tb, { x: 0, y: 0, z: 0 });
+      const v = segVel(b.seg, tb, this.sq);
       const impact = Math.abs(v.y);
       const wasLive = b.live;
       let out = false;
@@ -749,7 +825,7 @@ export class Match {
 
     // ball that nobody played and is long gone
     if (b.live && this.state === 'play') {
-      const p = segPos(b.seg, t, { x: 0, y: 0, z: 0 });
+      const p = segPos(b.seg, t, this.sp);
       if (Math.abs(p.z) > COURT.halfL + 9 || Math.abs(p.x) > 14) {
         const R = (1 - b.lastHitTeam) as 0 | 1;
         if (b.bounces[R] >= 1) this.pointTo(b.lastHitTeam, 'winner');
@@ -760,6 +836,8 @@ export class Match {
 
   private stepPlayers(dt: number) {
     const t = this.t;
+    // (where the ball is, for the players to look at: the flight doesn't change under this loop)
+    const bp = segPos(this.ball.seg, t, this.sp);
     for (const p of this.players) {
       // the moment has passed: stop chasing a ball that's gone. A phone's swing
       // reaches us 50–200 ms after it happened, so humans get that much grace.
@@ -779,7 +857,7 @@ export class Match {
         if (t >= at - 0.03) {
           const dtH = at - p.plan.t;
           const tau = dtH < 0 ? dtH / WIN_EARLY : dtH / WIN_LATE;
-          const d = Math.hypot(p.x - p.plan.sx, p.z - p.plan.sz);
+          const d = hyp2(p.x - p.plan.sx, p.z - p.plan.sz);
           if (d > 1.55) {
             this.whiff(p, p.plan.stroke, tau);
             p.plan = null;
@@ -813,7 +891,7 @@ export class Match {
             // skid a little along the court
             const dx = ath.x1 - ath.x0,
               dz = ath.z1 - ath.z0;
-            const l = Math.hypot(dx, dz) || 1;
+            const l = hyp2(dx, dz) || 1;
             const slide = Math.max(0, 0.18 - (t - ath.tc)) * 2.4 * dt;
             p.x += (dx / l) * slide;
             p.z += (dz / l) * slide;
@@ -837,7 +915,6 @@ export class Match {
       }
 
       // facing: towards the net, turning slightly towards the ball
-      const bp = segPos(this.ball.seg, t, { x: 0, y: 0, z: 0 });
       const face = p.team === 0 ? 0 : Math.PI;
       const look = Math.atan2(-(bp.x - p.x), -(bp.z - p.z));
       let d = look - face;
@@ -848,7 +925,7 @@ export class Match {
       p.focus = p.plan ? Math.min(1, p.focus + dt * 3) : Math.max(0, p.focus - dt * 2);
 
       // stamina: sprints drain it; standing still (and the gaps between points) bring it back
-      const sp = Math.hypot(p.vx, p.vz);
+      const sp = hyp2(p.vx, p.vz);
       if (this.state === 'play') p.stamina -= Math.max(0, sp - 2.2) * 0.05 * dt;
       p.stamina = clamp(p.stamina + (this.state === 'play' ? (sp < 1.2 ? 0.045 : 0) : 0.45) * dt, 0, 1);
       if (p.tired > 0 && !p.tiredShown && this.state === 'play') {
@@ -873,7 +950,7 @@ export class Match {
     const plan = p.plan!;
     const tl = plan.t - t;
     if (tl <= 0.06 || tl > 0.34) return;
-    const standD = Math.hypot(plan.sx - p.x, plan.sz - p.z);
+    const standD = hyp2(plan.sx - p.x, plan.sz - p.z);
     const runnable = p.maxSpeed * tl * 0.85;
     const gap = standD - runnable;
     let move: AthleticMove | null = null;
@@ -906,7 +983,7 @@ export class Match {
     const contact: V3 = { x: sw.cx, y: sw.cy, z: sw.cz };
 
     // too far from the body to actually connect (outplayed)
-    const reach = Math.hypot(contact.x - p.x, contact.z - p.z);
+    const reach = hyp2(contact.x - p.x, contact.z - p.z);
     if (!sw.serve && reach > 2.1) {
       sw.hit = false;
       this.onEvent({ type: 'whiff', p, tau: sw.input.tau, dtMs: sw.input.dtMs, why: 'reach' });
@@ -952,7 +1029,7 @@ export class Match {
         kind = res.kind;
         this.lastShotTx = res.spec.tx;
       } else {
-        const stretch = Math.max(plan ? clamp((Math.hypot(p.x - plan.sx, p.z - plan.sz) - 0.2) / 1.0) : 0.5, this.stretchOf(p));
+        const stretch = Math.max(plan ? clamp((hyp2(p.x - plan.sx, p.z - plan.sz) - 0.2) / 1.0) : 0.5, this.stretchOf(p));
         const pressure = this.score.matchPointFor(0) || this.score.matchPointFor(1) ? 1 : 0.2;
         const res = aiShot(
           p.ctrl.ai,
@@ -990,7 +1067,7 @@ export class Match {
     if (kind === 'wobbly') seg.wob = 0.14;
     // a floater: whoever meets it can smash it
     const apexY = seg.vy > 0 ? segApexY(seg) : seg.py;
-    this.ball.pop = !sw.serve && kind !== 'smash' && kind !== 'error' && (kind === 'lob' || kind === 'wobbly' || (apexY > 3.6 && Math.hypot(seg.vx, seg.vz) < 15));
+    this.ball.pop = !sw.serve && kind !== 'smash' && kind !== 'error' && (kind === 'lob' || kind === 'wobbly' || (apexY > 3.6 && hyp2(seg.vx, seg.vz) < 15));
     this.ball.smash = kind === 'smash' ? (perfect ? 2 : 1) : 0;
     this.lastPerfect = perfect && p.human;
     this.ball.live = true;
@@ -1003,7 +1080,7 @@ export class Match {
     p.hits++;
     p.lockUntil = tc + (sw.serve ? 0.34 : 0.3);
 
-    const kph = Math.hypot(seg.vx, seg.vy, seg.vz) * 3.6;
+    const kph = hyp3(seg.vx, seg.vy, seg.vz) * 3.6;
     const big = power > 0.82 || kind === 'smash' || perfect;
     // a freeze-frame is punctuation: only for smashes and a player's perfect shot
     // (on every strong hit it read as stutter)
@@ -1097,13 +1174,17 @@ export class Match {
   /** Where to draw the ball (includes the racket "magnet" before contact). */
   ballView(t: number, out: V3): V3 {
     const b = this.ball;
-    if (b.holder) return out; // view places it in the hand
+    if (b.holder) {
+      // (the view places it in the hand: nothing to give, and a point reused from the last frame must not linger)
+      out.x = out.y = out.z = 0;
+      return out;
+    }
     segPos(b.seg, t, out);
     const ph = this.pendingHit;
     if (ph && ph.swing && !ph.swing.resolved) {
       const sw = ph.swing;
       const k = smooth(clamp((t - sw.t0) / Math.max(0.01, sw.tc - sw.t0)));
-      const nat = this.ballAt(t);
+      const nat = this.ballAt(t, this.sa);
       out.x = lerp(nat.x, sw.cx, k);
       out.y = lerp(nat.y, sw.cy, k);
       out.z = lerp(nat.z, sw.cz, k);
@@ -1111,7 +1192,7 @@ export class Match {
       segPos(b.seg, t, out);
     } else {
       // follow bounces for display
-      const p = this.ballAt(t);
+      const p = this.ballAt(t, this.sa);
       out.x = p.x;
       out.y = Math.max(COURT.ballR, p.y);
       out.z = p.z;

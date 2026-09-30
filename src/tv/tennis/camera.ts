@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import type { Match } from './match';
 import { COURT } from './court';
-import { clamp, damp, lerp, smooth, easeInOutCubic } from '../core/math';
+import { clamp, damp, lerp, smooth, easeInOutCubic, type V3 } from '../core/math';
 
 export type CamMode = 'play' | 'attract' | 'menu' | 'intro' | 'versus';
 
@@ -52,6 +52,17 @@ export class CameraRig {
   private smashW = 0;
   /** 0 → 1 once the smash is struck: the camera rises to watch it land */
   private afterW = 0;
+  // scratch (update runs every frame: nothing in it makes a vector)
+  private tp = new THREE.Vector3();
+  private tl = new THREE.Vector3();
+  private sp = new THREE.Vector3();
+  private sl = new THREE.Vector3();
+  private v1 = new THREE.Vector3();
+  private ball: V3 = { x: 0, y: 0, z: 0 };
+  private proj = new THREE.Vector3();
+  /** what the projection matrix was last built for */
+  private projFov = NaN;
+  private projAspect = NaN;
 
   /** `side` = the team whose end this camera sits behind (1 = the far end, looking back) */
   constructor(public side: 0 | 1 = 0) {
@@ -83,7 +94,7 @@ export class CameraRig {
     return THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(minH / 2) / a));
   }
 
-  private playTarget(m: Match | null, pos: THREE.Vector3, look: THREE.Vector3) {
+  private playTarget(m: Match | null, pos: THREE.Vector3, look: THREE.Vector3, ball: V3 | undefined) {
     let px = 0;
     let bx = 0;
     // how far behind the usual spot the player stands: the camera backs up with them
@@ -94,7 +105,7 @@ export class CameraRig {
       const hp = near.find((p) => p.human) ?? near[0];
       px = hp ? hp.x : 0;
       deep = hp ? clamp(Math.abs(hp.z) - (COURT.halfL + 1.6), 0, 5) : 0;
-      const b = m.ballView(m.t, { x: 0, y: 0, z: 0 });
+      const b = ball ?? m.ballView(m.t, this.ball);
       bx = m.ball.holder ? m.ball.holder.x : b.x;
     }
     this.followX = px;
@@ -119,17 +130,16 @@ export class CameraRig {
   /** debug override: fixed camera */
   debug: { pos: [number, number, number]; look: [number, number, number]; fov: number } | null = null;
 
-  update(m: Match | null, dt: number, t: number) {
+  /** `ball`: where the match draws the ball this frame, if the caller has it already */
+  update(m: Match | null, dt: number, t: number, ball?: V3) {
     if (this.debug) {
       this.cam.position.set(...this.debug.pos);
       this.cam.lookAt(...this.debug.look);
-      this.cam.fov = this.debug.fov;
-      this.cam.aspect = this.aspect;
-      this.cam.updateProjectionMatrix();
+      this.setLens(this.debug.fov, this.aspect);
       return;
     }
-    const tp = new THREE.Vector3();
-    const tl = new THREE.Vector3();
+    const tp = this.tp.set(0, 0, 0);
+    const tl = this.tl.set(0, 0, 0);
     let fov = 38;
     let lambda = 3.2;
 
@@ -141,7 +151,7 @@ export class CameraRig {
       fov = 30;
       lambda = this.shotT++ === 0 ? 1000 : 5;
     } else if (this.mode === 'play' || this.mode === 'intro') {
-      fov = this.playTarget(m, tp, tl);
+      fov = this.playTarget(m, tp, tl, ball);
       // point won: push in a little on the winner
       const dead = m && (m.state === 'dead' || m.state === 'over') && !m.resetKeepScore;
       this.winnerBlend = damp(this.winnerBlend, dead ? 1 : 0, dead ? 1.2 : 4, dt);
@@ -149,7 +159,7 @@ export class CameraRig {
         const w = m.team(m.pointWinner)[0];
         if (w) {
           const k = smooth(this.winnerBlend) * 0.35;
-          tl.lerp(new THREE.Vector3(w.x, 1.1, w.z), k);
+          tl.lerp(this.v1.set(w.x, 1.1, w.z), k);
           fov = lerp(fov, 30, k);
         }
       }
@@ -160,18 +170,18 @@ export class CameraRig {
       const ls = this.lastSmash;
       if (m && ls && this.smashW > 0.002) {
         const s = this.side === 1 ? -1 : 1;
-        const b = m.ballView(m.t, { x: 0, y: 0, z: 0 });
+        const b = ball ?? m.ballView(m.t, this.ball);
         const k = smooth(this.smashW);
         this.afterW = damp(this.afterW, ls.after > 0 ? 1 : 0, ls.after > 0 ? 5 : 30, dt);
         const a = smooth(this.afterW);
         // the build-up: low behind the player, off the shoulder away from the racket,
         // looking up the path of the falling ball (the player in the bottom of the frame)
-        const sp = new THREE.Vector3(ls.x - ls.fh * 1.5, 1.45, ls.z + s * 4.6);
-        const sl = new THREE.Vector3(lerp(ls.cx, b.x, 0.42), lerp(ls.cy + 0.2, Math.min(b.y, 9), 0.42), lerp(ls.cz, b.z, 0.42));
+        const sp = this.sp.set(ls.x - ls.fh * 1.5, 1.45, ls.z + s * 4.6);
+        const sl = this.sl.set(lerp(ls.cx, b.x, 0.42), lerp(ls.cy + 0.2, Math.min(b.y, 9), 0.42), lerp(ls.cz, b.z, 0.42));
         // struck: up over the shoulder to watch it land
         if (a > 0.001 && ls.lx !== undefined && ls.lz !== undefined) {
-          sp.lerp(new THREE.Vector3(ls.x - ls.fh * 2.4, 3.6, ls.z + s * 6.2), a);
-          sl.lerp(new THREE.Vector3(lerp(ls.lx, b.x, 0.3), 0.6, lerp(ls.lz, b.z, 0.3)), a);
+          sp.lerp(this.v1.set(ls.x - ls.fh * 2.4, 3.6, ls.z + s * 6.2), a);
+          sl.lerp(this.v1.set(lerp(ls.lx, b.x, 0.3), 0.6, lerp(ls.lz, b.z, 0.3)), a);
         }
         tp.lerp(sp, k);
         tl.lerp(sl, k);
@@ -183,9 +193,8 @@ export class CameraRig {
         const u = easeInOutCubic(clamp(this.introT / 3.0));
         const a = (1 - u) * 1.2;
         const s = this.side === 1 ? -1 : 1;
-        const start = new THREE.Vector3(s * Math.sin(a) * 30, 22 - u * 10, s * (Math.cos(a) * 30 - 6));
-        tp.lerp(start, 1 - u);
-        tl.lerp(new THREE.Vector3(0, 0, s * -2), 1 - u);
+        tp.lerp(this.v1.set(s * Math.sin(a) * 30, 22 - u * 10, s * (Math.cos(a) * 30 - 6)), 1 - u);
+        tl.lerp(this.v1.set(0, 0, s * -2), 1 - u);
         fov = lerp(48, fov, u);
         lambda = 40;
       }
@@ -202,8 +211,8 @@ export class CameraRig {
       tp.copy(s.pos).addScaledVector(s.drift, u - 0.5);
       tl.copy(s.look);
       if (m && this.shotIdx === 6) {
-        const b = m.ballView(m.t, { x: 0, y: 0, z: 0 });
-        tl.lerp(new THREE.Vector3(b.x, b.y, b.z), 0.3);
+        const b = ball ?? m.ballView(m.t, this.ball);
+        tl.lerp(this.v1.set(b.x, b.y, b.z), 0.3);
       }
       fov = s.fov;
       lambda = this.shotT < 0.05 ? 1000 : 2;
@@ -225,12 +234,25 @@ export class CameraRig {
     // shake
     this.shake = Math.max(0, this.shake - dt * 2.8);
     const sh = this.shake * this.shake * 0.22;
-    const n = (k: number) => Math.sin(t * 43 + k * 17.3 + this.shakeSeed) * 0.6 + Math.sin(t * 71 + k * 5.1) * 0.4;
-    this.cam.position.set(this.pos.x + n(1) * sh, this.pos.y + n(2) * sh, this.pos.z);
-    this.cam.lookAt(this.look.x + n(3) * sh * 0.4, this.look.y + n(4) * sh * 0.4, this.look.z);
-    this.cam.fov = this.fitFov(this.fov);
-    this.cam.aspect = this.aspect;
-    this.cam.updateProjectionMatrix();
+    this.cam.position.set(this.pos.x + this.jolt(t, 1) * sh, this.pos.y + this.jolt(t, 2) * sh, this.pos.z);
+    this.cam.lookAt(this.look.x + this.jolt(t, 3) * sh * 0.4, this.look.y + this.jolt(t, 4) * sh * 0.4, this.look.z);
+    this.setLens(this.fitFov(this.fov), this.aspect);
+  }
+
+  private jolt(t: number, k: number) {
+    return Math.sin(t * 43 + k * 17.3 + this.shakeSeed) * 0.6 + Math.sin(t * 71 + k * 5.1) * 0.4;
+  }
+
+  /** the projection matrix is rebuilt only when the lens changed (a frame with the same fov and aspect keeps it) */
+  private setLens(fov: number, aspect: number) {
+    const cam = this.cam;
+    cam.fov = fov;
+    cam.aspect = aspect;
+    if (fov !== this.projFov || aspect !== this.projAspect) {
+      this.projFov = fov;
+      this.projAspect = aspect;
+      cam.updateProjectionMatrix();
+    }
   }
 
   // ---- instant replay: a broadcast-style camera that tracks the ball from the side
@@ -266,14 +288,12 @@ export class CameraRig {
     this.rl.z = damp(this.rl.z, tl.z, 5, dt);
     this.cam.position.copy(this.rp);
     this.cam.lookAt(this.rl);
-    this.cam.fov = this.fitFov(focus && focus.w > 0 ? lerp(40, 50, smooth(focus.w)) : 40);
-    this.cam.aspect = this.aspect;
-    this.cam.updateProjectionMatrix();
+    this.setLens(this.fitFov(focus && focus.w > 0 ? lerp(40, 50, smooth(focus.w)) : 40), this.aspect);
   }
 
   /** Project a world point to normalised screen coords (0..1, y down). */
   project(p: { x: number; y: number; z: number }) {
-    const v = new THREE.Vector3(p.x, p.y, p.z).project(this.cam);
+    const v = this.proj.set(p.x, p.y, p.z).project(this.cam);
     return { x: (v.x + 1) / 2, y: (1 - v.y) / 2, behind: v.z > 1 };
   }
 

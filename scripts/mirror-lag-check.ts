@@ -254,3 +254,52 @@ for (const m of motions) {
   console.log('  bowling arm     ', fmt(bowl));
  }
 }
+
+// ---- how fast the racket gets onto the phone when the phone starts to matter: the first sample,
+// the swing's end (the canned stroke hands the racket back), and the stream coming back after a gap.
+// The error is the drawn racket against the phone's true pose at that instant, at times after the moment.
+function engage(m: Motion, scenario: 'first sample' | 'after a swing' | 'stream returns') {
+  seed = 12345;
+  clock = 0;
+  const input = new Input(link);
+  input.padJoin('p0', 'x', 'ws');
+  const p = new TPlayer(0, 0, { kind: 'human', slot: 0, ai: { speed: 6 } as any }, 'x', look, 1);
+  const a = new Animator(p);
+  const dtF = 1 / 60;
+  const T0 = 2; // the moment (s)
+  const hz = 30;
+  // is the phone sending at time t
+  const on = (t: number) => (scenario === 'stream returns' ? t < 0.8 || t >= T0 : scenario === 'first sample' ? t >= T0 : true);
+  let nextK = 0;
+  const errs: number[] = [];
+  for (let f = 0; f * dtF < T0 + 1; f++) {
+    const t = f * dtF;
+    clock = t * 1000;
+    while (nextK / hz <= t) {
+      const tk = nextK / hz;
+      nextK++;
+      if (!on(tk)) continue;
+      const ps = m.pose(tk);
+      input.padMsg('p0', 1e12 + tk * 1000, { type: 'ori', s: r2(ps.s), n: r2(ps.n), arm: 0 } as any);
+    }
+    if (scenario === 'after a swing') {
+      // a forehand on the clock: set at 1.4 s, contact 0.05 s later, over 0.36 s after that (as Match.scheduleHit makes it)
+      p.swing = t >= 1.4 && t < T0 ? ({ stroke: 'fh', t0: 1.4, tc: 1.45, te: T0, cx: 0.6, cy: 0.9, cz: -0.8, hit: true, resolved: true, input: { power: 0.7, spin: 0, tau: 0 }, serve: false } as any) : null;
+    }
+    a.phone = poseNow(input, clock) as any;
+    const P = a.update(t, dtF, { x: 0, y: 1, z: -5 }, 'play');
+    if (t >= T0 - 1e-9) {
+      const tr = m.pose(t);
+      errs.push(angle([P.racketDir.x, P.racketDir.y, P.racketDir.z], [tr.s[0], tr.s[2], -tr.s[1]]));
+    }
+  }
+  const at = (ms: number) => errs[Math.min(errs.length - 1, Math.round(ms / (dtF * 1000)))];
+  let settle = errs.findIndex((e, i) => errs.slice(i, i + 6).every((x) => x < 10));
+  settle = settle < 0 ? NaN : settle * dtF * 1000;
+  return `${scenario.padEnd(14)} error at +0/33/67/100/200 ms: ${[0, 33, 67, 100, 200].map((ms) => at(ms).toFixed(1)).join(' / ')}°   within 10° after ${settle.toFixed(0)} ms`;
+}
+console.log('\nengaging the phone (drawn racket against the phone, 60 fps)');
+for (const m of [motions[0], motions[1]]) {
+  console.log(m.name);
+  for (const sc of ['first sample', 'after a swing', 'stream returns'] as const) console.log('  ' + engage(m, sc));
+}
