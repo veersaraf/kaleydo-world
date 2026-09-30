@@ -127,7 +127,10 @@ After each swing a meter shows how early or late you were.
 ## Modes
 
 - **Quick Match** — singles or doubles, vs CPU or friends (up to 4 phones),
-  1 / 3 / 5 games, four CPU levels, any world.
+  1 / 3 / 5 games, four CPU levels, any world. The **Pace** row on the setup
+  screen switches on **Rush**: every hit in a rally builds heat that speeds the
+  ball up (1.15× to 1.45×), and at full heat it catches fire. Rush works online
+  too (the host's match carries it to the guests' TVs).
 - **Bowling** — ten frames for up to four players, with an optional CPU
   (Rookie, Pro or Ace), in any world. Pins are real rigid-body physics.
 - **Sword Duel** — you against a CPU (Rookie, Pro or Ace) or a friend on a

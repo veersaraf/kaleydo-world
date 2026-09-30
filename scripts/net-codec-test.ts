@@ -183,14 +183,14 @@ function compareEvent(w: string, a: NetEvent, b: NetEvent) {
 
 // ---------------------------------------------------------------- 3. a whole match over a jittery network
 interface Net { arrive: number; data: unknown }
-function streamMatch(opts: { doubles: boolean; seed: number; stall?: [number, number]; jitter?: number; base?: number; hostMs?: number; human?: boolean }) {
+function streamMatch(opts: { doubles: boolean; seed: number; stall?: [number, number]; jitter?: number; base?: number; hostMs?: number; human?: boolean; rush?: boolean }) {
   const T0 = 1_700_000_000_000;
   let vnow = 0;
   const clock = { perf: () => vnow, date: () => T0 + vnow };
   const players: MatchConfig['players'] = [];
   const look: any = { height: 1 };
   for (const team of [0, 1] as const) for (let i = 0; i < (opts.doubles ? 2 : 1); i++) players.push({ team, name: `P${team}${i}`, look, handed: i ? -1 : 1, ctrl: opts.human && team === 0 && i === 0 ? { kind: 'human', slot: 0, ai: AI_LEVELS.auto } : { kind: 'cpu', ai: AI_LEVELS[team ? 'ace' : 'pro'] } });
-  const cfg: MatchConfig = { doubles: opts.doubles, gamesToWin: 2, players, seed: opts.seed, introTime: 0.6, teamNames: ['Red', 'Blue'], firstServer: 0 };
+  const cfg: MatchConfig = { doubles: opts.doubles, gamesToWin: 2, players, seed: opts.seed, introTime: 0.6, teamNames: ['Red', 'Blue'], firstServer: 0, ...(opts.rush ? { rush: true } : {}) };
   const m = new Match(cfg);
   const anims = m.players.map((p) => new Animator(p));
   const queue: Net[] = [];
@@ -394,6 +394,16 @@ for (const doubles of [false, true]) {
   check(`${label}: encoding under 0.2 ms`, em[Math.floor(em.length * 0.99)] < 0.2, `p99 ${(em[Math.floor(em.length * 0.99)] * 1000).toFixed(0)} µs`);
   const rl = r.renderList;
   console.log(`   drawn ball vs the host's log (linear between its frames: rough at bounces and hits; ${rl.length} frames): p50 ${(rl[rl.length >> 1] * 100).toFixed(2)} cm, p95 ${(rl[Math.floor(rl.length * 0.95)] * 100).toFixed(2)} cm`);
+}
+
+// ---- Rush: the flag rides the start message, so the guest's shadow match has it (and a standard match has none)
+{
+  const std = streamMatch({ doubles: false, seed: 3 }).guest!;
+  check('rush: a standard match\'s start message carries no rush flag', std.start.rush === undefined && !std.match.cfg.rush);
+  const r = streamMatch({ doubles: false, seed: 3, rush: true });
+  const g = r.guest!;
+  check('rush: the start message carries rush and the guest\'s shadow match has it', g.start.rush === true && g.match.cfg.rush === true);
+  check('rush: the guest still sees the match through, the same events in the same order', !!r.ended && r.hostEvents.join() === r.guestEvents.join(), `${r.hostEvents.length} events`);
 }
 
 // ---- a person's swings heard between frames: hits that resolve on the spot (no racket magnet), among CPU ones (which have one)

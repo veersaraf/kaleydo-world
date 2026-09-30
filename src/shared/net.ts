@@ -87,6 +87,8 @@ export interface NetStart {
   seed: number;
   timingScale?: number;
   introTime?: number;
+  /** Rush mode (the guests' TVs draw its heat) */
+  rush?: boolean;
   teamNames: [string, string];
   teams: [NetTeam, NetTeam];
   /** the ball's halo colours, per team */

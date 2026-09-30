@@ -35,6 +35,8 @@ export interface MatchConfig {
   introTime?: number;
   /** widens the human swing window (assist) */
   timingScale?: number;
+  /** Rush: rallies start faster and every hit builds heat (ball and players speed up) */
+  rush?: boolean;
 }
 
 export interface SwingIn {
