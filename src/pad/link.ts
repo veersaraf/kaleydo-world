@@ -9,6 +9,14 @@ import type { PadMsg, ServerToPad } from '../shared/protocol';
 
 export type LinkStatus = 'connecting' | 'online' | 'offline';
 
+// Keepalive without waking the room (cloud/worker.ts is on the WebSocket Hibernation API: an idle room is asleep and bills nothing).
+// The timed ping (`{type:'ping', t}`, answered with the relay's clock) wakes it, so in a cloud room it runs only while `isActive()`
+// (the remote's mode is a play mode, or the phone moved lately: src/pad/main.ts); otherwise the fixed text KEEPALIVE goes out every
+// KA_MS and is answered by the runtime itself, the room staying asleep. Becoming active again sends the burst afresh.
+/** the exact text the room answers without waking (cloud/worker.ts) */
+const KEEPALIVE = 'ka';
+const KA_MS = 40_000;
+
 /** the messages the TV corrects for their age: they get a `ts` (an 'ori' too: the TV draws each pose as old as it really is) */
 const TIMED = new Set<string>(['swing', 'slash', 'bowl', 'grip', 'guard', 'draw', 'toss', 'prep', 'ori']);
 /** the pose stream: an HTTP batch carries only the newest of these */
@@ -23,6 +31,8 @@ export class PadLink {
   onStatus: (s: LinkStatus) => void = () => {};
   /** the link came up again in a different room after a 'move' (the TV needs our hello afresh) */
   onRejoin: () => void = () => {};
+  /** whether the timed ping should run now (cloud rooms; see the note at the top). Set by the remote's page; by default always. */
+  isActive: () => boolean = () => true;
 
   private ws: WebSocket | null = null;
   private es: EventSource | null = null;
@@ -40,6 +50,9 @@ export class PadLink {
   /** the relay's clock minus ours, ms; null until 3 pongs have been heard */
   clockOffset: number | null = null;
   private burstTimers: number[] = [];
+  private wasActive = false;
+  private lastPing = 0;
+  private txAt = 0;
   /** a 'move' was followed and nobody has answered yet; the timer brings us back to `from` if none does */
   private moved: { from: { room: string; via: string }; timer: number } | null = null;
   private rejoining = false;
@@ -59,7 +72,24 @@ export class PadLink {
     if (!this.wsFailed && 'WebSocket' in window) this.tryWS();
     else this.startHTTP();
     clearInterval(this.pingTimer);
-    this.pingTimer = window.setInterval(() => this.ping(), 2000);
+    this.pingTimer = window.setInterval(() => this.tick(), 500);
+  }
+
+  /** every half second: the timed ping when it is due (every 2 s, while active), the keepalive when the link has been idle KA_MS */
+  private tick() {
+    if (this.status !== 'online') return;
+    const now = performance.now();
+    // (a room in the cloud, over a WebSocket: the only place a ping costs anything; elsewhere it runs as ever)
+    if (!this.room || this.transport !== 'ws' || this.isActive()) {
+      if (!this.wasActive) this.pingBurst();
+      else if (now - this.lastPing >= 2000) this.ping();
+    } else {
+      this.wasActive = false;
+      if (now - this.txAt >= KA_MS && this.ws?.readyState === WebSocket.OPEN) {
+        this.txAt = now;
+        this.ws.send(KEEPALIVE);
+      }
+    }
   }
 
   close() {
@@ -142,6 +172,8 @@ export class PadLink {
     };
     ws.onmessage = (ev) => {
       if (this.ws !== ws) return;
+      // the keepalive's answer: nothing to parse
+      if (ev.data === KEEPALIVE) return;
       try {
         this.handle(JSON.parse(ev.data));
       } catch {}
@@ -241,11 +273,16 @@ export class PadLink {
    *  (the 2 s ticker alone would take ~16 s to fill the median); the median of 8 still throws outliers out */
   private pingBurst() {
     this.burstTimers.forEach(clearTimeout);
+    this.wasActive = true;
+    this.lastPing = this.txAt = performance.now();
+    // (the samples left are from before a quiet spell: the clock is measured afresh; `clockOffset` stands until three new pongs)
+    this.clock = [];
     this.burstTimers = [0, 300, 700, 1500].map((ms) => window.setTimeout(() => this.ping(), ms));
   }
 
   private ping() {
     const t = performance.now();
+    this.lastPing = this.txAt = t;
     this.pingWall.set(t, Date.now());
     if (this.pingWall.size > 16) this.pingWall.delete(this.pingWall.keys().next().value as number);
     this.send({ type: 'ping', t });

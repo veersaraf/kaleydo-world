@@ -1294,7 +1294,8 @@ function sendOri(): boolean {
 // How often the pose goes out: the sword follows the phone 1:1 and the guard's angle decides blocks,
 // so the duel and the bow are a little quicker; the HTTP fallback is slow.
 const oriFast = () => mode === 'sword' || mode === 'bow';
-const oriSlow = () => mode === 'play' || mode === 'serve' || mode === 'menu' || mode === 'bowl';
+// (not in a menu: the TV draws no pose there — a phone on a table in a menu sends nothing but the keepalive)
+const oriSlow = () => mode === 'play' || mode === 'serve' || mode === 'bowl';
 const oriPeriod = (fast: boolean) => (link.transport === 'http' ? 100 : fast ? 33 : 50);
 // The pose is sent from the motion handler, every Nth sample (60 Hz sensors: every 2nd for the duel,
 // every 3rd for the rest, every 6th over HTTP): the freshest pose there is, at a steady beat — a timer
@@ -1302,9 +1303,34 @@ const oriPeriod = (fast: boolean) => (link.transport === 'http' ? 100 : fast ? 3
 // sensor's own pace, which not every phone keeps to 60 Hz.)
 let oriCount = 0;
 let oriDt = 1000 / 60;
+// The idle detector: the phone "moved" when its orientation is more than ~6 degrees from where it was when it last did (a phone on a
+// table stays put; a hand never does for long). In the cloud the timed ping (which keeps a room's Durable Object awake) runs only
+// while the remote is in a play mode or moved in the last 30 s (link.isActive); otherwise the link sends only a keepalive.
+const PING_MODES = new Set<string>(['play', 'serve', 'bowl', 'sword', 'bow', 'bat']);
+const MOVED_MS = 30_000;
+let movedAt = performance.now();
+let moveRef: [number, number, number, number] | null = null;
+function moveCheck(now: number) {
+  const q = orient.q;
+  const r = moveRef;
+  if (!r) {
+    moveRef = [q[0], q[1], q[2], q[3]];
+    return;
+  }
+  // (|q . r| = cos(half the angle between them); 0.9987 is 5.8 degrees)
+  if (Math.abs(q[0] * r[0] + q[1] * r[1] + q[2] * r[2] + q[3] * r[3]) < 0.9987) {
+    movedAt = now;
+    r[0] = q[0];
+    r[1] = q[1];
+    r[2] = q[2];
+    r[3] = q[3];
+  }
+}
+link.isActive = () => PING_MODES.has(mode) || performance.now() - movedAt < MOVED_MS;
 /** when the motion handler last sent the pose: the timers below only step in when it hasn't (no motion events) */
 let motionOriAt = -1e9;
 function motionOri(now: number, dtMs: number) {
+  if (motionOK) moveCheck(now);
   if (dtMs > 0 && dtMs < 60) oriDt += (dtMs - oriDt) * 0.05;
   const fast = oriFast();
   if (!motionOK || (!fast && !oriSlow())) return;
