@@ -22,7 +22,7 @@ export class JoinPanel {
   private qr: HTMLImageElement;
   private url: HTMLElement;
   private seats: HTMLElement;
-  private blurb!: HTMLElement;
+  private blurb: HTMLElement;
   private friends: HTMLElement;
   private shownUrl = '';
 
@@ -35,23 +35,20 @@ export class JoinPanel {
     this.url = h('div', { class: 'url' }, '');
     this.seats = h('div', { class: 'seats' });
     this.friends = h('div', { class: 'friends' });
+    this.blurb = h('p', null, 'Your phone becomes the controller.');
+    // the QR code in a camera's viewfinder: point your phone here
+    const corners = ['tl', 'tr', 'bl', 'br'].map((c) => h('i', { class: `vf ${c}` }));
     this.el = h(
       'div',
       { class: 'join panel' + (compact ? ' compact' : '') },
       h(
         'div',
         { class: 'top' },
-        h('div', { class: 'qr' }, this.qr),
-        h(
-          'div',
-          null,
-          h('h3', null, 'Grab your phone'),
-          (this.blurb = h('p', null, 'Scan with your iPhone camera, on this Mac’s Wi-Fi. The first time, a one-minute setup.')),
-          this.url,
-        ),
+        h('div', { class: 'qr' }, this.qr, ...corners),
+        h('div', { class: 'say' }, h('h3', null, 'Scan to play'), this.blurb, this.seats),
       ),
       this.friends,
-      this.seats,
+      this.url,
     );
     this.refresh();
   }
@@ -65,15 +62,13 @@ export class JoinPanel {
       if (this.link.cloud) {
         // the cloud: the QR code opens the remote in this TV's room, from anywhere
         void QRCode.toDataURL(u, { margin: 1, width: 360, color: { dark: '#1d1c33', light: '#ffffff' } }).then((src: string) => (this.qr.src = src));
-        this.blurb.textContent =
-          this.link.role === 'guest'
-            ? 'Scan with your phone’s camera: it joins the host’s game, and you play from your own screen. Or open the address below and enter the room code.'
-            : 'Scan with your phone’s camera to turn it into a remote. Or open the address below and enter the room code.';
-        this.url.textContent = `Room ${this.link.room} · ${location.host}/c`;
+        this.blurb.textContent = this.link.role === 'guest' ? 'Your phone joins the host’s game.' : 'Your phone becomes the controller. No app.';
+        this.url.replaceChildren('No camera? Go to ', h('b', null, `${location.host}/c`), ' · code ', h('b', null, this.link.room ?? ''));
       } else {
         this.qr.src = `/api/qr.svg?dark=1d1c33&t=${Date.now()}`;
         // (the QR code opens the http join page, which sends the phone on to the https remote)
-        this.url.textContent = u.replace(/^https?:\/\//, '');
+        this.url.replaceChildren('Same Wi-Fi as this Mac · ', h('b', null, u.replace(/^https?:\/\//, '')));
+        this.blurb.textContent = 'Your phone becomes the controller.';
       }
     } else if (!u) {
       this.url.textContent = this.link.online ? 'No Wi-Fi address found' : 'Connecting to the KALEIDO server…';
@@ -93,13 +88,13 @@ export class JoinPanel {
     for (let i = 0; i < 4; i++) {
       const s = this.input.seats[i];
       const on = !!s && (s.connected || s.local);
-      // a phone's player shows their face (the character they made, or the one they'll get)
-      const face = s && !s.local ? h('i', { class: 'sface' }, avatarSvg(seatFace(s))) : h('b', null, `P${i + 1}`);
+      // a phone's player shows their face (the character they made, or the one they'll get); an open seat, its number
+      const face = s && !s.local ? h('i', { class: 'sface' }, avatarSvg(seatFace(s))) : h('b', null, String(i + 1));
       const el = h(
         'div',
-        { class: `seat ${on ? 'on' : ''} ${s && !s.connected && !s.local ? 'off' : ''}`, style: `--c:${s?.color ?? '#999'}` },
+        { class: `seat ${on ? 'on' : ''} ${s && !s.connected && !s.local ? 'off' : ''}`, style: `--c:${s?.color ?? '#999'}`, title: s ? (s.local ? 'Mouse & keys' : s.name) : `Player ${i + 1}: open` },
         face,
-        h('span', { class: 'nm' }, s ? (s.local ? 'Mouse & keys' : s.connected ? s.name : `${s.name} (away)`) : 'Open'),
+        s ? h('span', { class: 'nm' }, s.local ? 'Keys' : s.connected ? s.name : 'away') : null,
       );
       this.seats.append(el);
     }

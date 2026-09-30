@@ -52,6 +52,8 @@ export interface Settings {
   seenTutorial: boolean;
   /** Kaleido mode: big moments shatter the world into the next one (every sport) */
   kaleido: boolean;
+  /** the sound button in the corner */
+  muted: boolean;
 }
 
 const DEFAULTS: Settings = {
@@ -68,6 +70,7 @@ const DEFAULTS: Settings = {
   world: 'park',
   seenTutorial: false,
   kaleido: false,
+  muted: false,
 };
 
 const LEVELS: { id: Level; label: string; stars: string }[] = [
@@ -184,7 +187,7 @@ export class Flow {
     this.screenLayer = h('div', { class: 'layer' });
     this.hudLayer = h('div', { class: 'layer' });
     this.toastEl = h('div', { class: 'toast' });
-    this.root.append(this.hudLayer, this.screenLayer, this.toastEl);
+    this.root.append(this.hudLayer, this.screenLayer, this.toastEl, this.soundButton());
     this.join = new JoinPanel(app.link, app.input);
     this.applyTheme(worldDef('plaza'));
 
@@ -404,7 +407,52 @@ export class Flow {
     const au = this.audio;
     this.app.beat = () => au.music.beat();
     this.audio.setVolumes(this.settings.music, this.settings.sfx);
+    this.audio.setMuted(this.settings.muted);
     if (!this.audio.music.song) this.audio.playSong(this.app.stage.current?.def.song ?? 'plaza');
+  }
+
+  /** The round sound button in the top-right corner, on every screen (M toggles it too). */
+  private soundButton() {
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.innerHTML =
+      '<path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z" fill="currentColor"/>' +
+      '<g class="waves"><path d="M15.5 9a4 4 0 0 1 0 6"/><path d="M18 6.5a7.5 7.5 0 0 1 0 11"/></g>' +
+      '<g class="x"><path d="M16 9.5l5 5M21 9.5l-5 5"/></g>';
+    const btn = h('button', { class: 'soundbtn', type: 'button' });
+    btn.append(svg);
+    const show = () => {
+      const m = this.settings.muted;
+      btn.classList.toggle('muted', m);
+      btn.setAttribute('aria-label', m ? 'Sound off — turn it on' : 'Sound on — mute');
+      btn.title = m ? 'Sound off (M)' : 'Mute (M)';
+    };
+    const toggle = () => {
+      this.settings.muted = !this.settings.muted;
+      this.save();
+      this.unlockAudio();
+      this.audio?.setMuted(this.settings.muted);
+      show();
+    };
+    // (the button is not a swing or a menu click)
+    btn.addEventListener('pointerdown', (e) => e.stopPropagation());
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggle();
+      btn.blur();
+    });
+    window.addEventListener('keydown', (e) => {
+      if (e.key.toLowerCase() !== 'm' || e.repeat || e.metaKey || e.ctrlKey || (e.target as HTMLElement)?.tagName === 'INPUT') return;
+      toggle();
+    });
+    show();
+    return btn;
   }
 
   // ---------------------------------------------------------------- screens
@@ -588,16 +636,14 @@ export class Flow {
     const tb = loadTour().beaten;
     const pill = (ico: string, label: string, sub: string) => h('div', { class: 'hpill' }, h('i', null, ico), h('span', null, label), h('small', null, sub));
     const tour = pill('🏆', 'World Tour', tb >= TOUR.length ? 'The Prism is whole' : `${Math.min(tb, 8)} of 8 shards`);
-    const set = pill('⚙', 'Settings', 'Sound, controls');
     // the cloud: play with friends on their own TVs
     const online = this.app.link.cloud ? pill('🌐', 'Play online', this.app.link.guests.length ? `${this.app.link.guests.length} watching` : `Room ${this.app.link.room}`) : null;
     let lastCard = Math.max(0, sports.findIndex((sp) => sp.id === this.app.attractSport));
     const n = sports.length;
     const nav = new Nav(
       [
-        ...sports.map((sp, i) => ({ el: cards[i], onSelect: () => open(sp.id), onDown: () => nav.focus(i < n / 2 ? n : n + 1) })),
+        ...sports.map((sp, i) => ({ el: cards[i], onSelect: () => open(sp.id), onDown: () => nav.focus(online && i >= n / 2 ? n + 1 : n) })),
         { el: tour, onSelect: () => this.go(this.tourScreen()), onUp: () => nav.focus(lastCard) },
-        { el: set, onSelect: () => this.go(this.settingsScreen()), onUp: () => nav.focus(lastCard) },
         ...(online ? [{ el: online, onSelect: () => this.go(this.onlineScreen()), onUp: () => nav.focus(lastCard) }] : []),
       ],
       true,
@@ -620,7 +666,7 @@ export class Flow {
       'div',
       { class: 'screen home' },
       h('div', { class: 'mini-logo' }, h('span', null, 'KALEIDO')),
-      h('div', { class: 'hbottom' }, h('div', { class: 'hpills' }, tour, set, online), h('div', { class: 'scards' }, ...cards)),
+      h('div', { class: 'hbottom' }, h('div', { class: 'hpills' }, tour, online), h('div', { class: 'scards' }, ...cards)),
       this.join.el,
     );
     this.join.refresh();
@@ -1211,49 +1257,6 @@ export class Flow {
     ]);
     const sheet = h('div', { class: 'sheet panel' }, h('h2', null, 'How to play'), tabs, h('div', { class: 'help-grid' }, ...page.tips), page.keys, back);
     return this.navScreen('help', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'How to play', hint: '◀ ▶ sport · A to go back' });
-  }
-
-  private settingsScreen(): Screen {
-    const S = this.settings;
-    const row = (k: string, get: () => string) => {
-      const v = h('span');
-      const r = h('div', { class: 'row' }, h('span', { class: 'k' }, k), h('span', { class: 'v' }, h('span', { class: 'arrow' }, '◀'), v, h('span', { class: 'arrow' }, '▶')));
-      return { r, v, get };
-    };
-    const pct = (x: number) => `${Math.round(x * 10) * 10}%`;
-    const rows = [
-      row('Music volume', () => pct(S.music)),
-      row('Effects volume', () => pct(S.sfx)),
-      row('Umpire voice', () => (S.voice ? 'On' : 'Off')),
-      row('Mouse flick swings', () => (S.mouse ? 'On' : 'Off')),
-      row('Swing timing', () => (S.relaxed ? 'Relaxed (easier)' : 'Normal')),
-      row('Split screen (2 players)', () => (S.split ? 'On' : 'Off')),
-    ];
-    const done = h('div', { class: 'row go' }, 'Done');
-    const refresh = () => {
-      rows.forEach((r) => (r.v.textContent = r.get()));
-      this.audio?.setVolumes(S.music, S.sfx);
-      if (this.audio) this.audio.voiceOn = S.voice;
-      this.app.input.mouseSwings = S.mouse;
-      this.app.splitPref = S.split;
-      this.save();
-    };
-    const step = (k: 'music' | 'sfx', d: number) => {
-      S[k] = Math.max(0, Math.min(1, Math.round((S[k] + d) * 10) / 10));
-      refresh();
-    };
-    const nav = new Nav([
-      { el: rows[0].r, onLeft: () => step('music', -0.1), onRight: () => step('music', 0.1), onSelect: () => step('music', 0.1) },
-      { el: rows[1].r, onLeft: () => step('sfx', -0.1), onRight: () => step('sfx', 0.1), onSelect: () => step('sfx', 0.1) },
-      { el: rows[2].r, onLeft: () => ((S.voice = !S.voice), refresh()), onRight: () => ((S.voice = !S.voice), refresh()), onSelect: () => ((S.voice = !S.voice), refresh(), this.audio?.say('Fifteen love')) },
-      { el: rows[3].r, onLeft: () => ((S.mouse = !S.mouse), refresh()), onRight: () => ((S.mouse = !S.mouse), refresh()), onSelect: () => ((S.mouse = !S.mouse), refresh()) },
-      { el: rows[4].r, onLeft: () => ((S.relaxed = !S.relaxed), refresh()), onRight: () => ((S.relaxed = !S.relaxed), refresh()), onSelect: () => ((S.relaxed = !S.relaxed), refresh()) },
-      { el: rows[5].r, onLeft: () => ((S.split = !S.split), refresh()), onRight: () => ((S.split = !S.split), refresh()), onSelect: () => ((S.split = !S.split), refresh()) },
-      { el: done, onSelect: () => this.go(this.mainMenu()) },
-    ]);
-    refresh();
-    const sheet = h('div', { class: 'sheet panel' }, h('h2', null, 'Settings'), ...rows.map((r) => r.r), done);
-    return this.navScreen('settings', h('div', { class: 'screen center' }, sheet), nav, () => this.go(this.mainMenu()), { title: 'Settings', hint: '◀ ▶ to change' });
   }
 
   private pauseScreen(): Screen {
