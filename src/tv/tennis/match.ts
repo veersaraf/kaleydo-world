@@ -156,7 +156,7 @@ const SWING_BACK_MAX = 0.4;
  *   launch  seconds a hit ball takes from where it was drawn to the true outgoing flight: 1.05 × the swing's age, in [launch, launchMax]
  *           (the gap to close is the age × the ball's speed; over a fixed time a slow phone's ball would cross the screen in a frame or two)
  */
-export const HOLD = { lead: 0.03, slow: 0.25, catchUp: 0.06, min: 0.04, max: 0.12, def: 0.06, launch: 0.07, launchMax: 0.13 };
+export const HOLD = { lead: 0.03, slow: 0.25, catchUp: 0.06, min: 0.04, max: 0.18, def: 0.06, launch: 0.07, launchMax: 0.13 };
 
 export class Match {
   cfg: MatchConfig;
