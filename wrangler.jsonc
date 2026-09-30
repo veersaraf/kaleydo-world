@@ -1,4 +1,4 @@
-// KALEIDO in the cloud: `npm run build && npx wrangler deploy` (see cloud/worker.ts, README)
+// Kaleydo World in the cloud: `npm run build && npx wrangler deploy` (see cloud/worker.ts, README)
 {
   "name": "kaleido",
   "main": "cloud/worker.ts",

@@ -1,4 +1,4 @@
-// KALEIDO in the cloud (Cloudflare Workers + a Durable Object per room).
+// Kaleydo World in the cloud (Cloudflare Workers + a Durable Object per room).
 //
 // The same job server/server.mjs's hub does on a Mac, for anyone with a browser:
 // it serves the built game (dist/), and it relays between one TV and its phones.
