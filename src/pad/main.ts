@@ -432,8 +432,6 @@ const panels: Record<PadMode, HTMLElement> = {
   bat: playPanel,
 };
 
-const leds = h('div', { class: 'leds' }, h('i'), h('i'), h('i'), h('i'));
-const footer = h('footer', {}, leds, h('div', { class: 'brand' }, 'KALEIDO'));
 const flash = h('div', { class: 'flash' });
 const toast = h('div', { class: 'toast' });
 const shell = h('div', { class: 'shell' }, menuPanel, playPanel, servePanel, waitPanel, skipPanel, bowlPanel, swordPanel, bowPanel, netBar);
@@ -442,7 +440,6 @@ const remoteScreen = h(
   { class: 'remote' },
   header,
   shell,
-  footer,
   flash,
   toast,
 );
@@ -504,6 +501,8 @@ const sheet = h(
 );
 
 root.append(joinScreen, remoteScreen, sheet);
+// a text field's keyboard scrolls the whole remote up to it: once it's gone, put the remote back
+root.addEventListener('focusout', () => requestAnimationFrame(() => (root.scrollTop = 0)));
 
 // ------------------------------------------------------------------ state
 
@@ -827,7 +826,6 @@ function onMessage(m: ServerToPad) {
       setColor(m.color || PLAYER_COLORS[m.slot] || '#8a7dff');
       badge.textContent = 'P' + (m.slot + 1);
       nameLabel.textContent = m.name;
-      [...leds.children].forEach((el, i) => el.classList.toggle('on', i === m.slot));
       remoteScreen.classList.remove('lost');
       waitPanel.classList.remove('busy');
       if (mode === 'wait') setMode('menu');
@@ -1929,6 +1927,7 @@ joinBtn.addEventListener('click', () => {
   void keepAwake();
   joined = true;
   root.dataset.screen = 'remote';
+  root.scrollTop = 0;
   nameLabel.textContent = prefs.name || 'Player';
   setMode('wait', 'Connecting…', '');
   link.connect();
