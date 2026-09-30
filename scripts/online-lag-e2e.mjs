@@ -20,7 +20,7 @@
 //     true one (measured phone send → host receipt on the shared clock): unbiased, off by about the jitter; and
 //     the swings the phone times on the host's toss / the ball's arrival, peak on schedule, are judged HITS (not whiffs)
 //   - the swing echo: the guest hears its own phone's swing at once (relay → guest), long before the stream shows the hit
-//   - the guest looks from its phone's end (team 1: the far end) and a Kaleido shift shatters from the same spot in the court
+//   - the guest looks from its phone's end (team 1: the far end) and a Kaleydo shift shatters from the same spot in the court
 //
 //   node scripts/online-lag-e2e.mjs                   (builds dist/ if there is none, starts `wrangler dev` on 8798 and kills it after)
 //   PROFILES=a,c SECONDS=30 OUT=dir BASE=http://127.0.0.1:8798 node scripts/online-lag-e2e.mjs
@@ -455,7 +455,7 @@ async function runProfile(P) {
     }
     await guest.evaluate(() => (window.__measure = false));
     await host.evaluate(() => (window.__hmeasure = false));
-    // a Kaleido shift on the host, from a spot in the court: the guest shatters from that spot as it sees it
+    // a Kaleydo shift on the host, from a spot in the court: the guest shatters from that spot as it sees it
     if (P.id === 'a') {
       const at = { x: 3.2, y: 1, z: 5 };
       await host.evaluate((at) => {
@@ -482,7 +482,7 @@ async function runProfile(P) {
       shiftDone = true;
       // (the guest's camera is at the other end: the same spot is on the other side of its screen)
       check(
-        'the Kaleido shift shatters from the same spot in the court, as the guest\'s own camera sees it',
+        'the Kaleydo shift shatters from the same spot in the court, as the guest\'s own camera sees it',
         !!seen && Math.abs(seen.ox - seen.px) < 0.03 && Math.abs(seen.oy - seen.py) < 0.03 && Math.hypot(seen.ox - hostP.x, seen.oy - hostP.y) > 0.05,
         seen ? `guest origin (${seen.ox.toFixed(2)}, ${seen.oy.toFixed(2)}) = its projection (${seen.px.toFixed(2)}, ${seen.py.toFixed(2)}); the host's view had (${hostP.x.toFixed(2)}, ${hostP.y.toFixed(2)})` : 'no world change seen',
       );

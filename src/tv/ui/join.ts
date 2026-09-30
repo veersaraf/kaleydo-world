@@ -71,7 +71,7 @@ export class JoinPanel {
         this.blurb.textContent = 'Your phone becomes the controller.';
       }
     } else if (!u) {
-      this.url.textContent = this.link.online ? 'No Wi-Fi address found' : 'Connecting to the KALEIDO server…';
+      this.url.textContent = this.link.online ? 'No Wi-Fi address found' : 'Connecting to the Kaleydo World server…';
     }
     // (a guest's phones sit at the host: the lobby lists them, not these four seats)
     this.el.classList.toggle('noseats', this.link.role === 'guest');

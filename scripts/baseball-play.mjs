@@ -7,7 +7,7 @@
 import { chromium } from 'playwright-core';
 import fs from 'node:fs';
 const BASE = process.env.BASE || 'http://localhost:3200';
-const out = process.argv[2] || '/tmp/kaleido-baseball';
+const out = process.argv[2] || '/tmp/kaleydo-baseball';
 const world = process.argv[3] || 'park';
 const skill = +(process.argv[4] ?? 0.9);
 const pitches = +(process.argv[5] ?? 5);

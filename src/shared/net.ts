@@ -3,7 +3,7 @@
 //
 // Two kinds of message, both relayed by the room (src/shared/protocol.ts HostToGuest):
 //   - JSON control messages, {type:'net', msg: NetMsg}: `start` (everything needed to
-//     build the same match), `end`, `world` (a Kaleido shift) and `hud` (a caption).
+//     build the same match), `end`, `world` (a Kaleydo shift) and `hud` (a caption).
 //   - Binary SNAPSHOT frames (~30 Hz, and on every match event), forwarded as they are.
 //
 // A snapshot is a whole picture of the match at one instant, so a lost or late one costs
@@ -107,7 +107,7 @@ export interface NetEnd {
   teamNames: [string, string];
 }
 
-/** host → guests: the world changed (a Kaleido shift) */
+/** host → guests: the world changed (a Kaleydo shift) */
 export interface NetWorld {
   type: 'world';
   id: number;

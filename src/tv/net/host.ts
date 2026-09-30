@@ -1,6 +1,6 @@
 // The host side of an online match: while this TV simulates a tennis match and guest TVs are
 // in its room, it streams the match to them (src/shared/net.ts): a `start` message, a binary
-// snapshot ~30 times a second and at every match event, a `world` message when a Kaleido shift
+// snapshot ~30 times a second and at every match event, a `world` message when a Kaleydo shift
 // begins and an `end`. The guests never simulate; they render what arrives.
 //
 // Cost: encoding a snapshot is ~10 µs into a preallocated buffer (the outgoing frame is one small
@@ -19,7 +19,7 @@ const TICK_MS = 26;
 const MIN_MAGNET = 0.005;
 
 export class NetHost {
-  /** set by the flow: is Kaleido (worlds shifting mid-match) on? */
+  /** set by the flow: is Kaleydo (worlds shifting mid-match) on? */
   kaleido: () => boolean = () => false;
   /** what the stream has cost (for tests and tuning) */
   stats = { snapshots: 0, bytes: 0, starts: 0, lastBytes: 0, encodeMsAvg: 0, encodeMsMax: 0, encodeMsTotal: 0 };
@@ -44,7 +44,7 @@ export class NetHost {
   private guestKey = '';
   private world = '';
   private startMsg: NetStart | null = null;
-  /** the flow's Kaleido shift, as it begins: the spot in the court the world shatters from (the next `world` message carries it) */
+  /** the flow's Kaleydo shift, as it begins: the spot in the court the world shatters from (the next `world` message carries it) */
   private shiftAt: { at: { x: number; y: number; z: number }; ms: number } | null = null;
 
   constructor(private app: App) {}
@@ -165,7 +165,7 @@ export class NetHost {
     };
   }
 
-  /** A Kaleido shift is about to begin from this spot in the court (Flow.shiftWorld): the guests' shatter starts from it too. */
+  /** A Kaleydo shift is about to begin from this spot in the court (Flow.shiftWorld): the guests' shatter starts from it too. */
   shiftFrom(at: { x: number; y: number; z: number }) {
     this.shiftAt = { at: { x: at.x, y: at.y, z: at.z }, ms: this.clock.perf() };
   }
@@ -259,7 +259,7 @@ export class NetHost {
       this.stats.starts++;
       this.needStart = false;
     }
-    // a Kaleido shift began (or the world changed some other way)
+    // a Kaleydo shift began (or the world changed some other way)
     const st = this.app.stage;
     const target = st.next?.def.id ?? st.current?.def.id ?? this.world;
     if (target !== this.world) {

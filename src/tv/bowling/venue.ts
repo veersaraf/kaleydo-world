@@ -290,7 +290,7 @@ function carpetTexture() {
   return t;
 }
 
-/** The masking unit's sign: "KALEIDO LANES" in rainbow letters over five coloured lane panels with big numbers. */
+/** The masking unit's sign: "KALEYDO LANES" in rainbow letters over five coloured lane panels with big numbers. */
 function fasciaTexture(width: number, height: number) {
   const W = 2048;
   const H = Math.round((W * height) / width / 8) * 8;
@@ -344,7 +344,7 @@ function fasciaTexture(width: number, height: number) {
     x.fillStyle = '#1b1a36';
     for (let i = 0; i <= LANES.length; i++) x.fillRect(px(-BANK + i * P) - 5, band, 10, H - band);
     // title band: rainbow letters and little stars
-    const title = 'KALEIDO LANES';
+    const title = 'KALEYDO LANES';
     x.font = `700 ${Math.round(band * 0.78)}px Fredoka, 'Arial Rounded MT Bold', system-ui, sans-serif`;
     x.textBaseline = 'middle';
     x.textAlign = 'left';
@@ -748,7 +748,7 @@ export class BowlVenue {
     this.add(curtain, cg, {});
   }
 
-  /** The masking unit: a long box over the pin decks with the lit "KALEIDO LANES" sign on its front. */
+  /** The masking unit: a long box over the pin decks with the lit "KALEYDO LANES" sign on its front. */
   private buildMasking() {
     const body = this.mat('shirt', COL.mask, { rim: 0.35 });
     const trim = this.mat('racket', COL.trim, { maxGlow: 1.8 });

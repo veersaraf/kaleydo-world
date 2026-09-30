@@ -1,0 +1,36 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Kaleydo World · globe</title>
+<style>html,body{margin:0;height:100%;background:#0b3f86;overflow:hidden}canvas{display:block;width:100vmin;height:100vmin;margin:0 auto}
+#hint{position:fixed;left:0;right:0;bottom:12px;text-align:center;font:13px system-ui;color:#cfe8ff;opacity:.8}</style></head>
+<body><canvas id="c"></canvas><div id="hint">Drag to orbit · scroll to zoom · space to pause the spin</div>
+<script type="module">
+// Live viewer for the hero globe (dev only): drag to orbit, scroll to zoom, space pauses the spin.
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { dress } from '/src/tv/logo/globe.ts';
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+const g = dress(renderer, true);
+const controls = new OrbitControls(g.camera, canvas);
+controls.target.set(0, 0.03, 0);
+controls.enableDamping = true;
+controls.minDistance = 3;
+controls.maxDistance = 14;
+let spin = true, t = 0, last = performance.now();
+addEventListener('keydown', (e) => { if (e.code === 'Space') spin = !spin; });
+function size() {
+  const s = Math.min(innerWidth, innerHeight);
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(s, s, false);
+}
+addEventListener('resize', size);
+size();
+renderer.setAnimationLoop((now) => {
+  const dt = (now - last) / 1000;
+  last = now;
+  if (spin) t = (t + dt / 24) % 1;
+  g.setSpin(t);
+  controls.update();
+  renderer.render(g.scene, g.camera);
+});
+</script></body></html>

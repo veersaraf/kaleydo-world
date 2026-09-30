@@ -169,7 +169,7 @@ certHelp.hidden = location.protocol !== 'https:' || /^(localhost|127\.0\.0\.1|\[
 const joinScreen = h(
   'section',
   { class: 'join' },
-  h('div', { class: 'logo', 'aria-label': 'KALEIDO' }, ...'KALEIDO'.split('').map((ch, i) => h('span', { style: `--i:${i}` }, ch))),
+  h('img', { class: 'logo', src: '/brand/lockup-small.png', alt: 'Kaleydo World' }),
   h('div', { class: 'tagline' }, 'Your phone is the remote'),
   h('div', { class: 'card' }, joinFace, nameInput, h('div', { class: 'seg' }, handL, handR), joinBtn, joinNote),
   certHelp,
@@ -719,7 +719,7 @@ function setMode(m: PadMode, title?: string, hint?: string, lock = false) {
     waitPanel.classList.toggle('busy', link.status !== 'online' || slot < 0);
   }
   if (m === 'menu') {
-    menuTitle.textContent = title || 'KALEIDO';
+    menuTitle.textContent = title || 'KALEYDO';
     menuHint.textContent = hint || 'Use the pad · A to choose';
   }
   if (m === 'play') {
@@ -794,7 +794,7 @@ function setStatus(s: LinkStatus) {
   remoteScreen.classList.toggle('lost', s !== 'online' && slot >= 0);
   if (mode === 'wait' || mode === 'watch') waitPanel.classList.toggle('busy', s !== 'online' || slot < 0);
   if (s === 'offline' || s === 'connecting') {
-    if (slot < 0) setMode('wait', s === 'connecting' ? 'Connecting…' : 'Disconnected', 'Make sure KALEIDO is running on your Mac');
+    if (slot < 0) setMode('wait', s === 'connecting' ? 'Connecting…' : 'Disconnected', 'Make sure Kaleydo World is running on your Mac');
   } else if (joined) {
     link.send({ type: 'hello', name: prefs.name || 'Player', handed: prefs.handed, ver: 1, motion: motionOK, ...(prefs.look ? { look: prefs.look } : {}) });
   }

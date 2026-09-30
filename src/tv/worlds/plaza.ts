@@ -676,7 +676,7 @@ class PlazaWorld extends World {
       x.font = '700 82px Fredoka, sans-serif';
       x.textAlign = 'center';
       x.textBaseline = 'middle';
-      const word = 'KALEIDO   ·   KALEIDO   ·   KALEIDO';
+      const word = 'KALEYDO   ·   KALEYDO   ·   KALEYDO';
       x.fillStyle = '#ffffff';
       x.fillText(word, 512, 68);
     });
@@ -776,7 +776,10 @@ class PlazaWorld extends World {
       x.textAlign = 'center';
       x.textBaseline = 'middle';
       x.fillStyle = '#2b2d42';
-      x.fillText('KALEIDO', 512, 104);
+      const gateName = 'KALEYDO WORLD';
+      // shrink the type until the whole name fits the sign
+      for (let px = 128; px > 40 && (x.font = `700 ${px}px Fredoka, sans-serif`, x.measureText(gateName).width > 960); px -= 4);
+      x.fillText(gateName, 512, 104);
     });
     const beam = new THREE.Mesh(new THREE.BoxGeometry(14.4, 2.2, 0.7).translate(0, 6.2, 0), [gateMat, gateMat, gateMat, gateMat, toon('#ffffff', { map: sign }), toon('#ffffff', { map: sign })]);
     gate.add(beam);
@@ -927,7 +930,7 @@ class PlazaWorld extends World {
     const legs2 = legs.clone();
     legs2.position.x = 3.5;
     this.scene.add(board, frame, legs, legs2);
-    this.setScoreboard(['KALEIDO', ''], ['', ''], ['', '']);
+    this.setScoreboard(['KALEYDO', 'WORLD'], ['', ''], ['', '']);
   }
 
   setScoreboard(names: [string, string], games: [string, string], points: [string, string]) {

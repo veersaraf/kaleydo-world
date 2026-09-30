@@ -1,4 +1,4 @@
-/* KALEIDO TV interface */
+/* Kaleydo World TV interface */
 
 #ui {
   --u: min(1vh, 0.56vw);
@@ -57,132 +57,24 @@
 
 /* ------------------------------------------------------------ title */
 
+/* (no darkening behind the lockup: its navy outline carries it over the attract scene) */
 .title {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  background: radial-gradient(ellipse 70% 55% at 50% 42%, rgba(10, 8, 30, 0.35), transparent 70%);
+  display: block;
 }
 
-.logo {
-  display: flex;
-  align-items: flex-end;
-  gap: calc(var(--u) * 0.6);
-  line-height: 1;
-  filter: drop-shadow(0 calc(var(--u) * 1.2) calc(var(--u) * 2) rgba(10, 8, 40, 0.35));
-}
-
-.logo .L {
-  display: inline-block;
-  font-size: calc(var(--u) * 17);
-  animation: letter-bob 3.2s ease-in-out infinite;
-  animation-delay: calc(var(--i) * -0.35s);
-  position: relative;
-}
-
-@keyframes letter-bob {
-  0%,
-  100% {
-    transform: translateY(0) rotate(var(--r, 0deg));
-  }
-  50% {
-    transform: translateY(calc(var(--u) * -1.4)) rotate(calc(var(--r, 0deg) * -1));
-  }
-}
-
-/* one letter per world */
-.lk {
-  font-family: 'Fredoka';
-  font-weight: 700;
-  color: #3aa8ff;
-  -webkit-text-stroke: calc(var(--u) * 0.9) #fff;
-  paint-order: stroke fill;
-  text-shadow: 0 calc(var(--u) * 0.9) 0 #1f5fb8;
-  --r: -4deg;
-}
-.la {
-  font-family: 'Kaushan Script';
-  color: #141414;
-  font-size: calc(var(--u) * 19) !important;
-  text-shadow: calc(var(--u) * 0.3) calc(var(--u) * 0.2) 0 rgba(0, 0, 0, 0.25);
-  --r: 3deg;
-}
-.la::before {
-  content: '';
+/* the same frame as the intro video's last one (both cover the screen), so the boot fades out onto it unseen */
+.title .lockup {
   position: absolute;
-  width: 0.62em;
-  height: 0.62em;
-  left: 0.08em;
-  top: 0.22em;
-  border-radius: 50%;
-  background: #e8412c;
-  z-index: -1;
-  filter: blur(0.5px);
-}
-.ll {
-  font-family: 'Monoton';
-  color: #fff;
-  text-shadow:
-    0 0 calc(var(--u) * 0.6) #ff4fd8,
-    0 0 calc(var(--u) * 1.6) #ff4fd8,
-    0 0 calc(var(--u) * 4) #b400ff;
-  --r: -2deg;
-}
-.le {
-  font-family: 'Press Start 2P';
-  font-size: calc(var(--u) * 13) !important;
-  color: #7dff5a;
-  text-shadow:
-    calc(var(--u) * 0.8) calc(var(--u) * 0.8) 0 #1d6b2a,
-    calc(var(--u) * 1.6) calc(var(--u) * 1.6) 0 #0b2a12;
-  margin-bottom: calc(var(--u) * 1.2);
-  --r: 0deg;
-}
-.li {
-  font-family: 'Gaegu';
-  font-weight: 700;
-  color: #fff7e8;
-  -webkit-text-stroke: calc(var(--u) * 0.25) #d9b98a;
-  text-shadow:
-    calc(var(--u) * 0.5) calc(var(--u) * 0.7) 0 #c9a574,
-    calc(var(--u) * 0.9) calc(var(--u) * 1.3) calc(var(--u) * 0.6) rgba(80, 50, 20, 0.35);
-  --r: 6deg;
-}
-.ld {
-  font-family: 'Chewy';
-  color: #ff8a3d;
-  text-shadow:
-    inset 0 0 0 #000,
-    0 calc(var(--u) * 0.5) 0 #d0561b,
-    0 calc(var(--u) * 1) 0 #a33d0d,
-    calc(var(--u) * -0.2) calc(var(--u) * -0.3) 0 #ffc39a;
-  --r: -5deg;
-}
-.lo {
-  font-family: 'Caveat';
-  font-weight: 700;
-  font-size: calc(var(--u) * 20) !important;
-  color: #8f6bff;
-  text-shadow:
-    0 0 calc(var(--u) * 1.4) rgba(143, 107, 255, 0.55),
-    calc(var(--u) * 0.6) calc(var(--u) * 0.4) calc(var(--u) * 1.2) rgba(255, 110, 170, 0.5);
-  --r: 4deg;
-}
-
-.subtitle {
-  margin-top: calc(var(--u) * 1);
-  font-weight: 700;
-  font-size: calc(var(--u) * 3.4);
-  letter-spacing: 0.6em;
-  padding-left: 0.6em;
-  color: #fff;
-  text-shadow: 0 calc(var(--u) * 0.3) calc(var(--u) * 1.4) rgba(10, 10, 40, 0.6);
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
 }
 
 .press {
   position: absolute;
-  bottom: calc(var(--u) * 12);
+  bottom: calc(var(--u) * 2.4);
   left: 50%;
   transform: translateX(-50%);
   font-weight: 600;
@@ -325,21 +217,10 @@
 }
 
 .mini-logo {
-  font-weight: 700;
-  font-size: calc(var(--u) * 7);
-  color: #fff;
-  letter-spacing: 0.04em;
-  text-shadow: 0 calc(var(--u) * 0.6) 0 rgba(0, 0, 0, 0.2);
-}
-
-.mini-logo span {
-  background: var(--prism);
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: prism-slide 6s linear infinite;
-  filter: drop-shadow(0 calc(var(--u) * 0.4) 0 rgba(255, 255, 255, 0.9));
+  display: block;
+  height: calc(var(--u) * 16);
+  width: auto;
+  pointer-events: none;
 }
 
 /* join panel: scan the code, your phone is the controller */
@@ -1724,12 +1605,7 @@ kbd {
   position: fixed;
   inset: 0;
   z-index: 50;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: calc(var(--u) * 4);
-  background: radial-gradient(ellipse at 50% 40%, #2a2466, #120f2e 70%);
+  background: radial-gradient(ellipse at 50% 45%, #3cc0f2 0%, #1f93dc 35%, #0b3f86 100%);
   transition: opacity 0.6s ease;
 }
 
@@ -1738,29 +1614,33 @@ kbd {
   pointer-events: none;
 }
 
-.boot-bar {
-  width: calc(var(--u) * 46);
-  height: calc(var(--u) * 1.2);
-  border-radius: 99px;
-  background: rgba(255, 255, 255, 0.14);
-  overflow: hidden;
-}
-
-.boot-bar i {
-  display: block;
-  width: 0;
+/* the intro video (or, when skipped, its last frame): same cover-fit as the title's lockup */
+.boot-intro {
+  position: absolute;
+  inset: 0;
+  width: 100%;
   height: 100%;
-  border-radius: 99px;
-  background: linear-gradient(90deg, #ff5a6e, #ffc53d, #35d49a, #3aa8ff, #b36bff);
-  transition: width 0.25s ease;
+  object-fit: cover;
+  display: block;
 }
 
 .boot-txt {
-  color: rgba(255, 255, 255, 0.72);
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--u) * 5);
+  text-align: center;
+  color: #fff;
   font-family: 'Fredoka';
   font-weight: 600;
   font-size: calc(var(--u) * 2.2);
   letter-spacing: 0.08em;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+
+.boot-txt.on {
+  opacity: 0.7;
 }
 
 /* ------------------------------------------------------------ name tags + server badge */
@@ -2715,9 +2595,8 @@ kbd {
 
 .home .mini-logo {
   position: absolute;
-  top: calc(var(--u) * 3.4);
-  left: calc(var(--u) * 5);
-  font-size: calc(var(--u) * 6.4);
+  top: calc(var(--u) * 2.4);
+  left: calc(var(--u) * 4);
 }
 
 .home .join {
@@ -2890,7 +2769,7 @@ kbd {
   box-shadow: 0 0 0 calc(var(--u) * 0.4) var(--accent, #3aa8ff);
 }
 
-/* the Kaleido toggle on the setup screens (what it does, under it, while it's on) */
+/* the Kaleydo toggle on the setup screens (what it does, under it, while it's on) */
 .row.kal {
   flex-wrap: wrap;
   row-gap: calc(var(--u) * 0.3);

@@ -1,4 +1,4 @@
-# KALEIDO — World Sports
+# KALEYDO WORLD
 
 Motion-controlled **tennis**, **bowling**, **sword duels**, **archery** and **baseball** in the spirit of Wii Sports,
 played across nine worlds that each look like a different medium: a Switch
@@ -54,7 +54,7 @@ like the Wii Remote did.
 
 **Optional — faster connection, no warning:** on the phone's join screen open
 *"Optional: remove the security warning"* and follow the three steps to trust
-the KALEIDO certificate. This lets the remote use WebSockets (lower latency).
+the Kaleydo World certificate (it appears as "KALEIDO Local CA"). This lets the remote use WebSockets (lower latency).
 
 ### Tennis controls
 
@@ -139,7 +139,7 @@ After each swing a meter shows how early or late you were.
   each, with an optional CPU slugger. Most home runs wins.
 - **World Tour** — the Great Prism shattered into eight worlds. Beat each
   world's champion to restore its shard, then face the Prism King.
-- **Kaleido Rally** — every couple of points, or any PERFECT shot deep in a
+- **Kaleydo Rally** — every couple of points, or any PERFECT shot deep in a
   rally, the court shatters like a kaleidoscope into the next world.
 
 ## Worlds
@@ -164,7 +164,7 @@ of the song, and the arrangement builds as the rally gets longer.
 - **The phone can't reach the game** — same Wi‑Fi? No VPN on either device?
   macOS firewall allowed `node`? The address is printed in the terminal.
 - **No sound on the Mac** — click the game window once.
-- **No sound on the phone** — turn the volume up; KALEIDO plays through the
+- **No sound on the phone** — turn the volume up; Kaleydo World plays through the
   silent switch on iOS 17+.
 - **Swings aren't detected** — allow Motion & Orientation access when asked.
   If you denied it: Settings → Apps → Safari → Advanced → Website Data, remove
@@ -250,7 +250,7 @@ exists, so the other TV simply joins it as a guest. The guest's phone needs no r
 joins another's room (this, or a code typed in) sends its phones a `move` message and they reconnect
 there by themselves (`&via=` its id; the host sends them back home when the guest leaves), and once it is seated (up to 15 s) the
 host starts a singles match by itself: its first phone against that one, in a random world
-(Kaleido and the game count as set). Afterwards the host offers **Play again** (A: another
+(Kaleydo and the game count as set). Afterwards the host offers **Play again** (A: another
 match, same two people) or **Leave** (B: both TVs go back to Play online). If the opponent's
 TV or phone goes away mid-match the host says "Your opponent left". B cancels a search.
 `npx tsx scripts/mm-pair-test.ts` checks the pairing rule; `node scripts/mm-e2e.mjs`
@@ -270,7 +270,7 @@ measured, ~110 ms behind for a friend 40 ± 8 ms away, ~190 ms at 90 ± 15 ms, ~
 moment (never a teleport: the ball and players wait, the buffer grows by what was missing).
 A guest's phones are opened from the guest's own QR code, so the guest hears each swing the
 instant the relay gets it (the whoosh doesn't wait for the host), looks at the court from
-its own players' end, and sees the host's Kaleido shifts shatter from the same spot in
+its own players' end, and sees the host's Kaleydo shifts shatter from the same spot in
 the court. `node scripts/online-lag-e2e.mjs` proves it at those three delays, and with the
 host itself 60 ms from the relay, through a lag proxy (`scripts/lib/lag-proxy.mjs`: delay,
 jitter and spikes on every WebSocket frame, order kept) in front of `wrangler dev`.
@@ -313,4 +313,4 @@ node scripts/baseball-phone-e2e.mjs   # a simulated phone bats on the real TV (n
 - `src/tv/worlds/` — one file per world: scenery, materials and its own
   post-processing pipeline.
 - `src/tv/audio/` — synthesised instruments, sequencer, songs, SFX, crowd.
-- `src/tv/flow.ts` — menus, match lifecycle, World Tour, Kaleido Rally.
+- `src/tv/flow.ts` — menus, match lifecycle, World Tour, Kaleydo Rally.

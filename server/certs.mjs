@@ -189,7 +189,7 @@ export function mobileconfig({ caDer, caName, caFingerprint }) {
 				${b64}
 			</data>
 			<key>PayloadDescription</key>
-			<string>Adds the certificate of the KALEIDO game on your Mac.</string>
+			<string>Adds the certificate of the Kaleydo World game on your Mac.</string>
 			<key>PayloadDisplayName</key>
 			<string>${xml(caName)}</string>
 			<key>PayloadIdentifier</key>
@@ -203,7 +203,7 @@ export function mobileconfig({ caDer, caName, caFingerprint }) {
 		</dict>
 	</array>
 	<key>PayloadDescription</key>
-	<string>Lets this phone trust the KALEIDO game on your Mac, so it can be a motion remote without security warnings. Remove it any time in Settings → General → VPN &amp; Device Management.</string>
+	<string>Lets this phone trust the Kaleydo World game on your Mac, so it can be a motion remote without security warnings. Remove it any time in Settings → General → VPN &amp; Device Management.</string>
 	<key>PayloadDisplayName</key>
 	<string>${xml(caName)}</string>
 	<key>PayloadIdentifier</key>

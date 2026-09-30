@@ -10,7 +10,7 @@
 // lets them skip it and tap through Safari's warning instead.
 //
 // Self-contained on purpose: no scripts or styles from elsewhere, so the only
-// things the LAN can reach over plain http are this page, the profile and the
+// things the LAN can reach over plain http are this page, its two brand images, the profile and the
 // certificate (see server.mjs).
 
 import crypto from 'node:crypto';
@@ -22,7 +22,7 @@ export function joinPage({ httpsPort, caName }) {
     "default-src 'none'",
     `script-src 'sha256-${hash}'`,
     "style-src 'unsafe-inline'",
-    'img-src data:',
+    "img-src 'self' data:",
     'connect-src https:',
     "base-uri 'none'",
     "form-action 'none'",
@@ -42,13 +42,13 @@ function page({ httpsPort, caName }) {
 <meta name="theme-color" content="#0c0b12">
 <meta name="color-scheme" content="dark">
 <meta name="referrer" content="no-referrer">
-<title>Join KALEIDO</title>
-<link rel="icon" href="data:image/svg+xml,${encodeURIComponent(ICON)}">
+<title>Join Kaleydo World</title>
+<link rel="icon" href="/brand/favicon-64.png">
 <style>${CSS}</style>
 </head>
 <body>
 <main>
-  <div class="logo" aria-label="KALEIDO">${'KALEIDO'.split('').map((c, i) => `<span style="--i:${i}">${c}</span>`).join('')}</div>
+  <img class="logo" src="/brand/lockup-small.png" alt="Kaleydo World">
 
   <section id="checking" class="card center on" aria-live="polite">
     <div class="spinner"></div>
@@ -125,7 +125,6 @@ function page({ httpsPort, caName }) {
 </html>`;
 }
 
-const ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path d="M32 4 58 19v26L32 60 6 45V19z" fill="#8a7dff"/><circle cx="32" cy="32" r="9" fill="#d8ff3a" stroke="#fff" stroke-width="3"/></svg>`;
 const CHECK = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const DOWNLOAD = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19.5h14" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
@@ -136,8 +135,7 @@ const CSS = `
 html{background:var(--bg);color:#fff;font:17px/1.4 var(--ui);-webkit-text-size-adjust:100%}
 body{margin:0;min-height:100vh;background:radial-gradient(120% 60% at 50% -10%,rgba(138,125,255,.45),transparent 70%),var(--bg)}
 main{max-width:460px;margin:0 auto;padding:calc(env(safe-area-inset-top) + 22px) 18px calc(env(safe-area-inset-bottom) + 24px);display:flex;flex-direction:column;gap:14px}
-.logo{display:flex;justify-content:center;gap:2px;font-weight:800;font-size:44px;line-height:1;margin:6px 0 4px}
-.logo span{color:hsl(calc(var(--i)*48 + 330) 95% 66%);text-shadow:0 3px 0 hsl(calc(var(--i)*48 + 330) 70% 38%)}
+.logo{display:block;width:62%;max-width:260px;height:auto;margin:6px auto 4px}
 h1{margin:0;font-size:26px;line-height:1.15}
 h2{margin:0 0 4px;font-size:19px}
 p{margin:0}

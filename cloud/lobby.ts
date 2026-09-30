@@ -1,4 +1,4 @@
-// KALEIDO's matchmaking lobby (a single Durable Object, `env.LOBBY.idFromName('lobby')`).
+// Kaleydo World's matchmaking lobby (a single Durable Object, `env.LOBBY.idFromName('lobby')`).
 //
 // A TV that wants "Quick match" opens a WebSocket /mm?room=CODE&key=KEY&gid=GID&name=NAME&players=N
 // (the Worker adds &cont=<continent>). It keeps the room it already has; the lobby keeps a queue of

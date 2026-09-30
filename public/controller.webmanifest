@@ -1,7 +1,7 @@
 {
-  "name": "KALEIDO Remote",
-  "short_name": "KALEIDO",
-  "description": "Your phone is the remote for KALEIDO on your Mac.",
+  "name": "Kaleydo World Remote",
+  "short_name": "Kaleydo",
+  "description": "Your phone is the remote for Kaleydo World on your Mac.",
   "id": "/controller.html",
   "start_url": "/controller.html",
   "scope": "/",

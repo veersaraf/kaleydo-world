@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// KALEIDO server
+// Kaleydo World server
 //
 //   http://localhost:3000        the "TV" (your Mac's browser)
 //   http://<lan-ip>:3000/join    what the TV's QR code opens: checks whether the
@@ -467,6 +467,27 @@ function sendCA(res) {
   res.end(certs.caDer);
 }
 
+/** The two brand images the join page shows, streamed from public/brand/ (nothing else of it is exposed to the LAN). */
+const LAN_BRAND = new Set(['/brand/lockup-small.png', '/brand/favicon-64.png']);
+
+function sendBrand(res, p, headOnly) {
+  const file = path.join(ROOT, 'public', p);
+  fs.stat(file, (err, st) => {
+    if (err || !st.isFile()) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', 'X-Content-Type-Options': 'nosniff' }).end('Not found');
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Type': 'image/png',
+      'Content-Length': st.size,
+      'Cache-Control': 'public, max-age=3600',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    if (headOnly) res.end();
+    else fs.createReadStream(file).pipe(res);
+  });
+}
+
 /**
  * Plain http from another machine (a phone that scanned the QR code). Only
  * public things are served here: the join page, the profile and the CA
@@ -483,6 +504,7 @@ function handleLan(req, res) {
   if (p === '/join' || p === '/join/') return sendJoin(res);
   if (p === '/kaleido.mobileconfig') return sendProfile(res);
   if (p === '/kaleido-ca.crt') return sendCA(res);
+  if (LAN_BRAND.has(p)) return sendBrand(res, p, req.method === 'HEAD');
   // the old remote addresses (and the bare address): to the join page
   if (p === '/' || p === '/c' || p === '/c/' || p === '/pad' || p === '/controller' || p === '/controller.html') {
     res.writeHead(302, { ...hdr, Location: '/join' });
@@ -550,7 +572,7 @@ function listen(server, port, host, label) {
   return new Promise((resolve, reject) => {
     server.once('error', (e) => {
       if (e.code === 'EADDRINUSE') {
-        console.error(`\n  Port ${port} (${label}) is already in use. Is KALEIDO already running?\n`);
+        console.error(`\n  Port ${port} (${label}) is already in use. Is Kaleydo World already running?\n`);
       }
       reject(e);
     });
@@ -590,7 +612,7 @@ async function main() {
 
   const b = '\x1b[1m', r = '\x1b[0m', c = '\x1b[36m', m = '\x1b[35m', y = '\x1b[33m', d = '\x1b[2m';
   console.log(`
-  ${m}${b}K A L E I D O${r}   ${d}${DEV ? 'dev server' : 'ready'}${r}
+  ${m}${b}K A L E Y D O   W O R L D${r}   ${d}${DEV ? 'dev server' : 'ready'}${r}
 
   ${b}Screen${r}   ${c}http://localhost:${HTTP_PORT}${r}   ${d}open on this Mac${r}
   ${b}Phones${r}   ${c}${joinUrl() || '(no Wi-Fi address found — connect to a network)'}${r}
@@ -611,7 +633,7 @@ async function main() {
     const now = lanIPs();
     if (now.join() !== ips.join()) {
       ips = now;
-      log(`network changed → ${joinUrl() || 'offline'} (restart KALEIDO to refresh the certificate)`);
+      log(`network changed → ${joinUrl() || 'offline'} (restart Kaleydo World to refresh the certificate)`);
       sendTV({ type: 'net', joinUrl: joinUrl(), padUrl: padUrl(), caUrl: caUrl(), ips });
     }
   }, 5000).unref();

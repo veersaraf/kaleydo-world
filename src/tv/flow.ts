@@ -50,7 +50,7 @@ export interface Settings {
   split: boolean;
   world: string;
   seenTutorial: boolean;
-  /** Kaleido mode: big moments shatter the world into the next one (every sport) */
+  /** Kaleydo mode: big moments shatter the world into the next one (every sport) */
   kaleido: boolean;
   /** the sound button in the corner */
   muted: boolean;
@@ -340,41 +340,75 @@ export class Flow {
   /**
    * Build every world, compile its shaders and upload its data behind a short
    * loading screen, so no world ever hitches the first time it appears (the
-   * attract loop, Kaleido shifts and world picks would otherwise stall 50–200 ms).
+   * attract loop, Kaleydo shifts and world picks would otherwise stall 50–200 ms).
    */
   private async boot() {
-    const letters = ['K', 'A', 'L', 'E', 'I', 'D', 'O'];
-    const cls = ['lk', 'la', 'll', 'le', 'li', 'ld', 'lo'];
-    const bar = h('i');
-    const el = h(
-      'div',
-      { class: 'boot' },
-      h('div', { class: 'logo' }, ...letters.map((c, i) => h('span', { class: `L ${cls[i]}`, style: `--i:${i}` }, c))),
-      h('div', { class: 'boot-bar' }, bar),
-      h('div', { class: 'boot-txt' }, 'Polishing the worlds…'),
-    );
+    // the intro video plays alongside priming; automated runs (and reduced motion)
+    // skip straight to the finished lockup unless ?intro=1 asks for the video
+    const skipIntro =
+      matchMedia('(prefers-reduced-motion: reduce)').matches ||
+      (navigator.webdriver === true && !new URLSearchParams(location.search).has('intro'));
+    const status = h('div', { class: 'boot-txt' });
+    const el = h('div', { class: 'boot' });
+    let video: HTMLVideoElement | null = null;
+    if (skipIntro) {
+      el.append(h('img', { class: 'boot-intro', src: '/brand/lockup.png', alt: '' }));
+    } else {
+      video = h('video', {
+        class: 'boot-intro',
+        src: '/brand/intro.mp4',
+        poster: '/brand/intro-poster.jpg',
+        muted: true,
+        playsinline: true,
+        autoplay: true,
+        preload: 'auto',
+      });
+      video.muted = true; // the attribute alone doesn't always count for autoplay
+      el.append(video);
+    }
+    el.append(status);
     this.root.append(el);
     // priming stalls frames on purpose: don't let the quality governor react to it
     this.app.quality.hold(Infinity);
     let finished = false;
+    let primed = false;
+    let videoDone = !video;
+    let waitTimer = 0;
     const finish = () => {
       if (finished) return;
       finished = true;
+      window.clearTimeout(waitTimer);
       el.classList.add('done');
       window.setTimeout(() => el.remove(), 700);
       this.app.quality.hold(performance.now() + 1500);
     };
+    const settle = () => {
+      if (primed && videoDone) finish();
+    };
     // never let the loader hold the game hostage (a background tab throttles
     // everything): whatever isn't primed by then carries on behind the title
-    window.setTimeout(finish, 7000);
+    window.setTimeout(finish, 9000);
+    if (video) {
+      const ended = () => {
+        if (videoDone) return;
+        videoDone = true;
+        // the video holds its last frame (the lockup); if priming still runs, say so
+        if (!primed && !finished) waitTimer = window.setTimeout(() => status.classList.add('on'), 400);
+        settle();
+      };
+      video.addEventListener('ended', ended);
+      video.addEventListener('error', ended);
+      video.play().catch(ended);
+    }
     const ids = WORLDS.map((w) => w.id);
     for (let i = 0; i < ids.length; i++) {
+      status.textContent = `Polishing ${worldDef(ids[i]).name}…`;
       await this.app.stage.prime(ids[i], this.app.rig.cam);
-      bar.style.width = `${((i + 1) / ids.length) * 100}%`;
       // let a frame through so the page stays responsive (hidden tabs get no frames)
       await new Promise((r) => (document.hidden ? window.setTimeout(r, 0) : requestAnimationFrame(() => r(null))));
     }
-    finish();
+    primed = true;
+    settle();
   }
 
   // ---------------------------------------------------------------- persistence
@@ -511,21 +545,10 @@ export class Flow {
   }
 
   private titleScreen(): Screen {
-    const letters = [
-      ['K', 'lk'],
-      ['A', 'la'],
-      ['L', 'll'],
-      ['E', 'le'],
-      ['I', 'li'],
-      ['D', 'ld'],
-      ['O', 'lo'],
-    ];
-    const logo = h('div', { class: 'logo' }, ...letters.map(([c, cls], i) => h('span', { class: `L ${cls}`, style: `--i:${i}` }, c)));
     const el = h(
       'div',
       { class: 'screen title' },
-      logo,
-      h('div', { class: 'subtitle' }, 'WORLD SPORTS'),
+      h('img', { class: 'lockup', src: '/brand/lockup.png', alt: 'Kaleydo World' }),
       h('div', { class: 'press' }, 'Click or press any key — or swing a remote'),
       this.join.el,
     );
@@ -548,7 +571,7 @@ export class Flow {
   }
 
   /**
-   * Kaleido mode in bowling, the duel, archery and baseball: a big moment (a
+   * Kaleydo mode in bowling, the duel, archery and baseball: a big moment (a
    * strike, a round won, a bullseye, a home run) shatters the world into the next
    * one, `delay` ms later. (Tennis has its own: every couple of points, or a
    * PERFECT shot deep in a rally.)
@@ -573,7 +596,7 @@ export class Flow {
     }, delay);
   }
 
-  /** Kaleido mode picks the starting world at random */
+  /** Kaleydo mode picks the starting world at random */
   private pickWorld(w: string) {
     return this.settings.kaleido ? this.shuffledWorlds()[0] : w;
   }
@@ -585,14 +608,14 @@ export class Flow {
     this.app.startAttract(this.app.stage.current?.def.id ?? 'park', sport);
   }
 
-  /** The Kaleido toggle on every setup screen: big moments shatter the world into the next one. */
+  /** The Kaleydo toggle on every setup screen: big moments shatter the world into the next one. */
   private kaleidoRow(onChange?: () => void) {
     const S = this.settings;
     const v = h('span');
     const r = h(
       'div',
       { class: 'row kal' },
-      h('span', { class: 'k' }, h('i', { class: 'kgem' }), 'Kaleido mode'),
+      h('span', { class: 'k' }, h('i', { class: 'kgem' }), 'Kaleydo mode'),
       h('span', { class: 'v' }, h('span', { class: 'arrow' }, '◀'), v, h('span', { class: 'arrow' }, '▶')),
       h('span', { class: 'desc' }, 'Big moments shatter the world into the next one'),
     );
@@ -672,7 +695,7 @@ export class Flow {
     const el = h(
       'div',
       { class: 'screen home' },
-      h('div', { class: 'mini-logo' }, h('span', null, 'KALEIDO')),
+      h('img', { class: 'mini-logo', src: '/brand/lockup-small.png', alt: 'Kaleydo World' }),
       h('div', { class: 'hbottom' }, h('div', { class: 'hpills' }, tour, online), h('div', { class: 'scards' }, ...cards)),
       this.join.el,
     );
@@ -691,7 +714,7 @@ export class Flow {
       'div',
       { class: 'ocard' },
       h('h3', null, 'Host a room'),
-      h('p', null, 'Friends open KALEIDO on their own TV, choose Play online → Join a room, and type'),
+      h('p', null, 'Friends open Kaleydo World on their own TV, choose Play online → Join a room, and type'),
       code,
       friends,
       h('div', { class: 'ogo' }, 'A — pick a sport'),
@@ -1057,7 +1080,7 @@ export class Flow {
     const rLen = row('Match');
     const go = h('div', { class: 'row go' }, 'Choose a world ▶');
     const refresh = () => {
-      // (Kaleido picks the worlds itself: no world screen to go to)
+      // (Kaleydo picks the worlds itself: no world screen to go to)
       go.textContent = S.kaleido ? 'Play ▶' : 'Choose a world ▶';
       const ps = this.presets();
       S.teamPreset = Math.min(S.teamPreset, ps.length - 1);
@@ -1116,7 +1139,7 @@ export class Flow {
         el: go,
         onSelect: () => {
           this.mode = this.settings.kaleido ? 'kaleido' : 'quick';
-          // Kaleido picks the worlds (and shatters between them): no need to choose one
+          // Kaleydo picks the worlds (and shatters between them): no need to choose one
           if (this.settings.kaleido) this.beginMatch(this.shuffledWorlds()[0]);
           else this.go(this.worldScreen());
         },
@@ -1209,7 +1232,7 @@ export class Flow {
           tip('💨', 'Speed = power', 'A fast swing hits hard and deep. A gentle swing floats it softly.'),
           tip('🌀', 'Spin', 'Brush upward for topspin (dips and kicks). Chop downward for slice. A soft upward swing lobs; a soft chop drops it short.'),
           tip('🎾', 'Serving', 'Lift your phone (or tap) to toss, then swing as the ball peaks. Perfect timing = a rocket serve.'),
-          tip('◆', 'Kaleido Rally', 'Long rallies build the music. Hit PERFECT shots and the whole world shatters into the next one.'),
+          tip('◆', 'Kaleydo Rally', 'Long rallies build the music. Hit PERFECT shots and the whole world shatters into the next one.'),
         ],
         keys: kbd('No phone? Flick the mouse to swing (up = topspin, down = slice) · ', ['Space'], ' toss & swing · ', ['J'], ' ', ['K'], ' ', ['L'], ' flat / topspin / slice · ', ['Esc'], ' pause'),
       },
@@ -1313,7 +1336,7 @@ export class Flow {
     // (a quick match: Play again with the same opponent, or Leave)
     const mmHost = this.mm?.role === 'host' && this.mm.phase === 'play';
     const again = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, mmHost ? 'Play again' : 'Rematch')));
-    const other = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, this.mode === 'kaleido' ? 'New Kaleido Rally' : 'Another world')));
+    const other = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, this.mode === 'kaleido' ? 'New Kaleydo Rally' : 'Another world')));
     const menu = h('div', { class: 'item' }, h('div', { class: 'txt' }, h('span', null, mmHost ? 'Leave' : 'Main menu')));
     const nav = new Nav(
       mmHost
@@ -1461,7 +1484,7 @@ export class Flow {
     this.lab = false;
     this.versusEnd = null;
     if (!this.guestRun) this.guestPrevMode = this.mode;
-    // (no Kaleido shifts of our own: the host's `world` messages move the world)
+    // (no Kaleydo shifts of our own: the host's `world` messages move the world)
     this.mode = 'quick';
     this.guestRun = start;
     // (the lobby gives way to the match; it comes back with leaveGuestMatch)
@@ -1747,7 +1770,7 @@ export class Flow {
       cpuRow.v.textContent = cpuLevels[cpu].label;
       pitchRow.v.textContent = pitchers[pi].label;
       countRow.v.textContent = `${counts[ci]} each`;
-      worldRow.v.textContent = this.settings.kaleido ? 'Random — Kaleido picks' : WORLDS[wi].name;
+      worldRow.v.textContent = this.settings.kaleido ? 'Random — Kaleydo picks' : WORLDS[wi].name;
     };
     const cycle = (d: number) => {
       wi = (wi + d + WORLDS.length) % WORLDS.length;
@@ -2034,7 +2057,7 @@ export class Flow {
       const names = this.app.input.activeSeats.map((st) => st.name);
       who.textContent = names.length ? `Archers: ${names.join(', ')}` : 'Archer: Player 1';
       cpuRow.v.textContent = cpuLevels[cpu].label;
-      worldRow.v.textContent = this.settings.kaleido ? 'Random — Kaleido picks' : WORLDS[wi].name;
+      worldRow.v.textContent = this.settings.kaleido ? 'Random — Kaleydo picks' : WORLDS[wi].name;
     };
     const cycle = (d: number) => {
       wi = (wi + d + WORLDS.length) % WORLDS.length;
@@ -2265,7 +2288,7 @@ export class Flow {
     const go = h('div', { class: 'row go' }, 'Fight!');
     const refresh = () => {
       oppRow.v.textContent = opp[oi].label;
-      worldRow.v.textContent = this.settings.kaleido ? 'Random — Kaleido picks' : WORLDS[wi].name;
+      worldRow.v.textContent = this.settings.kaleido ? 'Random — Kaleydo picks' : WORLDS[wi].name;
     };
     const cycle = (d: number) => {
       wi = (wi + d + WORLDS.length) % WORLDS.length;
@@ -2520,7 +2543,7 @@ export class Flow {
       const names = this.app.input.activeSeats.map((st) => st.name);
       who.textContent = names.length ? `Bowlers: ${names.join(', ')}` : 'Bowler: Player 1';
       cpuRow.v.textContent = cpuLevels[cpu].label;
-      worldRow.v.textContent = this.settings.kaleido ? 'Random — Kaleido picks' : WORLDS[wi].name;
+      worldRow.v.textContent = this.settings.kaleido ? 'Random — Kaleydo picks' : WORLDS[wi].name;
     };
     const cycle = (d: number) => {
       wi = (wi + d + WORLDS.length) % WORLDS.length;
@@ -2965,7 +2988,7 @@ export class Flow {
       { class: 'screen ending' },
       h('h1', null, 'The Prism is whole'),
       h('p', null, 'Eight worlds, eight champions, one ball. The Kaleidoscope turns again — and every world remembers your rallies.'),
-      h('div', { class: 'credits' }, 'KALEIDO · World Sports', h('br'), 'Designed & built by Claude for Veer', h('br'), 'Every model, shader, song and sound made from code'),
+      h('div', { class: 'credits' }, 'KALEYDO WORLD', h('br'), 'Designed & built by Claude for Veer', h('br'), 'Every model, shader, song and sound made from code'),
       h('div', { class: 'menu' }, back),
     );
     return this.navScreen('ending', el, nav, () => this.quitToMenu(), { title: 'Champion!', hint: 'A to continue' });
@@ -3034,7 +3057,7 @@ export class Flow {
           if (e.kph > 105 && (e.serve || e.perfect) && e.kind !== 'smash') this.hud?.showSpeed(e.kph);
           this.hud?.setRally(e.rally);
           if (a) a.music.setIntensity(e.rally >= 9 ? 3 : e.rally >= 4 ? 2 : 1);
-          // Kaleido: a perfect shot deep in a rally shatters the world
+          // Kaleydo: a perfect shot deep in a rally shatters the world
           // (once per rally: the next world gets prepared between points)
           if (this.mode === 'kaleido' && e.perfect && e.rally >= 5 && e.p.human && !this.shiftedThisRally && !this.app.stage.transitioning) {
             this.shiftedThisRally = true;
@@ -3241,7 +3264,7 @@ export class Flow {
     const w = this.app.stage.current as unknown as { setScoreboard?: (n: [string, string], g: [string, string], p: [string, string]) => void };
     if (!w?.setScoreboard) return;
     if (!m || this.app.attract) {
-      w.setScoreboard(['KALEIDO', 'WORLD SPORTS'], ['', ''], ['', '']);
+      w.setScoreboard(['KALEYDO', 'WORLD'], ['', ''], ['', '']);
       return;
     }
     w.setScoreboard([this.teams[0].name, this.teams[1].name], [String(m.score.games[0]), String(m.score.games[1])], [m.score.pointText(0), m.score.pointText(1)]);

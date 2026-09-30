@@ -16,7 +16,7 @@ import path from 'node:path';
 import { phone } from './lib/fake-phone.mjs';
 
 const BASE = process.env.BASE || 'http://localhost:3700';
-const out = process.argv[2] || path.join(os.tmpdir(), 'kaleido-sword-shots');
+const out = process.argv[2] || path.join(os.tmpdir(), 'kaleydo-sword-shots');
 fs.mkdirSync(out, { recursive: true });
 console.log('screenshots →', out);
 
