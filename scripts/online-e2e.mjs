@@ -11,6 +11,8 @@
 //   PHONE=0                      CPU against CPU instead of the simulated phone
 //   SECONDS=24                   how long the match is played before the checks
 //   OUT=dir                      where the screenshots go
+//   RUSH=1                       the host's match is a Rush one (the Pace row on the setup screen): checks the guest's
+//                                shadow match has cfg.rush too
 //
 // Checks: same world; the guest's shadow match scores as the host's; the guest's ball is where the
 // host's was (compared at the same simulation time, exactly); every match event arrives, in order; a
@@ -23,6 +25,7 @@ const BASE = process.env.BASE || 'http://127.0.0.1:8794';
 const BRIDGE = !!process.env.BRIDGE;
 const USE_PHONE = process.env.PHONE !== '0';
 const SECONDS = Number(process.env.SECONDS || 24);
+const RUSH = !!process.env.RUSH;
 const OUT = process.env.OUT || '.';
 let fail = 0;
 const check = (name, ok, detail = '') => {
@@ -231,10 +234,11 @@ await guest.evaluate(() => {
 });
 
 // ---------------------------------------------------------------- the match
-const started = await host.evaluate(({ usePhone }) => {
+const started = await host.evaluate(({ usePhone, rush }) => {
   const f = window.flow;
   const k = window.kaleido;
   f.mode = 'quick';
+  if (rush) f.settings.rush = true;
   const cfg = f.buildConfig();
   cfg.firstServer = 0;
   if (!usePhone) {
@@ -243,7 +247,7 @@ const started = await host.evaluate(({ usePhone }) => {
   }
   f.beginMatch('plaza', false, cfg);
   return { humans: cfg.players.filter((p) => p.ctrl.kind === 'human').length, world: k.stage.current.def.id };
-}, { usePhone: USE_PHONE });
+}, { usePhone: USE_PHONE, rush: RUSH });
 console.log(`host started a match (${started.humans} human), world ${started.world}`);
 const guestUp = await guest.waitForFunction(() => window.kaleido.guest && window.kaleido.guest.ready, null, { timeout: 15000 }).then(() => true).catch(() => false);
 check('the guest built the match from the host\'s `start` and is receiving snapshots', guestUp);
@@ -251,6 +255,12 @@ if (!guestUp) {
   console.log(errors.join('\n'));
   await browser.close();
   process.exit(1);
+}
+{
+  const rushOf = (p) => p.evaluate(() => window.kaleido.match.cfg.rush);
+  const [a, b] = await Promise.all([rushOf(host), rushOf(guest)]);
+  if (RUSH) check('Rush: the host\'s and the guest\'s match.cfg.rush are true', a === true && b === true, `host ${a}, guest ${b}`);
+  else check('standard: neither TV\'s match is a Rush one', !a && !b, `host ${a}, guest ${b}`);
 }
 const worlds = async () => ({ host: await host.evaluate(() => window.kaleido.stage.current.def.id), guest: await guest.evaluate(() => window.kaleido.stage.current.def.id) });
 {

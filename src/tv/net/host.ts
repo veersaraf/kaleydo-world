@@ -162,6 +162,7 @@ export class NetHost {
       halo: [c0, c1],
       kaleido: this.kaleido(),
       players,
+      ...(cfg.rush ? { rush: true } : {}),
     };
   }
 

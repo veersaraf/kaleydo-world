@@ -52,6 +52,8 @@ export interface Settings {
   seenTutorial: boolean;
   /** Kaleydo mode: big moments shatter the world into the next one (every sport) */
   kaleido: boolean;
+  /** tennis Pace: Rush (every hit in a rally builds heat and speeds the ball up) */
+  rush: boolean;
   /** the sound button in the corner */
   muted: boolean;
 }
@@ -70,6 +72,7 @@ const DEFAULTS: Settings = {
   world: 'park',
   seenTutorial: false,
   kaleido: false,
+  rush: false,
   muted: false,
 };
 
@@ -1066,7 +1069,9 @@ export class Flow {
     const sheet = h('div', { class: 'sheet' });
     void mode;
     const title = h('h2', null, 'Tennis');
-    const desc = h('div', { class: 'hintline' }, 'Choose your match, then pick a world.');
+    const TENNIS_DESC = 'Choose your match, then pick a world.';
+    const RUSH_DESC = 'Rush: every shot in a rally speeds the ball up — keep it going and it catches fire.';
+    const desc = h('div', { class: 'hintline' }, TENNIS_DESC);
     const kal = this.kaleidoRow(() => refresh());
     const teamsView = h('div', { class: 'teams' });
     const row = (k: string) => {
@@ -1078,6 +1083,7 @@ export class Flow {
     const rFormat = row('Format');
     const rLevel = row('CPU level');
     const rLen = row('Match');
+    const rPace = row('Pace');
     const go = h('div', { class: 'row go' }, 'Choose a world ▶');
     const refresh = () => {
       // (Kaleydo picks the worlds itself: no world screen to go to)
@@ -1099,6 +1105,9 @@ export class Flow {
         navRef.items[2].disabled = !cpu;
       }
       rLen.v.textContent = S.games === 1 ? '1 game' : S.games === 2 ? 'Best of 3 games' : 'Best of 5 games';
+      rPace.v.textContent = S.rush ? 'Rush 🔥' : 'Standard';
+      // (Rush swaps the description for one about it, the same two lines tall, so the sheet keeps its height)
+      desc.textContent = S.rush ? RUSH_DESC : TENNIS_DESC;
       clear(teamsView);
       teamsView.append(this.teamChips(p.t0, S.doubles), h('span', { class: 'vs' }, 'vs'), this.teamChips(p.t1, S.doubles));
       this.save();
@@ -1134,6 +1143,7 @@ export class Flow {
         onRight: () => ((S.games = cyc([1, 2, 3], S.games, 1)), refresh()),
         onSelect: () => ((S.games = cyc([1, 2, 3], S.games, 1)), refresh()),
       },
+      { el: rPace.r, onLeft: () => ((S.rush = !S.rush), refresh()), onRight: () => ((S.rush = !S.rush), refresh()), onSelect: () => ((S.rush = !S.rush), refresh()) },
       kal.item,
       {
         el: go,
@@ -1146,8 +1156,8 @@ export class Flow {
       },
     ]);
     navRef = nav;
-    nav.focus(5);
-    sheet.append(title, desc, teamsView, rTeams.r, rFormat.r, rLevel.r, rLen.r, kal.r, go, h('div', { class: 'hintline' }, '◀ ▶ change · A select · B back'));
+    nav.focus(6);
+    sheet.append(title, desc, teamsView, rTeams.r, rFormat.r, rLevel.r, rLen.r, rPace.r, kal.r, go, h('div', { class: 'hintline' }, '◀ ▶ change · A select · B back'));
     const el = h('div', { class: 'screen setup' }, sheet);
     refresh();
     const scr = this.navScreen('setup', el, nav, () => this.go(this.mainMenu()), { title: 'Tennis', hint: '◀ ▶ to change' });
@@ -1421,7 +1431,7 @@ export class Flow {
       { name: teamNames[0], color: colors[0] },
       { name: teamNames[1], color: colors[1] },
     ];
-    return { doubles, gamesToWin: S.games, players, teamNames, firstServer: this.rng.chance(0.5) ? 0 : 1 };
+    return { doubles, gamesToWin: S.games, players, teamNames, firstServer: this.rng.chance(0.5) ? 0 : 1, ...(S.rush ? { rush: true } : {}) };
   }
 
   private beginMatch(world: string, reuse = false, cfgIn?: MatchConfig, versus?: Champion) {

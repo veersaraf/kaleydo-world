@@ -2,13 +2,14 @@
 
 import { COURT, netHeightAt, sideOf, inCourt, serviceBox, inBox, serveSideSign, fwdOf } from './court';
 import { type Seg, segPos, segVel, segTimeDown, segTimeAtZ, bounceSeg, predictPath, segApexY, PathBuf } from './ball';
-import { buildShot, humanShot, serveShot, type Stroke, type SwingInput } from './shot';
+import { buildShot, humanShot, serveShot, type ShotSpec, type Stroke, type SwingInput } from './shot';
 import { TPlayer, type Ctrl, type HitPlan, type AthleticMove, type SwingState } from './player';
 import { aiShot, recoveryPos, AI_LEVELS } from './ai';
 import { Score } from './score';
 import type { Look } from '../chars/look';
 import { clamp, lerp, Rng, smooth, type V3 } from '../core/math';
 import { hyp2, hyp3 } from './hypot';
+import { RUSH, heatAfter, paceAt } from './rush';
 
 export type MatchState = 'intro' | 'serve' | 'toss' | 'play' | 'dead' | 'reset' | 'over';
 
@@ -35,6 +36,8 @@ export interface MatchConfig {
   introTime?: number;
   /** widens the human swing window (assist) */
   timingScale?: number;
+  /** Rush: rallies start faster and every hit builds heat (ball and players speed up) */
+  rush?: boolean;
 }
 
 export interface SwingIn {
@@ -183,6 +186,8 @@ export class Match {
   private lastPerfect = false;
   pointWinner: 0 | 1 = 0;
   lastReason: PointReason = 'winner';
+  /** Rush: the rally's heat 0..1 (see rush.ts); stays 0 when rush is off */
+  heat = 0;
   /** swing time for CPUs, per plan */
   private aiSwingAt = new Map<TPlayer, number>();
   private cpuTossAt = 0;
@@ -315,6 +320,7 @@ export class Match {
       this.score.points = [0, 0];
     }
     for (const p of this.players) p.athletic = null;
+    if (this.cfg.rush) this.setHeat(0);
     const S = this.score.server;
     const R = (1 - S) as 0 | 1;
     const deuce = this.score.deuceCourt;
@@ -1114,7 +1120,7 @@ export class Match {
 
       // stamina: sprints drain it; standing still (and the gaps between points) bring it back
       const sp = hyp2(p.vx, p.vz);
-      if (this.state === 'play') p.stamina -= Math.max(0, sp - 2.2) * 0.05 * dt;
+      if (this.state === 'play') p.stamina -= Math.max(0, sp / p.runMul - 2.2) * 0.05 * dt;
       p.stamina = clamp(p.stamina + (this.state === 'play' ? (sp < 1.2 ? 0.045 : 0) : 0.45) * dt, 0, 1);
       if (p.tired > 0 && !p.tiredShown && this.state === 'play') {
         p.tiredShown = true;
@@ -1139,7 +1145,7 @@ export class Match {
     const tl = plan.t - t;
     if (tl <= 0.06 || tl > 0.34) return;
     const standD = hyp2(plan.sx - p.x, plan.sz - p.z);
-    const runnable = p.maxSpeed * tl * 0.85;
+    const runnable = p.maxSpeed * p.runMul * tl * 0.85;
     const gap = standD - runnable;
     let move: AthleticMove | null = null;
     if (plan.stroke !== 'oh' && plan.by > 1.7 && gap < 1.2) move = 'jump';
@@ -1164,6 +1170,23 @@ export class Match {
   }
 
   // ------------------------------------------------------------ outcomes
+
+  /** Rush: set the rally's heat; everyone runs at the pace the ball now has */
+  private setHeat(h: number) {
+    this.heat = h;
+    const run = paceAt(h);
+    for (const q of this.players) q.runMul = 1 + (run - 1) * RUSH.run;
+  }
+
+  /** Rush: a rally drive or volley goes out at the rally's pace (the heat from before this hit) */
+  private rushShot(spec: ShotSpec) {
+    const pace = paceAt(this.heat);
+    spec.speed *= pace;
+    if (spec.clear > 0) {
+      spec.clear /= Math.pow(pace, RUSH.flatten);
+      spec.gMul = Math.pow(pace, RUSH.drop);
+    }
+  }
 
   private resolveHit(p: TPlayer, tc: number) {
     const sw = p.swing!;
@@ -1214,6 +1237,7 @@ export class Match {
         sw.input.stretch = Math.max(this.stretchOf(p), p.tired * 0.8);
         sw.input.oppX = oppX;
         const res = humanShot(p.team, p.fhSign, sw.stroke, contact, volley, sw.input, this.rng, this.doubles);
+        if (this.cfg.rush && (res.kind === 'drive' || res.kind === 'volley')) this.rushShot(res.spec);
         seg = buildShot(contact, res.spec, tc);
         shotSpin = res.spec.spin;
         perfect = res.perfect;
@@ -1244,6 +1268,7 @@ export class Match {
           },
           this.rng,
         );
+        if (this.cfg.rush && (res.kind === 'drive' || res.kind === 'volley')) this.rushShot(res.spec);
         seg = buildShot(contact, res.spec, tc);
         shotSpin = res.spec.spin;
         kind = res.kind;
@@ -1254,6 +1279,7 @@ export class Match {
       this.ball.serve = false;
       this.rally++;
     }
+    if (this.cfg.rush) this.setHeat(heatAfter(this.heat, { serve: sw.serve, perfect }));
 
     if (kind === 'wobbly') seg.wob = 0.14;
     // a floater: whoever meets it can smash it

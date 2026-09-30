@@ -17,6 +17,8 @@ export interface ShotSpec {
   /** a netted error: the ball is aimed into the net at this height instead */
   netted?: boolean;
   maxApex?: number;
+  /** Rush: this flight's gravity is heavier by this factor (a faster ball still clears the net and drops in) */
+  gMul?: number;
 }
 
 export function gravityFor(spin: number) {
@@ -25,7 +27,7 @@ export function gravityFor(spin: number) {
 
 /** Solve a spec into a ball segment starting at `from` at time t0. */
 export function buildShot(from: V3, spec: ShotSpec, t0: number): Seg {
-  const g = gravityFor(spec.spin);
+  const g = gravityFor(spec.spin) * (spec.gMul ?? 1);
   const k = COURT.drag;
   if (spec.netted) {
     // Aim at a point on the net plane below the tape.

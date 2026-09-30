@@ -101,7 +101,7 @@ export function shadowMatch(start: NetStart): Match {
     handed: p.handed,
     ctrl: p.human ? { kind: 'human' as const, slot: p.slot, ai: AI_LEVELS.auto } : { kind: 'cpu' as const, ai: AI_LEVELS.pro },
   }));
-  return new Match({ doubles: start.doubles, gamesToWin: start.gamesToWin, players, teamNames: start.teamNames, firstServer: start.firstServer, seed: start.seed, timingScale: start.timingScale, introTime: start.introTime });
+  return new Match({ doubles: start.doubles, gamesToWin: start.gamesToWin, players, teamNames: start.teamNames, firstServer: start.firstServer, seed: start.seed, timingScale: start.timingScale, introTime: start.introTime, rush: start.rush });
 }
 
 interface Pending {
