@@ -55,6 +55,8 @@ export interface Settings {
   rush: boolean;
   /** the sound button in the corner */
   muted: boolean;
+  /** which set of defaults the saved settings have seen (see load) */
+  rev: number;
 }
 
 const DEFAULTS: Settings = {
@@ -70,9 +72,10 @@ const DEFAULTS: Settings = {
   split: true,
   world: 'park',
   seenTutorial: false,
-  kaleido: false,
+  kaleido: true,
   rush: false,
   muted: false,
+  rev: 1,
 };
 
 const LEVELS: { id: Level; label: string; stars: string }[] = [
@@ -415,7 +418,10 @@ export class Flow {
 
   private load(): Partial<Settings> {
     try {
-      return JSON.parse(localStorage.getItem('kaleido.settings') || '{}');
+      const saved: Partial<Settings> = JSON.parse(localStorage.getItem('kaleido.settings') || '{}');
+      // the defaults changed (rev 1: singles, normal pace, Kaleydo mode on): saved settings take them once
+      if ((saved.rev ?? 0) < 1) Object.assign(saved, { doubles: false, rush: false, kaleido: true, rev: 1 });
+      return saved;
     } catch {
       return {};
     }
@@ -630,6 +636,51 @@ export class Flow {
     return { r, item: { el: r, onLeft: toggle, onRight: toggle, onSelect: toggle } };
   }
 
+  /**
+   * Tennis's Pace, a flagship tile too: Normal or Rush side by side, so Rush is in view even
+   * while it's off; choosing Rush lights the tile with fire.
+   */
+  private paceTile(onChange?: () => void) {
+    const S = this.settings;
+    const ns = 'http://www.w3.org/2000/svg';
+    const flame = document.createElementNS(ns, 'svg');
+    flame.setAttribute('viewBox', '0 0 24 24');
+    flame.innerHTML =
+      '<defs><linearGradient id="pace-fire" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#ff2d55"/><stop offset=".55" stop-color="#ff6a2b"/><stop offset="1" stop-color="#ffc53d"/></linearGradient></defs>' +
+      '<path class="fl" d="M12 2.5c.6 3.2 3.4 4.9 4.9 7.6 1.9 3.4.4 8.4-4.9 8.9-5.1-.2-6.9-4.6-5.3-8.2.6 1.6 1.6 2.5 2.8 2.7-.9-3.6.4-7.9 2.5-11z"/>';
+    const normal = h('span', null, 'Normal');
+    const rush = h('span', null, 'Rush');
+    const desc = h('small');
+    const r = h(
+      'div',
+      { class: 'feat rush' },
+      h('i', { class: 'fico' }, flame),
+      h('span', { class: 'ftxt' }, h('b', null, 'Pace'), desc),
+      h('span', { class: 'fseg' }, normal, rush),
+    );
+    const refresh = () => {
+      r.classList.toggle('on', S.rush);
+      normal.classList.toggle('sel', !S.rush);
+      rush.classList.toggle('sel', S.rush);
+      desc.textContent = S.rush ? 'Every shot is faster, until the ball catches fire' : 'Classic speed. In Rush, every shot is faster';
+    };
+    const set = (on: boolean) => {
+      if (S.rush === on) return;
+      S.rush = on;
+      this.save();
+      refresh();
+      onChange?.();
+    };
+    // (a click on either choice picks it)
+    for (const [el, on] of [[normal, false], [rush, true]] as const)
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        set(on);
+      });
+    refresh();
+    return { r, item: { el: r, onLeft: () => set(false), onRight: () => set(true), onSelect: () => set(!S.rush) } };
+  }
+
   /** The Kaleydo toggle on every setup screen: big moments shatter the world into the next one. */
   private kaleidoRow(onChange?: () => void) {
     const S = this.settings;
@@ -666,15 +717,28 @@ export class Flow {
         'beta' in sp && sp.beta ? h('div', { class: 'beta' }, 'BETA') : '',
       ),
     );
-    const pill = (ico: string, label: string, sub: string) => h('div', { class: 'hpill' }, h('i', null, ico), h('span', null, label), h('small', null, sub));
-    // the cloud: play with friends on their own TVs
-    const online = this.app.link.cloud ? pill('🌐', 'Play online', this.app.link.guests.length ? `${this.app.link.guests.length} watching` : `Room ${this.app.link.room}`) : null;
+    // the cloud: play with friends on their own TVs, a bar of its own over the sports
+    const link = this.app.link;
+    let online: HTMLElement | null = null;
+    if (link.cloud) {
+      const globe = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      globe.setAttribute('viewBox', '0 0 24 24');
+      globe.innerHTML = '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.6 3.8 5.6 3.8 9s-1.2 6.4-3.8 9c-2.6-2.6-3.8-5.6-3.8-9S9.4 5.6 12 3z"/>';
+      const g = link.guests.length;
+      online = h(
+        'div',
+        { class: `honline${g ? ' live' : ''}` },
+        h('i', { class: 'hglobe' }, globe),
+        h('span', { class: 'ht' }, h('b', null, 'Play online'), h('small', null, g ? `${g} ${g === 1 ? 'friend' : 'friends'} in room ${link.room}` : `Friends on other TVs · room ${link.room}`)),
+        h('span', { class: 'hchev' }, '▶'),
+      );
+    }
     let lastCard = Math.max(0, sports.findIndex((sp) => sp.id === this.app.attractSport));
     const n = sports.length;
     const nav = new Nav(
       [
-        ...sports.map((sp, i) => ({ el: cards[i], onSelect: () => open(sp.id), onDown: () => nav.focus(n) })),
-        ...(online ? [{ el: online, onSelect: () => this.go(this.onlineScreen()), onUp: () => nav.focus(lastCard) }] : []),
+        ...sports.map((sp, i) => ({ el: cards[i], onSelect: () => open(sp.id), onUp: online ? () => nav.focus(n) : undefined })),
+        ...(online ? [{ el: online, onSelect: () => this.go(this.onlineScreen()), onDown: () => nav.focus(lastCard) }] : []),
       ],
       true,
     );
@@ -696,11 +760,11 @@ export class Flow {
       'div',
       { class: 'screen home' },
       h('img', { class: 'mini-logo', src: '/brand/lockup-small.png', alt: 'Kaleydo World' }),
-      h('div', { class: 'hbottom' }, h('div', { class: 'hpills' }, online), h('div', { class: 'scards' }, ...cards)),
+      h('div', { class: 'hbottom' }, online, h('div', { class: 'scards' }, ...cards)),
       this.join.el,
     );
     this.join.refresh();
-    return this.navScreen('menu', el, nav, () => this.go(this.titleScreen()), { title: 'Pick a sport', hint: '◀ ▶ choose · A play' });
+    return this.navScreen('menu', el, nav, () => this.go(this.titleScreen()), { title: 'Pick a sport', hint: link.cloud ? '◀ ▶ choose · ▲ play online · A play' : '◀ ▶ choose · A play' });
   }
 
   // ---------------------------------------------------------------- online rooms (the cloud)
@@ -708,55 +772,67 @@ export class Flow {
   /** "Play online": host a room (this TV's own — the QR code, the code, the friends watching) or join a friend's */
   private onlineScreen(): Screen {
     const link = this.app.link;
+    // this TV always has a room: its code is the heart of the screen, and "Pick a sport" starts a game in it
     const code = h('div', { class: 'rcode big' }, ...(link.room ?? '').split('').map((c) => h('b', null, c)));
     const friends = h('div', { class: 'ofriends' });
-    const host = h(
+    const start = h('div', { class: 'row go' }, 'Pick a sport ▶');
+    const ns = 'http://www.w3.org/2000/svg';
+    const glyph = (d: string) => {
+      const svg = document.createElementNS(ns, 'svg');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      svg.innerHTML = `<path d="${d}"/>`;
+      return svg;
+    };
+    const opt = (ico: SVGSVGElement, title: string, sub: HTMLElement) =>
+      h('div', { class: 'oopt' }, h('i', { class: 'oico' }, ico), h('span', { class: 'otxt' }, h('b', null, title), sub), h('span', { class: 'ochev' }, '▶'));
+    const qnote = h('small', { class: 'onote' });
+    const join = opt(glyph('M10 17l5-5-5-5M15 12H3M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5'), 'Join a friend’s room', h('small', null, 'Type the code on their screen'));
+    const quick = opt(glyph('M13 2 4 14h8l-1 8 9-12h-8z'), 'Quick match', qnote);
+    const nav = new Nav([
+      {
+        el: start,
+        onSelect: () => {
+          this.toast(`Room ${link.room} is open — pick a sport`, '#35d49a');
+          this.go(this.mainMenu());
+        },
+      },
+      { el: join, onSelect: () => this.go(this.joinCodeScreen()) },
+      {
+        el: quick,
+        onSelect: () => {
+          if (!this.app.input.padCount) {
+            // (the match is played with a phone: show the QR code)
+            this.toast('Quick match needs a phone — scan the code first', '#ffc53d');
+            this.join.el.classList.add('nudge');
+            window.setTimeout(() => this.join.el.classList.remove('nudge'), 1800);
+            return;
+          }
+          this.startQuickMatch();
+        },
+      },
+    ]);
+    const sheet = h(
       'div',
-      { class: 'ocard' },
-      h('h3', null, 'Host a room'),
-      h('p', null, 'Friends open Kaleydo World on their own TV, choose Play online → Join a room, and type'),
-      code,
-      friends,
-      h('div', { class: 'ogo' }, 'A — pick a sport'),
+      { class: 'sheet' },
+      h('h2', null, 'Play online'),
+      h('div', { class: 'hintline' }, 'Friends play from their own TV, with their own phones.'),
+      h('div', { class: 'oroom' }, h('div', { class: 'olabel' }, 'Your room'), code, friends),
+      start,
+      h('div', { class: 'oopts' }, join, quick),
+      h('div', { class: 'hintline' }, '▲ ▼ choose · A select · B back'),
     );
-    const join = h('div', { class: 'ocard' }, h('h3', null, 'Join a room'), h('p', null, 'Got a friend’s code? Type it to play in their game, from your own screen and your own phones.'), h('div', { class: 'ogo' }, 'A — enter a code'));
-    const qnote = h('div', { class: 'onote' });
-    const quick = h('div', { class: 'ocard' }, h('h3', null, 'Quick match'), h('p', null, 'Get paired with someone else who’s looking, and play a singles match, right away.'), qnote, h('div', { class: 'ogo' }, 'A — find an opponent'));
-    const nav = new Nav(
-      [
-        {
-          el: host,
-          onSelect: () => {
-            this.toast(`Room ${link.room} is open — pick a sport`, '#35d49a');
-            this.go(this.mainMenu());
-          },
-        },
-        { el: join, onSelect: () => this.go(this.joinCodeScreen()) },
-        {
-          el: quick,
-          onSelect: () => {
-            if (!this.app.input.padCount) {
-              // (the match is played with a phone: show the QR code)
-              this.toast('Quick match needs a phone — scan the code first', '#ffc53d');
-              this.join.el.classList.add('nudge');
-              window.setTimeout(() => this.join.el.classList.remove('nudge'), 1800);
-              return;
-            }
-            this.startQuickMatch();
-          },
-        },
-      ],
-      true,
-    );
-    const el = h('div', { class: 'screen center online' }, h('div', { class: 'sheet panel' }, h('h2', null, 'Play online'), h('div', { class: 'ochoices' }, host, join, quick)), this.join.el);
+    const el = h('div', { class: 'screen setup online' }, sheet, this.join.el);
     this.join.refresh();
     const scr = this.navScreen('online', el, nav, () => this.go(this.mainMenu()), { title: 'Play online', hint: 'A choose · B back' });
     scr.update = () => {
       const n = link.guests.length;
-      friends.textContent = n ? `${n} ${n === 1 ? 'friend’s TV' : 'friends’ TVs'} watching` : 'Nobody has joined yet';
-      qnote.textContent = this.app.input.padCount ? '' : 'Needs a phone: scan the code';
+      friends.textContent = n ? `${n} ${n === 1 ? 'friend’s TV' : 'friends’ TVs'} in your room` : 'Friends type this on their TV to join you';
+      friends.classList.toggle('on', n > 0);
+      qnote.textContent = this.app.input.padCount ? 'A singles match with someone looking right now' : 'Needs a phone: scan the code first';
+      qnote.classList.toggle('warn', !this.app.input.padCount);
       this.join.refresh();
     };
+    scr.update(0);
     return scr;
   }
 
@@ -1067,7 +1143,7 @@ export class Flow {
     const title = h('h2', null, 'Tennis');
     const desc = h('div', { class: 'hintline' }, 'Choose your match, then pick a world.');
     const kal = this.kaleidoRow(() => refresh());
-    const rush = this.featureTile('rush', document.createTextNode('🔥'), 'Rush', 'Every shot speeds the ball up. Keep the rally going and it catches fire.', () => S.rush, (on) => (S.rush = on), () => refresh());
+    const rush = this.paceTile(() => refresh());
     const teamsView = h('div', { class: 'teams' });
     const row = (k: string) => {
       const v = h('span');

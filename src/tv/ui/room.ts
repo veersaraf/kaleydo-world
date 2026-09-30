@@ -39,23 +39,23 @@ export class CodeEntry {
       row.append(c);
     }
     this.msg = h('div', { class: 'rmsg' });
-    this.go = h('div', { class: 'row go' }, 'Join room');
+    this.go = h('div', { class: 'row go' }, 'Join ▶');
     this.go.addEventListener('click', (e) => {
       e.stopPropagation();
       this.submit();
     });
     this.el = h(
       'div',
-      { class: 'screen center joincode' },
+      { class: 'screen pausemenu joincode' },
       h(
         'div',
-        { class: 'sheet panel' },
-        h('h2', null, 'Join a room'),
-        h('p', { class: 'lead' }, 'Type the 5-letter code on your friend’s screen. Your phones then scan the code on yours to play in their game.'),
+        { class: 'sheet' },
+        h('h2', null, 'Join a friend’s room'),
+        h('p', { class: 'lead' }, 'Type the code on their screen'),
         row,
         this.msg,
         this.go,
-        h('div', { class: 'rhint' }, 'Type it · or ◀ ▶ move · ▲ ▼ letter · A next · B back'),
+        h('div', { class: 'rhint' }, 'Type it, or ◀ ▶ move · ▲ ▼ letter · A next · B back'),
       ),
     );
     this.draw();
@@ -223,6 +223,7 @@ export class GuestLobby {
   /** a line from the host (e.g. its opponent's phone never came), shown under the roster */
   note = '';
   private dead: 'hostgone' | 'noroom' | null = null;
+  private label: HTMLElement;
   private head: HTMLElement;
   private sub: HTMLElement;
   private roster: HTMLElement;
@@ -233,11 +234,12 @@ export class GuestLobby {
     private link: TVLink,
     readonly code: string,
   ) {
+    this.label = h('div', { class: 'olabel' });
     this.head = h('div', { class: 'lhead' });
     this.sub = h('div', { class: 'lsub' });
     this.roster = h('div', { class: 'lroster' });
     this.status = h('div', { class: 'lstatus' });
-    this.el = h('div', { class: 'screen lobby' }, h('div', { class: 'sheet panel' }, this.head, this.sub, this.roster, this.status, h('div', { class: 'rhint' }, 'B — leave the room')));
+    this.el = h('div', { class: 'screen setup lobby' }, h('div', { class: 'sheet' }, this.label, this.head, this.sub, this.roster, this.status, h('div', { class: 'hintline' }, 'B leave the room')));
     this.render(true);
   }
 
@@ -281,33 +283,38 @@ export class GuestLobby {
     const sig = JSON.stringify([this.state, this.code, R, L.online, this.matchedWith, this.note]);
     if (!force && sig === this.sig) return;
     this.sig = sig;
-    this.el.className = `screen lobby ${this.state}`;
+    this.el.className = `screen setup lobby ${this.state}`;
     clear(this.head);
     clear(this.sub);
     clear(this.roster);
+    this.label.textContent = `Room ${this.code}`;
+    this.status.classList.toggle('act', this.state === 'noroom' || this.state === 'hostgone');
     if (this.state === 'noroom') {
       this.head.append('No room with that code');
       this.sub.append(`Nobody is hosting ${this.code} right now. Check the letters with your friend.`);
-      this.status.textContent = 'A — try another code';
+      this.status.textContent = 'Try another code ▶';
       return;
     }
-    this.head.append('You’re in room ', h('span', { class: 'rcode' }, this.code));
     if (this.state === 'hostgone') {
-      this.sub.append('The host left the room.');
-      this.status.textContent = 'A — back to your own room';
+      this.head.append('The host left');
+      this.sub.append('Their room closed when they left.');
+      this.status.textContent = 'Back to your room ▶';
       return;
     }
     if (this.state === 'joining') {
-      this.sub.append(this.matchedWith ? `Matched with ${this.matchedWith}! ` : '', L.online ? 'Joining…' : 'Connecting…');
+      this.head.append(this.matchedWith ? `Matched with ${this.matchedWith}!` : L.online ? 'Joining…' : 'Connecting…');
+      this.sub.append('Getting you into the room');
       this.status.textContent = 'Waiting for the host…';
       return;
     }
-    this.sub.append(this.matchedWith ? `Matched with ${this.matchedWith}!` : R?.host ? `with ${R.host}` : 'with the host');
+    this.head.append(this.matchedWith ? `Matched with ${this.matchedWith}!` : `Playing with ${R?.host ?? 'the host'}`);
+    this.sub.append('Your phones scan the code on this screen to play in their game.');
     const pads = R?.pads ?? [];
     const guests = R?.guests ?? [];
+    const chip = (color: string, name: string, tag?: string, tv = false) => h('div', { class: `lp${tv ? ' tv' : ''}`, style: `--c:${color}` }, h('i'), h('span', null, name), tag ? h('small', null, tag) : null);
     this.roster.append(
-      h('div', { class: 'lcol' }, h('h4', null, pads.length ? `Phones (${pads.length})` : 'Phones'), ...(pads.length ? pads.map((p) => h('div', { class: 'lp', style: `--c:${p.color ?? '#9aa'}` }, h('i'), h('span', null, p.name), p.slot !== undefined ? h('small', null, `P${p.slot + 1}${p.via === me ? ' · yours' : ''}`) : null)) : [h('div', { class: 'lnone' }, 'None yet — scan the code with your phone')])),
-      h('div', { class: 'lcol' }, h('h4', null, `TVs (${guests.length + 1})`), h('div', { class: 'lp tv' }, h('i'), h('span', null, R?.host ? `${R.host}’s TV` : 'Host'), h('small', null, 'host')), ...guests.map((g) => h('div', { class: 'lp tv' }, h('i'), h('span', null, g.name), h('small', null, g.gid === me ? 'you' : '')))),
+      h('div', { class: 'lcol' }, h('h4', null, 'Players'), ...(pads.length ? pads.map((p) => chip(p.color ?? '#9aa', p.name, p.via === me ? 'yours' : undefined)) : [h('div', { class: 'lnone' }, 'No phones yet: scan the code')])),
+      h('div', { class: 'lcol' }, h('h4', null, `TVs (${guests.length + 1})`), chip('#fff', R?.host ? `${R.host}’s TV` : 'Their TV', 'host', true), ...guests.map((g) => chip('#fff', g.name, g.gid === me ? 'you' : undefined, true))),
     );
     const mine = pads.filter((p) => p.via === me).length;
     this.status.textContent = this.note || (this.matchedWith && !mine ? 'Scan the code with your phone to play' : 'Waiting for the host to start…');
