@@ -25,7 +25,3 @@ export function replay(el: HTMLElement, cls: string) {
   void el.offsetWidth;
   el.classList.add(cls);
 }
-
-export function setVars(el: HTMLElement, vars: Record<string, string>) {
-  for (const [k, v] of Object.entries(vars)) el.style.setProperty(k, v);
-}
