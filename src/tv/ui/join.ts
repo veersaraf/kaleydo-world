@@ -67,7 +67,7 @@ export class JoinPanel {
       } else {
         this.qr.src = `/api/qr.svg?dark=1d1c33&t=${Date.now()}`;
         // (the QR code opens the http join page, which sends the phone on to the https remote)
-        this.url.replaceChildren('Same Wi-Fi as this Mac · ', h('b', null, u.replace(/^https?:\/\//, '')));
+        this.url.textContent = 'Same Wi-Fi as this computer';
         this.blurb.textContent = 'Your phone becomes the controller.';
       }
     } else if (!u) {

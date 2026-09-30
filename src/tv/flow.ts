@@ -1,6 +1,6 @@
 // Game flow: screens, menus, match lifecycle, pads, audio cues.
 
-import { h, clear, replay, setVars } from './ui/dom';
+import { h, clear, replay } from './ui/dom';
 import { Nav } from './ui/menu';
 import { Hud, type TeamInfo } from './ui/hud';
 import { JoinPanel } from './ui/join';
@@ -189,7 +189,6 @@ export class Flow {
     this.toastEl = h('div', { class: 'toast' });
     this.root.append(this.hudLayer, this.screenLayer, this.toastEl, this.soundButton());
     this.join = new JoinPanel(app.link, app.input);
-    this.applyTheme(worldDef('plaza'));
 
     app.input.onButton = (slot, b, down) => {
       if (this.app.sport === 'bowling' && !this.screen && this.bowlButton(slot, b, down)) return;
@@ -321,7 +320,6 @@ export class Flow {
     app.onSplit = (on) => this.hud?.setSplit(on ? app.rig2 : null);
     app.stage.onSwap = (w) => {
       COURT.gravity = 9.81 * (w.def.gravity ?? 1);
-      this.applyTheme(w.def);
       this.audio?.setTimbre(TIMBRE[w.def.id] ?? 'hard');
       if (this.audio && (this.screen || !this.app.attract)) this.audio.playSong(w.def.song);
       this.syncScoreboard();
@@ -567,7 +565,6 @@ export class Flow {
       this.app.stage.setWorld(next, { transition: true, origin: { x: 0.5, y: 0.45 } });
       this.audio?.sfx.ui('shift');
       const def = worldDef(next);
-      this.applyTheme(def);
       this.toast(`✦ ${def.name}`, '#b07cff');
     }, delay);
   }
@@ -2921,7 +2918,7 @@ export class Flow {
     const sheet = h(
       'div',
       { class: 'sheet panel', style: `--c:${won ? this.teams[0].color : c.look.shirt}` },
-      h('div', { class: 'winner', style: `font-family:${def.ui.display}` }, won ? 'Shard restored!' : `${c.name} wins`),
+      h('div', { class: 'winner' }, won ? 'Shard restored!' : `${c.name} wins`),
       h('div', { class: 'final' }, `${m.score.games[0]} – ${m.score.games[1]}`),
       h('div', { class: 'hintline', style: 'font-size:calc(var(--u)*2.6);opacity:.85' }, won ? `“${c.beatLine}”` : 'So close. Every champion has a weakness — find it.'),
       h('div', { class: 'hintline' }, won ? `${Math.min(8, i + 1)} of 8 shards restored` : `Longest rally: ${this.stats.longest} shots`),
@@ -3408,18 +3405,6 @@ export class Flow {
     this.toastEl.classList.add('show');
     clearTimeout(this.toastTimer);
     this.toastTimer = window.setTimeout(() => this.toastEl.classList.remove('show'), 2600);
-  }
-
-  private applyTheme(def: WorldDef) {
-    setVars(this.root, {
-      '--accent': def.ui.accent,
-      '--accent2': def.ui.accent2,
-      '--ink': def.ui.ink,
-      '--paper': def.ui.paper,
-      '--font': def.ui.font,
-      '--display': def.ui.display,
-      '--panel': def.ui.panel,
-    });
   }
 }
 

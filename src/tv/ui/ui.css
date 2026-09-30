@@ -362,6 +362,11 @@
   align-items: center;
 }
 
+/* (no prism stripe: the card stays quiet) */
+.join.panel::before {
+  content: none;
+}
+
 /* the code sits in a camera viewfinder: four corner brackets that breathe */
 .join .qr {
   position: relative;
