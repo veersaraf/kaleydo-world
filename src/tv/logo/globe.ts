@@ -509,12 +509,12 @@ function atmosphere() {
     transparent: true,
     depthWrite: false,
     side: THREE.BackSide,
-    blending: THREE.AdditiveBlending,
+    // normal blending with a real alpha, so the glow composites cleanly over a transparent canvas
     uniforms: { c: { value: new THREE.Color('#8fe6ff') } },
     vertexShader: `varying vec3 vN; varying vec3 vV;
       void main(){ vec4 mv = modelViewMatrix*vec4(position,1.); vN = normalize(normalMatrix*normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix*mv; }`,
     fragmentShader: `uniform vec3 c; varying vec3 vN; varying vec3 vV;
-      void main(){ float d = abs(dot(vN, vV)); float f = pow(1. - d, 2.0) * smoothstep(0.0, 0.3, d); gl_FragColor = vec4(c * f * 0.35, 1.); }`,
+      void main(){ float d = abs(dot(vN, vV)); float f = pow(1. - d, 2.0) * smoothstep(0.0, 0.3, d); gl_FragColor = vec4(c, f * 0.45); }`,
   });
   return new THREE.Mesh(new THREE.SphereGeometry(1.045, 64, 48), mat);
 }
