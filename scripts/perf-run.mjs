@@ -31,7 +31,7 @@ await tv.evaluate(() => {
 });
 const stat = (a) => { const s = [...a].sort((x, y) => x - y); const q = (p) => s[Math.min(s.length - 1, Math.floor(p * s.length))]; return `p50 ${q(0.5).toFixed(1)} p99 ${q(0.99).toFixed(1)} max ${s[s.length - 1].toFixed(1)}`; };
 for (const w of worlds) {
-  // switch like the attract loop / Kaleido does: a shatter transition into the next world
+  // switch like the attract loop / Kaleydo does: a shatter transition into the next world
   await tv.evaluate((w) => window.kaleido.stage.setWorld(w, { transition: true }), w);
   await tv.evaluate(() => (window.__rows.length = 0));
   await tv.waitForTimeout(secs * 1000);

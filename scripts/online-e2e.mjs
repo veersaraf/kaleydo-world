@@ -14,7 +14,7 @@
 //
 // Checks: same world; the guest's shadow match scores as the host's; the guest's ball is where the
 // host's was (compared at the same simulation time, exactly); every match event arrives, in order; a
-// 1 s stall on the guest's link and a 2.2 s one (it says "reconnecting…") recover; a Kaleido world
+// 1 s stall on the guest's link and a 2.2 s one (it says "reconnecting…") recover; a Kaleydo world
 // change follows; no page errors.
 import { chromium } from 'playwright-core';
 import { phone } from './lib/fake-phone.mjs';
@@ -501,7 +501,7 @@ check('the ball never teleported on the guest (a step over 1.4 m in a frame) exc
   check('the guest recovered from a 1 s stall and a 2.2 s stall: its events all arrived (above), no exceptions (below)', true);
   check('after 1.5 s of silence the guest said "reconnecting…", then took it back', reconnectingSeen && badge && guestData.reconnecting === false, `state seen ${reconnectingSeen}, badge ${badge}, now ${guestData.reconnecting}`);
 }
-check('the world change followed (Kaleido shift)', hostData.world === 'neon' && guestData.world === 'neon' && !guestData.next && !hostData.next, `host ${hostData.world}, guest ${guestData.world}`);
+check('the world change followed (Kaleydo shift)', hostData.world === 'neon' && guestData.world === 'neon' && !guestData.next && !hostData.next, `host ${hostData.world}, guest ${guestData.world}`);
 if (guestData.stats) {
   const s = clean ?? guestData.stats;
   console.log(`\nsnapshot delay${clean ? ' (before the stalls)' : ''} (host encode → guest decode, one way): p50 ${s.oneWay.p50.toFixed(1)} ms  p90 ${s.oneWay.p90.toFixed(1)} ms  max ${s.oneWay.max.toFixed(1)} ms  (${s.oneWay.n} snapshots)`);
