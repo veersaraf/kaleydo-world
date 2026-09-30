@@ -16,6 +16,17 @@ export const RUSH = {
   perHit: 0.1,
   /** extra heat for a perfect hit */
   perfect: 0.15,
+  /**
+   * how much of the ball's extra pace the players get as running speed (0..1): the ball can't
+   * gain the full pace (a flat, fast drive still has to clear the net), so running at the full
+   * multiplier would make Rush easier than the standard game
+   */
+  run: 0.7,
+  /**
+   * a faster drive is also flatter: its required net clearance is divided by pace^flatten (the net
+   * clearance is what caps a drive's speed, so without this the pace multiplier barely shows)
+   */
+  flatten: 3,
 } as const;
 
 /** The rally's heat after a hit: a serve resets it, every other hit builds it. */

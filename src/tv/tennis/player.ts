@@ -104,6 +104,8 @@ export class TPlayer {
   /** doubles formation role */
   role: 'back' | 'net' = 'back';
   maxSpeed = 6.2;
+  /** Rush: running speed multiplier that follows the ball's pace (1 in the standard game) */
+  runMul = 1;
   accel = 24;
   /** movement frozen during the follow-through */
   lockUntil = 0;
@@ -143,7 +145,7 @@ export class TPlayer {
 
   /** running speed factor: a tired player loses up to a quarter of their pace */
   get pace() {
-    return 1 - 0.24 * this.tired;
+    return (1 - 0.24 * this.tired) * this.runMul;
   }
   get slot() {
     return this.ctrl.kind === 'human' ? this.ctrl.slot : -1;
