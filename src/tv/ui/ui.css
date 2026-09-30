@@ -3576,3 +3576,35 @@ kbd {
     opacity: 0.4;
   }
 }
+
+/* the swing latency readout (`;` on the TV): a tuning tool, off unless asked for */
+.lat-panel {
+  position: fixed;
+  left: 12px;
+  top: 12px;
+  z-index: 9000;
+  padding: 8px 10px;
+  background: rgba(8, 8, 20, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
+  color: #d8f7ff;
+  font: 12px/1.35 ui-monospace, Menlo, Consolas, monospace;
+  pointer-events: none;
+}
+
+.lat-panel[hidden] {
+  display: none;
+}
+
+.lat-panel b {
+  display: block;
+  margin-bottom: 4px;
+  color: #ffd25e;
+  letter-spacing: 0.08em;
+}
+
+.lat-panel pre {
+  margin: 0;
+  font: inherit;
+  white-space: pre;
+}

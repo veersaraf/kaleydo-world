@@ -45,6 +45,8 @@ export interface SwingState {
   input: SwingInput;
   /** ball position when the swing began (for the magnet warp) */
   serve: boolean;
+  /** a person's swing heard after it was made: contact `age` in the past, wind-up already behind it (no racket magnet to stream) */
+  instant?: boolean;
 }
 
 export type AthleticMove = 'lunge' | 'dive' | 'jump';

@@ -33,6 +33,22 @@ export interface SwingEv {
   /** racket-head direction at contact, degrees (player frame), if calibrated */
   path?: number | null;
   attack?: number;
+  /** what the age is made of (pad swings), for the TV's latency readout */
+  parts?: SwingAgeParts;
+}
+
+/** the pieces of a swing's age, milliseconds */
+export interface SwingAgeParts {
+  /** the phone's detector: the swing's peak to the message being sent (its confirm delay) */
+  detector: number;
+  /** the phone to the relay (this message's own stamp, else the phone's median) */
+  uplink: number;
+  /** the relay to this TV */
+  transit: number;
+  /** the sum, before the clamp */
+  sum: number;
+  /** 'ws' | 'http' | 'local' … how the phone talks to the relay */
+  transport: string;
 }
 
 export type Btn = PadButton;
@@ -344,8 +360,15 @@ export class Input {
     const transit = Math.max(0, Date.now() + this.link.serverOffset - rt);
     // the phone's leg: this message's own uplink time when the phone stamped it (the relay's clock at its send), else the phone's median
     const up = typeof ts === 'number' && Number.isFinite(ts) ? Math.min(400, Math.max(0, rt - ts)) : lat;
+    const parts = this.ageParts;
+    parts.detector = age;
+    parts.uplink = up;
+    parts.transit = transit;
+    parts.sum = age + up + transit;
     return Math.min(max, Math.max(0, (age + up + transit) / 1000));
   }
+  /** the pieces of the last age worked out (ageOf writes them; a swing copies what it wants) */
+  private ageParts: SwingAgeParts = { detector: 0, uplink: 0, transit: 0, sum: 0, transport: '' };
 
   padMsg(pid: string, rt: number, m: PadMsg) {
     const seat = this.seatOfPid(pid);
@@ -366,7 +389,11 @@ export class Input {
         this.onSeatsChanged();
         break;
       case 'swing':
-        this.onSwing({ slot: seat.slot, power: m.power, spin: m.spin, age: this.ageOf(rt, m.lat, m.age, SWING_AGE_MAX, m.ts), source: 'pad', side: m.side, path: m.path, attack: m.attack });
+        {
+          const age = this.ageOf(rt, m.lat, m.age, SWING_AGE_MAX, m.ts);
+          const a = this.ageParts;
+          this.onSwing({ slot: seat.slot, power: m.power, spin: m.spin, age, source: 'pad', side: m.side, path: m.path, attack: m.attack, parts: { detector: a.detector, uplink: a.uplink, transit: a.transit, sum: a.sum, transport: seat.transport } });
+        }
         break;
       case 'toss':
         this.onToss(seat.slot);

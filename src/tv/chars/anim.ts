@@ -60,6 +60,16 @@ function keyFrom(k: Key, hs: number, hand: Vec, dir: Vec, off: Vec, twist: numbe
   return k;
 }
 
+function copyKey(o: Key, a: Key) {
+  set(o.hand, a.hand.x, a.hand.y, a.hand.z);
+  set(o.dir, a.dir.x, a.dir.y, a.dir.z);
+  set(o.off, a.off.x, a.off.y, a.off.z);
+  o.twist = a.twist;
+}
+
+/** a swing drawn from the past is eased in over this long (s), counted in frames' worth: it must also finish through a hit-stop */
+const SWING_EASE = 0.05;
+
 function lerpKey(o: Key, a: Key, b: Key, t: number) {
   lerpV(o.hand, a.hand, b.hand, t);
   lerpV(o.dir, a.dir, b.dir, t);
@@ -77,7 +87,10 @@ export class Animator {
   private blinkAt = 0;
   private blinkT = 0;
   private rng = new Rng();
-  private k = { ready: key(), prep: key(), contact: key(), follow: key(), a: key(), b: key(), out: key() };
+  private k = { ready: key(), prep: key(), contact: key(), follow: key(), a: key(), b: key(), out: key(), last: key() };
+  /** the swing whose arrival is being eased in (one heard after it was made is drawn well into its stroke; the arms get there over a few frames, not one) */
+  private easing: object | null = null;
+  private easeT = 0;
   private anticip = 0;
   private headYaw = 0;
   private headPitch = 0;
@@ -195,6 +208,17 @@ export class Animator {
 
     if (sw) {
       this.swingPose(t, sw, hs, out);
+      if (sw.instant) {
+        // the stroke is drawn `age` into its follow-through: from the pose of the frame before it, in a few frames
+        if (this.easing !== sw) {
+          this.easing = sw;
+          this.easeT = 0;
+        }
+        if (this.easeT < SWING_EASE) {
+          this.easeT += 1 / 60;
+          lerpKey(out, K.last, out, smooth(clamp(this.easeT / SWING_EASE)));
+        }
+      }
       if (t >= sw.tc - 0.06 && t < sw.tc + 0.18) effort = 1;
       handAbs = out.hand;
     } else if (p.holding || state === 'toss') {
@@ -212,6 +236,8 @@ export class Animator {
       this.prepKey(stroke, hs, K.prep);
       lerpKey(out, K.ready, K.prep, this.anticip);
     }
+
+    if (!sw) copyKey(K.last, out);
 
     // 1:1 racket: between swings the racket follows the phone in your hand
     const wantMirror = this.phone && !sw && !p.holding && state !== 'toss' ? 1 - this.anticip * 0.75 : 0;
