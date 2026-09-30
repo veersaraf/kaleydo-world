@@ -348,7 +348,7 @@ export class Match {
         if (this.t - this.stateT0 > 0.35) this.toss(this.server);
         return;
       }
-      this.serveSwing(this.server, { ...inp, aim: this.aimFor(this.server, 'serve', inp.path) }, tEvent);
+      this.serveSwing(this.server, { ...inp, aim: this.aimFor(this.server, 'serve', inp.path) }, tEvent, true);
       return;
     }
     if (this.state !== 'play' && this.state !== 'dead') {
@@ -382,7 +382,7 @@ export class Match {
       return;
     }
     const aim = this.aimFor(p, chosen, inp.path);
-    this.scheduleHit(p, { ...plan, stroke: chosen }, { power: inp.power, spin: inp.spin, tau, aim, crossed: chosen !== plan.stroke, dtMs: Math.round(dt * 1000), smash }, tEvent);
+    this.scheduleHit(p, { ...plan, stroke: chosen }, { power: inp.power, spin: inp.spin, tau, aim, crossed: chosen !== plan.stroke, dtMs: Math.round(dt * 1000), smash }, tEvent, true);
   }
 
   /** an overhead on a ball high enough to put away: a smash chance */
@@ -447,8 +447,15 @@ export class Match {
     this.onEvent({ type: 'whiff', p, tau, dtMs, why });
   }
 
-  private scheduleHit(p: TPlayer, plan: HitPlan, input: SwingInput, tEvent: number) {
-    const tc = Math.max(this.t + 0.03, tEvent);
+  /**
+   * `late`: the swing is a person's, already made by the time we hear of it (a phone's arrives
+   * 50–200 ms after the peak): contact is now, resolved on the spot. A swing that is still to
+   * happen (a CPU's own, `tEvent` ahead of the clock) needs a moment to be drawn, so contact
+   * waits for it, and never sooner than 30 ms out.
+   */
+  private scheduleHit(p: TPlayer, plan: HitPlan, input: SwingInput, tEvent: number, late = false) {
+    const now = late && tEvent <= this.t;
+    const tc = now ? this.t : Math.max(this.t + 0.03, tEvent);
     const a = this.ballAt(tc, this.sa);
     const b = this.ballAt(plan.t, this.sb);
     const w = 0.62;
@@ -467,7 +474,10 @@ export class Match {
     };
     p.lastStroke = plan.stroke;
     p.nextSwingOK = tc + 0.25;
-    this.pendingHit = p;
+    if (now) {
+      p.swing.resolved = true;
+      this.resolveHit(p, tc);
+    } else this.pendingHit = p;
   }
 
   private toss(p: TPlayer) {
@@ -496,7 +506,7 @@ export class Match {
     this.onEvent({ type: 'toss', p });
   }
 
-  private serveSwing(p: TPlayer, inp: { power: number; spin: number; aim?: number }, tEvent: number) {
+  private serveSwing(p: TPlayer, inp: { power: number; spin: number; aim?: number }, tEvent: number, late = false) {
     if (p.swing || this.t < p.nextSwingOK) return;
     const ideal = p.tossT + TOSS_IDEAL;
     const tau = (tEvent - ideal) / (SERVE_WIN * (p.human ? (this.cfg.timingScale ?? 1) : 1));
@@ -504,7 +514,8 @@ export class Match {
       this.whiff(p, 'serve', tau);
       return;
     }
-    const tc = Math.max(this.t + 0.03, tEvent);
+    const now = late && tEvent <= this.t;
+    const tc = now ? this.t : Math.max(this.t + 0.03, tEvent);
     const a = segPos(this.ball.seg, tc, this.sa);
     const b = segPos(this.ball.seg, ideal, this.sb);
     p.swing = {
@@ -521,7 +532,10 @@ export class Match {
       serve: true,
     };
     p.nextSwingOK = tc + 0.3;
-    this.pendingHit = p;
+    if (now) {
+      p.swing.resolved = true;
+      this.resolveHit(p, tc);
+    } else this.pendingHit = p;
   }
 
   // ------------------------------------------------------------ ball helpers
