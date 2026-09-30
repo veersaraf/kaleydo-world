@@ -169,7 +169,7 @@ certHelp.hidden = location.protocol !== 'https:' || /^(localhost|127\.0\.0\.1|\[
 const joinScreen = h(
   'section',
   { class: 'join' },
-  h('div', { class: 'logo', 'aria-label': 'KALEIDO' }, ...'KALEIDO'.split('').map((ch, i) => h('span', { style: `--i:${i}` }, ch))),
+  h('img', { class: 'logo', src: '/brand/lockup-small.png', alt: 'Kaleydo World' }),
   h('div', { class: 'tagline' }, 'Your phone is the remote'),
   h('div', { class: 'card' }, joinFace, nameInput, h('div', { class: 'seg' }, handL, handR), joinBtn, joinNote),
   certHelp,
@@ -433,7 +433,7 @@ const panels: Record<PadMode, HTMLElement> = {
 };
 
 const leds = h('div', { class: 'leds' }, h('i'), h('i'), h('i'), h('i'));
-const footer = h('footer', {}, leds, h('div', { class: 'brand' }, 'KALEIDO'));
+const footer = h('footer', {}, leds, h('div', { class: 'brand' }, 'KALEYDO WORLD'));
 const flash = h('div', { class: 'flash' });
 const toast = h('div', { class: 'toast' });
 const shell = h('div', { class: 'shell' }, menuPanel, playPanel, servePanel, waitPanel, skipPanel, bowlPanel, swordPanel, bowPanel, netBar);

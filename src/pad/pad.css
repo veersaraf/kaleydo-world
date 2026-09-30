@@ -142,22 +142,10 @@ section {
 }
 
 .logo {
-  display: flex;
-  gap: 2px;
-  font-weight: 700;
-  font-size: clamp(40px, 15cqw, 64px);
-  letter-spacing: 0.02em;
-  line-height: 1;
-}
-
-.logo span {
-  display: inline-block;
-  color: hsl(calc(var(--i) * 48 + 330) 95% 66%);
-  text-shadow:
-    0 3px 0 hsl(calc(var(--i) * 48 + 330) 70% 38%),
-    0 10px 24px hsl(calc(var(--i) * 48 + 330) 90% 50% / 0.45);
-  animation: bob 2.6s ease-in-out infinite;
-  animation-delay: calc(var(--i) * -0.18s);
+  display: block;
+  width: 60%;
+  max-width: 260px;
+  height: auto;
 }
 
 @keyframes bob {
@@ -2181,7 +2169,6 @@ section {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .logo span,
   .toss,
   .grip,
   .guard,

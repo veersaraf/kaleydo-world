@@ -467,6 +467,27 @@ function sendCA(res) {
   res.end(certs.caDer);
 }
 
+/** The two brand images the join page shows, streamed from public/brand/ (nothing else of it is exposed to the LAN). */
+const LAN_BRAND = new Set(['/brand/lockup-small.png', '/brand/favicon-64.png']);
+
+function sendBrand(res, p, headOnly) {
+  const file = path.join(ROOT, 'public', p);
+  fs.stat(file, (err, st) => {
+    if (err || !st.isFile()) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', 'X-Content-Type-Options': 'nosniff' }).end('Not found');
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Type': 'image/png',
+      'Content-Length': st.size,
+      'Cache-Control': 'public, max-age=3600',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    if (headOnly) res.end();
+    else fs.createReadStream(file).pipe(res);
+  });
+}
+
 /**
  * Plain http from another machine (a phone that scanned the QR code). Only
  * public things are served here: the join page, the profile and the CA
@@ -483,6 +504,7 @@ function handleLan(req, res) {
   if (p === '/join' || p === '/join/') return sendJoin(res);
   if (p === '/kaleido.mobileconfig') return sendProfile(res);
   if (p === '/kaleido-ca.crt') return sendCA(res);
+  if (LAN_BRAND.has(p)) return sendBrand(res, p, req.method === 'HEAD');
   // the old remote addresses (and the bare address): to the join page
   if (p === '/' || p === '/c' || p === '/c/' || p === '/pad' || p === '/controller' || p === '/controller.html') {
     res.writeHead(302, { ...hdr, Location: '/join' });

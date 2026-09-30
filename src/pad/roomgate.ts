@@ -19,7 +19,7 @@ function askRoom() {
     'position:fixed;inset:0;z-index:9999;display:grid;place-items:center;padding:24px;background:linear-gradient(160deg,#1d1b3a,#2b1840);font-family:Fredoka,system-ui,sans-serif;color:#fff';
   wrap.innerHTML = `
     <form style="width:min(340px,100%);display:flex;flex-direction:column;gap:14px;text-align:center">
-      <div style="font-size:30px;font-weight:700;letter-spacing:.04em">KALEIDO</div>
+      <img src="/brand/lockup-small.png" alt="Kaleydo World" style="display:block;width:180px;height:auto;margin:0 auto" />
       <div style="opacity:.75;font-size:16px">Enter the room code on the TV</div>
       <input name="room" autocomplete="off" autocapitalize="characters" inputmode="text" maxlength="8" placeholder="ABCDE"
         style="font:700 34px Fredoka,system-ui,sans-serif;letter-spacing:.3em;text-align:center;text-transform:uppercase;padding:14px;border-radius:16px;border:2px solid rgba(255,255,255,.25);background:rgba(255,255,255,.08);color:#fff;outline:none" />
