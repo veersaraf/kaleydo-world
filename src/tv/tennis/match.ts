@@ -126,6 +126,27 @@ const TOSS_IDEAL = 0.78;
 const SMASH_EARLY = 0.3;
 const SMASH_LATE = 0.24;
 
+/** the wind-up a stroke drawn from the past is given: the racket comes back this long before contact */
+const SWING_WINDUP = 0.12;
+/** the furthest back in time a heard swing is put (the input clamps an age at 0.25 s; a hitch's slip may add a little) */
+const SWING_BACK_MAX = 0.4;
+/**
+ * The drawn ball waits for a phone's swing. A swing message arrives `age` after the swing was made
+ * (the phone's confirm, the network, a frame: 50–100 ms locally, more online), so the ball that
+ * flew on to the racket and past it at full speed has left the picture by the time the stroke can
+ * be drawn. The sim (and the judgement) run on the true ball; only what is DRAWN slows down as
+ * it comes to a human's contact, stays near the racket for about as long as a swing takes to
+ * be heard, and, if no swing comes, catches up smoothly.
+ *
+ *   lead   the drawn clock starts to slow this long before the plan's contact time (s), and stays slow until `hold` after it
+ *   slow   the drawn clock's rate while held (1 = real time)
+ *   catchUp  seconds over which a held ball is caught up to the true one if no swing comes
+ *   min/max/def  the hold's length (s): the median of the last swing ages, clamped to [min, max]; def before any swing
+ *   launch  seconds a hit ball takes from where it was drawn to the true outgoing flight: 1.05 × the swing's age, in [launch, launchMax]
+ *           (the gap to close is the age × the ball's speed; over a fixed time a slow phone's ball would cross the screen in a frame or two)
+ */
+export const HOLD = { lead: 0.03, slow: 0.25, catchUp: 0.06, min: 0.04, max: 0.12, def: 0.06, launch: 0.07, launchMax: 0.13 };
+
 export class Match {
   cfg: MatchConfig;
   players: TPlayer[] = [];
@@ -168,6 +189,21 @@ export class Match {
   private chainSegs: Seg[] = [];
   private chainNb: (number | null)[] = [];
   private chainOf: Seg | null = null;
+  /** the flight before the current one (a swing heard late asks where the ball was before it bounced or was hit) */
+  private prevSeg: Seg | null = null;
+  /** the ball is drawn held at a human's racket (View only; the app turns it off in bullet time and on a guest's shadow match) */
+  holdOn = true;
+  /** ages (sim s) of the last human swings when they were heard */
+  private swingAges: number[] = [];
+  /** the plan the hold length was last fixed for (a plan keeps one length: what was drawn is what is judged) */
+  private holdPlan: HitPlan | null = null;
+  private holdLatched: number = HOLD.def;
+  /** a hit ball's blend from where it was drawn to its true flight */
+  private launch: { t0: number; dur: number; dx: number; dy: number; dz: number } | null = null;
+  private lv0: V3 = { x: 0, y: 0, z: 0 };
+  private lv1: V3 = { x: 0, y: 0, z: 0 };
+  /** the last human swing heard (for the TV's latency readout) */
+  lastJudge = { n: 0, age: 0, hold: 0, tau: 0, dtMs: 0, hit: false, state: '' };
   gravityScale: number;
 
   constructor(cfg: MatchConfig) {
@@ -315,6 +351,8 @@ export class Match {
     this.ball.pop = false;
     this.ball.smash = 0;
     this.pendingHit = null;
+    this.launch = null;
+    this.prevSeg = null;
     this.aiSwingAt.clear();
     this.rally = 0;
     this.path.n = 0;
@@ -358,6 +396,17 @@ export class Match {
       return;
     }
     const p = mine.find((q) => q.plan) ?? mine[0];
+    // (how old swings are when they're heard: the drawn ball waits about that long at the racket)
+    const lj = this.lastJudge;
+    lj.n++;
+    lj.age = Math.max(0, this.t - tEvent);
+    lj.hit = false;
+    lj.state = this.state;
+    if (this.state === 'play' && p.plan && !p.swing) {
+      const a = this.swingAges;
+      a.push(lj.age);
+      if (a.length > 8) a.shift();
+    }
     // a way-too-early swing (often a backswing) can be overridden by the real one
     if (p.swing && !p.swing.hit && p.swing.input.tau < -1 && this.t - p.swing.t0 > 0.08) p.swing = null;
     if (p.swing || this.t < p.nextSwingOK) return;
@@ -371,10 +420,16 @@ export class Match {
       else this.whiff(p, chosen, 0, undefined, 'noball');
       return;
     }
-    const dt = tEvent - plan.t;
+    // the swing is judged against the time the DRAWN ball was showing when it was made (the ball
+    // is held at the racket: see HOLD), so the timing feels as it did before the ball was held
+    const tView = this.judgedTime(plan, tEvent);
+    const dt = tView - plan.t;
+    lj.hold = this.holdFor(plan);
     const k = this.cfg.timingScale ?? 1;
     const smash = this.isSmashPlan(plan);
     const tau = dt < 0 ? dt / ((smash ? SMASH_EARLY : WIN_EARLY) * k) : dt / ((smash ? SMASH_LATE : WIN_LATE) * k);
+    lj.tau = tau;
+    lj.dtMs = Math.round(dt * 1000);
     if (tau < -1 || tau > 1) {
       // a big early swing on the other side is usually a backswing: set up for the real stroke
       if (tau < -1 && inp.side && inp.side !== 'oh') this.humanPrep(slot, inp.side === 'fh' ? 'bh' : 'fh');
@@ -382,7 +437,8 @@ export class Match {
       return;
     }
     const aim = this.aimFor(p, chosen, inp.path);
-    this.scheduleHit(p, { ...plan, stroke: chosen }, { power: inp.power, spin: inp.spin, tau, aim, crossed: chosen !== plan.stroke, dtMs: Math.round(dt * 1000), smash }, tEvent, true);
+    lj.hit = true;
+    this.scheduleHit(p, { ...plan, stroke: chosen }, { power: inp.power, spin: inp.spin, tau, aim, crossed: chosen !== plan.stroke, dtMs: Math.round(dt * 1000), smash }, tEvent, true, tView);
   }
 
   /** an overhead on a ball high enough to put away: a smash chance */
@@ -449,19 +505,22 @@ export class Match {
 
   /**
    * `late`: the swing is a person's, already made by the time we hear of it (a phone's arrives
-   * 50–200 ms after the peak): contact is now, resolved on the spot. A swing that is still to
-   * happen (a CPU's own, `tEvent` ahead of the clock) needs a moment to be drawn, so contact
-   * waits for it, and never sooner than 30 ms out.
+   * 50–200 ms after the peak). It is resolved AS OF THE SWING: contact at `tEvent` (in the past),
+   * the ball's outgoing flight begun there, so that now the ball is already `age` seconds along it
+   * and the stroke is drawn `age` into its follow-through, wound up and struck as the person did.
+   * (The contact point is where the ball was showing, `tView`, blended towards where the plan
+   * meant it.) A swing that is still to happen (a CPU's own, `tEvent` ahead of the clock) needs a
+   * moment to be drawn, so contact waits for it, and never sooner than 30 ms out.
    */
-  private scheduleHit(p: TPlayer, plan: HitPlan, input: SwingInput, tEvent: number, late = false) {
+  private scheduleHit(p: TPlayer, plan: HitPlan, input: SwingInput, tEvent: number, late = false, tView = tEvent) {
     const now = late && tEvent <= this.t;
-    const tc = now ? this.t : Math.max(this.t + 0.03, tEvent);
-    const a = this.ballAt(tc, this.sa);
+    const tc = now ? Math.max(tEvent, this.t - SWING_BACK_MAX) : Math.max(this.t + 0.03, tEvent);
+    const a = this.ballAt(now ? Math.min(tView, tc) : tc, this.sa);
     const b = this.ballAt(plan.t, this.sb);
     const w = 0.62;
     p.swing = {
       stroke: plan.stroke,
-      t0: this.t,
+      t0: now ? tc - SWING_WINDUP : this.t,
       tc,
       te: tc + 0.36,
       cx: lerp(a.x, b.x, w),
@@ -471,6 +530,7 @@ export class Match {
       resolved: false,
       input,
       serve: false,
+      instant: now || undefined,
     };
     p.lastStroke = plan.stroke;
     p.nextSwingOK = tc + 0.25;
@@ -486,6 +546,7 @@ export class Match {
     p.holding = false;
     p.tossT = this.t;
     this.ball.holder = null;
+    this.prevSeg = null;
     const vy = 5.7;
     this.ball.seg = {
       t0: this.t,
@@ -546,6 +607,8 @@ export class Match {
    */
   ballAt(t: number, out: V3 = { x: 0, y: 0, z: 0 }): V3 {
     const first = this.ball.seg;
+    // (before this flight began: the one it followed)
+    if (t < first.t0 && this.prevSeg) return segPos(this.prevSeg, t, out);
     if (this.chainOf !== first) {
       this.chainOf = first;
       this.chainSegs.length = 1;
@@ -571,6 +634,7 @@ export class Match {
   }
 
   private newFlight(seg: Seg) {
+    this.prevSeg = this.ball.seg;
     this.ball.seg = seg;
     this.ball.nextBounce = segTimeDown(seg, COURT.ballR, seg.t0 + 1e-3);
     this.ball.netCrossT = segTimeAtZ(seg, 0);
@@ -813,9 +877,11 @@ export class Match {
         nb.vy = 0;
         nb.g = 0;
         nb.k = 1.2;
+        this.prevSeg = b.seg;
         b.seg = nb;
         b.nextBounce = null;
       } else {
+        this.prevSeg = b.seg;
         b.seg = nb;
         b.nextBounce = segTimeDown(nb, COURT.ballR, nb.t0 + 1e-3);
       }
@@ -981,6 +1047,9 @@ export class Match {
     const sw = p.swing!;
     if (this.pendingHit === p) this.pendingHit = null;
     const contact: V3 = { x: sw.cx, y: sw.cy, z: sw.cz };
+    // a swing heard late: where the ball is being DRAWN now (held at the racket), to leave from
+    const fromView = sw.instant && !sw.serve && tc < this.t - 0.004;
+    if (fromView) this.ballView(this.t, this.lv0);
 
     // too far from the body to actually connect (outplayed)
     const reach = hyp2(contact.x - p.x, contact.z - p.z);
@@ -1077,6 +1146,12 @@ export class Match {
     this.ball.netted = false;
     this.newFlight(seg);
     this.replan();
+    // the drawn ball leaves the racket for its true flight (which is `age` seconds along already)
+    this.launch = null;
+    if (fromView) {
+      const c = this.ballCore(this.t, this.lv1);
+      this.launch = { t0: this.t, dur: clamp((this.t - tc) * 1.05, HOLD.launch, HOLD.launchMax), dx: this.lv0.x - c.x, dy: this.lv0.y - c.y, dz: this.lv0.z - c.z };
+    }
     p.hits++;
     p.lockUntil = tc + (sw.serve ? 0.34 : 0.3);
 
@@ -1105,6 +1180,8 @@ export class Match {
       shotSpin,
       rocket,
     });
+    // the flight began in the past: what happened on it since (a net cord, a bounce) happens now
+    if (fromView && this.ball.live) this.stepBall(tc, this.t);
   }
 
   private letServe() {
@@ -1171,14 +1248,35 @@ export class Match {
 
   // ------------------------------------------------------------ view helpers
 
-  /** Where to draw the ball (includes the racket "magnet" before contact). */
-  ballView(t: number, out: V3): V3 {
+  /**
+   * Where to draw the ball: the flight, with the racket "magnet" before a scheduled contact, the
+   * hold at a human's racket (HOLD) and the blend of a hit ball into its true flight. A pure
+   * function of `t` and the match's state (it is called several times a frame, and by a guest's
+   * probe at times of its own). `plain`: the ball as the sim (and the stream to guests) has it, without the hold and the blend.
+   */
+  ballView(t: number, out: V3, plain = false): V3 {
     const b = this.ball;
     if (b.holder) {
       // (the view places it in the hand: nothing to give, and a point reused from the last frame must not linger)
       out.x = out.y = out.z = 0;
       return out;
     }
+    this.ballCore(t, out, plain);
+    const l = plain ? null : this.launch;
+    if (l && t >= l.t0) {
+      const u = (t - l.t0) / l.dur;
+      if (u < 1) {
+        const k = (1 - u) * (1 - u);
+        out.x += l.dx * k;
+        out.y += l.dy * k;
+        out.z += l.dz * k;
+      }
+    }
+    return out;
+  }
+
+  private ballCore(t: number, out: V3, plain = false): V3 {
+    const b = this.ball;
     segPos(b.seg, t, out);
     const ph = this.pendingHit;
     if (ph && ph.swing && !ph.swing.resolved) {
@@ -1191,20 +1289,113 @@ export class Match {
     } else if (this.state === 'toss' || this.state === 'serve') {
       segPos(b.seg, t, out);
     } else {
-      // follow bounces for display
-      const p = this.ballAt(t, this.sa);
+      // follow bounces for display (on the drawn clock, which waits at a human's racket)
+      const hp = plain ? null : this.holdPlayer();
+      const td = hp ? this.holdWarp(hp.plan!, this.holdFor(hp.plan!), t) : t;
+      const p = this.ballAt(td, this.sa);
       out.x = p.x;
       out.y = Math.max(COURT.ballR, p.y);
       out.z = p.z;
       // a floated mishit visibly wobbles on its way over
       const w = b.seg.wob;
       if (w) {
-        const u = t - b.seg.t0;
+        const u = td - b.seg.t0;
         out.x += Math.sin(u * 15) * w * Math.min(1, u * 4);
         out.y += Math.sin(u * 11 + 1.3) * w * 0.5 * Math.min(1, u * 4);
       }
     }
     return out;
+  }
+
+  // ------------------------------------------------------------ the drawn ball's hold
+
+  /** the human whose racket the drawn ball is being held at, or null */
+  private holdPlayer(): TPlayer | null {
+    if (!this.holdOn || this.state !== 'play' || !this.ball.live) return null;
+    for (const p of this.players) if (p.human && p.plan && this.holdable(p.plan)) return p;
+    return null;
+  }
+
+  /** a plan the hold applies to: one a human can reach (a smash chance has bullet time of its own) */
+  private holdable(plan: HitPlan): boolean {
+    return plan.reachable && !this.isSmashPlan(plan);
+  }
+
+  /** how long the drawn ball is held (s): the median of the last swing ages, in [HOLD.min, HOLD.max] */
+  holdSeconds(): number {
+    const a = this.swingAges;
+    if (!a.length) return HOLD.def;
+    const s = a.slice().sort((x, y) => x - y);
+    const n = s.length;
+    return clamp(n % 2 ? s[n >> 1] : (s[n / 2 - 1] + s[n / 2]) / 2, HOLD.min, HOLD.max);
+  }
+
+  /** the median age of the last human swings heard (s), or 0 before any */
+  medianAge(): number {
+    const a = this.swingAges;
+    if (!a.length) return 0;
+    const s = a.slice().sort((x, y) => x - y);
+    const n = s.length;
+    return n % 2 ? s[n >> 1] : (s[n / 2 - 1] + s[n / 2]) / 2;
+  }
+
+  /** the hold length for a plan: fixed the first time it is used, so what is drawn is what is judged */
+  holdFor(plan: HitPlan): number {
+    if (this.holdPlan !== plan) {
+      this.holdPlan = plan;
+      this.holdLatched = this.holdSeconds();
+    }
+    return this.holdLatched;
+  }
+
+  /**
+   * The sim time the drawn ball shows at sim time `t` when held at `plan`'s contact: real time until
+   * `lead` before it, then a slowed clock until `hold` after it, then caught up to real time over
+   * `catchUp` (eased: never a jump).
+   */
+  holdWarp(plan: HitPlan, hold: number, t: number): number {
+    const ts = plan.t - HOLD.lead;
+    if (t <= ts) return t;
+    const u = t - ts;
+    // (the clock is slowed until `hold` after the contact time: a swing made on the beat, heard `hold` later, finds the ball at the racket)
+    const w = hold + HOLD.lead;
+    if (u <= w) return ts + u * HOLD.slow;
+    const v = (u - w) / HOLD.catchUp;
+    if (v >= 1) return t;
+    return t - w * (1 - HOLD.slow) * (1 - smooth(v));
+  }
+
+  /** the sim time at which the drawn ball shows time `d` (the inverse of holdWarp) */
+  holdUnwarp(plan: HitPlan, hold: number, d: number): number {
+    const ts = plan.t - HOLD.lead;
+    if (d <= ts) return d;
+    const w = hold + HOLD.lead;
+    if (d <= ts + w * HOLD.slow) return ts + (d - ts) / HOLD.slow;
+    let lo = ts + w;
+    const hi0 = ts + w + HOLD.catchUp;
+    let hi = hi0;
+    if (d >= hi0) return d;
+    for (let i = 0; i < 30; i++) {
+      const mid = (lo + hi) / 2;
+      if (this.holdWarp(plan, hold, mid) < d) lo = mid;
+      else hi = mid;
+    }
+    return (lo + hi) / 2;
+  }
+
+  /** the time a swing made at sim time `t` is judged at: the time the drawn ball was showing */
+  judgedTime(plan: HitPlan, t: number): number {
+    return this.holdOn && this.holdable(plan) ? this.holdWarp(plan, this.holdFor(plan), t) : t;
+  }
+
+  /** the sim time a swing is made at for the drawn ball to show time `d` (what a person swinging on the ball they see does): judgedTime's inverse */
+  swingTimeFor(plan: HitPlan, d: number): number {
+    return this.holdOn && this.state === 'play' && this.holdable(plan) ? this.holdUnwarp(plan, this.holdFor(plan), d) : d;
+  }
+
+  /** the human's plan the drawn ball is being held at right now, or null (for the tests and tools) */
+  heldPlan(): HitPlan | null {
+    return this.holdPlayer()?.plan ?? null;
   }
 
   /** The human-controlled player a slot should be told about (for pad UI). */

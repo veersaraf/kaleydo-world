@@ -15,7 +15,7 @@ import type { HostToGuest } from '../../shared/protocol';
 
 /** the least time between regular snapshots, ms: every other frame at 60 fps, every frame below ~38 */
 const TICK_MS = 26;
-/** a hit that resolved the moment it was heard (a person's swing already made) has no racket magnet: t0 = tc */
+/** a hit that resolved the moment it was heard (a person's swing already made) has no racket magnet: t0 = tc, or the swing is `instant` (contact in the past, its wind-up already behind it) */
 const MIN_MAGNET = 0.005;
 
 export class NetHost {
@@ -188,7 +188,7 @@ export class NetHost {
     switch (e.type) {
       case 'hit': {
         const sw = e.p.swing;
-        n = { type: 'hit', t, p: p(e.p), warp: sw && sw.hit && sw.tc - sw.t0 >= MIN_MAGNET ? { t0: sw.t0, tc: sw.tc } : undefined, power: e.power, spin: e.spin, perfect: e.perfect, kind: e.kind, stroke: e.stroke, pos: e.pos, kph: e.kph, rally: e.rally, tau: e.tau, serve: e.serve, dtMs: e.dtMs, aim: e.aim, crossed: e.crossed, shotSpin: e.shotSpin, rocket: e.rocket };
+        n = { type: 'hit', t, p: p(e.p), warp: sw && sw.hit && !sw.instant && sw.tc - sw.t0 >= MIN_MAGNET ? { t0: sw.t0, tc: sw.tc } : undefined, power: e.power, spin: e.spin, perfect: e.perfect, kind: e.kind, stroke: e.stroke, pos: e.pos, kph: e.kph, rally: e.rally, tau: e.tau, serve: e.serve, dtMs: e.dtMs, aim: e.aim, crossed: e.crossed, shotSpin: e.shotSpin, rocket: e.rocket };
         break;
       }
       case 'whiff':

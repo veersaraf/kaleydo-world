@@ -45,6 +45,7 @@ import { segVel, segPos } from './tennis/ball';
 import { Animator } from './chars/anim';
 import { TVLink } from './core/link';
 import { Input, SWING_AGE_MAX, type SwingEv } from './core/input';
+import { LatencyPanel, type SwingReadout } from './ui/hud';
 import { AI_LEVELS } from './tennis/ai';
 import { randomLook, playerLook, type Look } from './chars/look';
 import { Rng, clamp, damp, lerp, smooth } from './core/math';
@@ -230,6 +231,13 @@ export class App {
     this.stage.fx = this.quality.current.fx;
     this.input = new Input(this.link);
     this.input.onSwing = (e) => this.swing(e);
+    // `;` shows the swing latency readout (a tuning tool for a real phone; off unless asked for)
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== ';' || e.repeat || e.ctrlKey || e.metaKey || e.altKey || (e.target as HTMLElement)?.tagName === 'INPUT') return;
+      const lp = (this.latPanel ??= new LatencyPanel());
+      lp.toggle();
+      if (this.latLast) lp.swing(this.latLast);
+    });
     this.input.onToss = (slot) => this.match && !this.paused && this.match.humanToss(slot);
     this.input.onPrep = (slot, side) => this.match && !this.paused && !this.attract && this.match.humanPrep(slot, side);
     this.link.onMessage = (m) => {
@@ -395,6 +403,10 @@ export class App {
     };
   }
 
+  /** the swing latency readout (made the first time it is asked for) and the last swing it would show */
+  private latPanel: LatencyPanel | null = null;
+  private latLast: SwingReadout | null = null;
+
   private swing(e: SwingEv) {
     if (this.sport === 'baseball') {
       const g = this.baseball;
@@ -416,6 +428,24 @@ export class App {
     // (a swing's age is real time; in bullet time the sim has moved on less)
     const age = clamp(e.age, 0, SWING_AGE_MAX);
     m.humanSwing(e.slot, { power, spin: e.spin, side: e.side, path: e.path }, m.t - age * this.timeScale + this.slippedSince(age));
+    // (for the readout: what the age was made of, and how the swing was judged)
+    const j = m.lastJudge;
+    const pt = e.parts;
+    this.latLast = {
+      n: j.n,
+      detector: pt ? pt.detector : 0,
+      uplink: pt ? pt.uplink : 0,
+      transit: pt ? pt.transit : 0,
+      total: age * 1000,
+      hold: j.hold * 1000,
+      tau: j.tau,
+      dtMs: j.dtMs,
+      hit: j.hit,
+      transport: pt ? pt.transport : e.source === 'pad' ? '?' : 'local',
+      median: m.medianAge() * 1000,
+      source: e.source,
+    };
+    this.latPanel?.swing(this.latLast);
   }
 
   /**
@@ -1388,6 +1418,8 @@ export class App {
     this.paused = false;
     this.hitstop = 0;
     const shadow = shadowMatch(start);
+    // (no plans to hold the ball at, and no swings to judge: it shows what the host sends)
+    shadow.holdOn = false;
     this.match = shadow;
     this.anims = [];
     this.livePoses = [];
@@ -1518,6 +1550,8 @@ export class App {
     // (the engine compiles the planner in the first frames, not in the first rally)
     if (m.warmLeft > 0) m.warm(4);
     this.stageSmash(m, realDt);
+    // (the ball is drawn held at a human's racket; not in bullet time, which slows the smash down already)
+    m.holdOn = this.timeScale >= 0.97;
     let simDt = this.paused ? 0 : realDt * this.timeScale;
     if (this.hitstop > 0) {
       this.hitstop -= realDt;

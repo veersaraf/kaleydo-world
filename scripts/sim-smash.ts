@@ -7,6 +7,10 @@ import { Rng } from '../src/tv/core/math';
 import { EventHash, seedMathRandom } from './sim-hash';
 
 const hash = new EventHash();
+// MODE=drawn (default): the human swings when the DRAWN ball reaches the racket (it is held there, see Match.holdWarp), the judgement maps it back;
+// MODE=sim: on the sim ball, as the old build did. AGE: seconds from the swing to it being heard.
+const DRAWN = (process.env.MODE ?? 'drawn') === 'drawn';
+const AGE = +(process.env.AGE ?? 0.03);
 
 const sources: Record<string, number> = {};
 function run(level: string, timingSigma: number, seed: number, doubles = false, games = 3) {
@@ -77,9 +81,10 @@ function run(level: string, timingSigma: number, seed: number, doubles = false, 
       m.humanSwing(0, { power: r.range(0.4, 1), spin: 0.2 }, m.t - 0.02);
     if (hp.plan && hp.plan !== planned) {
       planned = hp.plan;
-      swingAt = hp.plan.t + r.gauss() * timingSigma;
+      const want = hp.plan.t + r.gauss() * timingSigma;
+      swingAt = DRAWN && (m as any).swingTimeFor ? m.swingTimeFor(hp.plan, want) : want;
     }
-    if (planned && hp.plan === planned && m.t >= swingAt + 0.03) {
+    if (planned && hp.plan === planned && m.t >= swingAt + AGE) {
       m.humanSwing(0, { power: Math.min(1, Math.max(0, r.range(0.35, 1.05))), spin: r.gauss() * 0.4 + 0.15, side: r.chance(0.5) ? 'fh' : 'bh' }, swingAt);
       planned = null;
     }

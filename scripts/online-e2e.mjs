@@ -173,7 +173,8 @@ await host.evaluate(() => {
   k.onFrame = (dt) => {
     const m = k.match;
     if (m && !k.attract) {
-      m.ballView(m.t, tmp);
+      // (the ball as the stream describes it: the sim's own, not the picture held at a person's racket)
+      m.ballView(m.t, tmp, true);
       const sc = m.score;
       window.__hostLog.push({ t: m.t, x: tmp.x, y: tmp.y, z: tmp.z, h: m.ball.holder ? 1 : 0, s0: m.ball.seg.t0, s: `${m.state}|${sc.points}|${sc.games}|${sc.server}|${m.server.id}|${m.rally}|${m.second ? 1 : 0}|${sc.winner}` });
     }
@@ -328,6 +329,9 @@ const compare = async () => {
   // at that instant is double-valued — drawn before the hit, and at the racket after it. That frame isn't compared; the last frame waits for the next)
   const log = all.slice(0, -1);
   for (let i = 0; i < log.length; i++) if (all[i + 1].s0 === all[i].t && all[i].s0 !== all[i].t) log[i].a = 1;
+  // (a person's swing is also resolved as of the swing, up to ~100 ms before it was heard: the flight it starts has a t0 in the frames
+  // already drawn, and the stream tells the guest of it. Those frames were logged before the host knew: not compared)
+  for (let i = 0; i < log.length; i++) for (let k = i + 1; k < Math.min(all.length, i + 14); k++) if (all[k].s0 <= all[i].t && all[k].s0 > all[i].s0) log[i].a = 1;
   if (!log.length) return;
   const r = await guest.evaluate((log) => {
     const g = window.kaleido.guest;
