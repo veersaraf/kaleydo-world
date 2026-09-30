@@ -18,7 +18,7 @@ const KEEPALIVE = 'ka';
 const KA_MS = 40_000;
 
 /** the messages the TV corrects for their age: they get a `ts` (an 'ori' too: the TV draws each pose as old as it really is) */
-const TIMED = new Set<string>(['swing', 'slash', 'bowl', 'grip', 'guard', 'draw', 'toss', 'prep', 'ori']);
+const TIMED = new Set<string>(['swing', 'slash', 'bowl', 'grip', 'guard', 'draw', 'toss', 'prep', 'swing-start', 'ori']);
 /** the pose stream: an HTTP batch carries only the newest of these */
 const LATE = new Set<string>(['ori']);
 

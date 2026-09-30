@@ -1224,6 +1224,13 @@ function showSwing(sw: SwingEvent, path: number | null) {
 }
 
 detector.onSwing = (s) => emitSwing(s);
+// A swing has just begun: tell the TV at once so the stroke starts now, not when the swing is confirmed
+// (~35 ms after its peak, plus the trip). Tennis only, real motion only (the detector is fed by the sensor;
+// a swipe never comes here), nothing else done first: no sound, no screen.
+detector.onStart = (e) => {
+  if ((mode !== 'play' && mode !== 'serve') || e.t < noSwingUntil) return;
+  link.send({ type: 'swing-start', side: e.side, age: Math.round(Math.max(0, performance.now() - e.t)), lat: Math.round(link.lat) });
+};
 detector.onPrep = (side) => {
   if (swingWanted()) link.send({ type: 'prep', side, lat: Math.round(link.lat) });
 };

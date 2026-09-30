@@ -77,6 +77,56 @@ export interface Replay {
   /** ms from each sword strike's peak to the sample that fired it, and the same for each tennis swing */
   swordDelay: number[];
   tennisDelay: number[];
+  /** every onset the tennis detector fired, and every swing it confirmed (peak time `t`), in order */
+  tennisStarts: StartEv[];
+  tennisSwings: SwingEvent[];
+}
+
+export interface StartEv {
+  t: number;
+  side?: 'fh' | 'bh';
+  w: number;
+  dw: number;
+}
+
+/** an onset with no confirmed swing peaking within this after it is a false start */
+export const ONSET_WINDOW = 350;
+
+export interface OnsetStats {
+  /** onsets, and how many were followed by a confirmed swing / not */
+  starts: number;
+  falseStarts: number;
+  /** more than one onset for the same swing */
+  dupes: number;
+  swings: number;
+  missed: number;
+  /** ms from each swing's (first) onset to its peak */
+  leads: number[];
+  /** the onset's side against the confirmed swing's side (fh/bh only): [agree, disagree, undecided at the onset] */
+  side: [number, number, number];
+}
+
+/** Pair the onsets with the confirmed swings: the onset(s) up to ONSET_WINDOW before a swing's peak belong to it. */
+export function onsetStats(starts: StartEv[], swings: SwingEvent[]): OnsetStats {
+  const st: OnsetStats = { starts: starts.length, falseStarts: 0, dupes: 0, swings: swings.length, missed: 0, leads: [], side: [0, 0, 0] };
+  const used = new Set<StartEv>();
+  for (const e of swings) {
+    const mine = starts.filter((o) => o.t <= e.t && e.t - o.t <= ONSET_WINDOW && !used.has(o));
+    if (!mine.length) {
+      st.missed++;
+      continue;
+    }
+    mine.forEach((o) => used.add(o));
+    st.dupes += mine.length - 1;
+    st.leads.push(e.t - mine[0].t);
+    if (e.side !== 'oh') {
+      if (!mine[0].side) st.side[2]++;
+      else if (mine[0].side === e.side) st.side[0]++;
+      else st.side[1]++;
+    }
+  }
+  st.falseStarts = starts.filter((o) => !used.has(o)).length;
+  return st;
 }
 
 /** p50 / p90 / max of a list of delays, ms (NaN when empty) */
@@ -128,6 +178,8 @@ export function replay(lines: Line[], o: ReplayOpts = {}): Replay {
   const cur = () => seg ?? loose;
   const swordDelay: number[] = [];
   const tennisDelay: number[] = [];
+  const tennisStarts: StartEv[] = [];
+  const tennisSwings: SwingEvent[] = [];
   // (the time of the sample being pushed: a detector's answer is late by that much after the peak)
   let clock = 0;
   sword.onStrike = (s) => {
@@ -140,7 +192,9 @@ export function replay(lines: Line[], o: ReplayOpts = {}): Replay {
   tennis.onSwing = (e) => {
     cur().tennis.push(e);
     tennisDelay.push(clock - e.t);
+    tennisSwings.push(e);
   };
+  tennis.onStart = (e) => tennisStarts.push(e);
 
   // "Hold the sword ready, facing the TV, still" (the capture's first step): half-way through
   // it is which way the TV is — the capture page centres there (as the game does whenever A is
@@ -238,7 +292,7 @@ export function replay(lines: Line[], o: ReplayOpts = {}): Replay {
       } else if (ev === 'strike' || ev === 'near' || ev === 'guarded') cur().live.push(l);
     }
   }
-  return { meta, ios, segs, loose, front, nM, nO, dts, span: lastMT - t0, igSeen, igDown, swordDelay, tennisDelay };
+  return { meta, ios, segs, loose, front, nM, nO, dts, span: lastMT - t0, igSeen, igDown, swordDelay, tennisDelay, tennisStarts, tennisSwings };
 }
 
 export const R2D = 180 / Math.PI;

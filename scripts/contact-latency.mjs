@@ -6,7 +6,10 @@
 //   (c) the biggest per-frame jump of the drawn ball around the hit beyond what its true flight explains, and
 //       the part of it sideways to its flight (what the player saw as "the ball is past me, then it glitches").
 // AGES (ms, default 40,80,120) are the swing's age when it arrives: the message is held in the TV's link until it is
-// that old (a message already older arrives as it is, and the row says so).
+// that old (a message already older arrives as it is, and the row says so). The phone's swing-START (the swing's onset, sent ~100 ms
+// before the peak) is held the same way, so it arrives AGE ms after the onset, ~100 ms ahead of its swing:
+//   (d) the stroke's phase when the swing arrives: the fraction of the wind-up done (0: no stroke going yet, 1: at contact,
+//       above 1: past it), and how far the racket is from its contact point then. Before the onset existed it was always 0.
 //   BASE=http://localhost:3370 AGES=40,80,120 node scripts/contact-latency.mjs [swings per age=10]
 import { chromium } from 'playwright-core';
 const BASE = process.env.BASE || 'http://localhost:3200';
@@ -93,7 +96,7 @@ await tv.evaluate(() => {
   // ---- the link: hold a swing message until it is TARGET ms old (its rt stays: the wait shows up as relay transit)
   const pm = k.input.padMsg.bind(k.input);
   k.input.padMsg = (pid, rt, msg) => {
-    if (msg.type === 'swing' && L.target > 0) {
+    if ((msg.type === 'swing' || msg.type === 'swing-start') && L.target > 0) {
       const nat = k.input.ageOf(rt, msg.lat, msg.age, 0.25, msg.ts) * 1000;
       const wait = Math.max(0, L.target - nat);
       setTimeout(() => pm(pid, rt, msg), wait);
@@ -109,7 +112,9 @@ await tv.evaluate(() => {
     // where the ball is DRAWN as the swing arrives, against where the racket meets it
     const D = m.ballView(m.t, tmp);
     const drawn = { x: D.x, y: D.y, z: D.z };
-    const row = { warm: L.warm, arrive: a, hit: null, shown: null, age: (m.t - tEvent) * 1000, target: L.target, dPlan: plan ? dist(drawn, { x: plan.bx, y: plan.by, z: plan.bz }) : NaN, dContact: NaN, hitInFrame: false };
+    const sw0 = p.swing;
+    const phase = sw0 ? (m.t - sw0.t0) / Math.max(1e-3, sw0.tc - sw0.t0) : 0;
+    const row = { warm: L.warm, arrive: a, phase, prov: !!(sw0 && sw0.provisional), hit: null, shown: null, age: (m.t - tEvent) * 1000, target: L.target, dPlan: plan ? dist(drawn, { x: plan.bx, y: plan.by, z: plan.bz }) : NaN, dContact: NaN, hitInFrame: false };
     L.cur = row;
     const r = orig(slot, inp, tEvent);
     const sw = p.swing;
@@ -206,6 +211,7 @@ for (const target of AGES) {
   const R = rows.filter((r) => r.target === target && !r.warm);
   if (!R.length) { console.log(`age ${target}: no connecting swings`); continue; }
   console.log(`--- swing age ${target} ms (measured at arrival: ${f(R.map((r) => r.age), 0, ' ms')}), ${R.length} swings`);
+  console.log('  (d) stroke phase when the swing arrives:', f(R.map((r) => r.phase), 2), `(${R.filter((r) => r.prov).length} of ${R.length} had the onset's stroke going; 1 = at contact)`);
   console.log('  (a) arrival -> hit event (ms):          ', f(R.map((r) => r.hit - r.arrive)));
   console.log('      arrival -> visible frame (ms):      ', f(R.map((r) => r.shown - r.arrive)));
   console.log('  (b) drawn ball to plan point at arrival:', f(R.map((r) => r.dPlan), 2, ' m'));

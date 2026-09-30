@@ -16,7 +16,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { SwordStrike } from '../src/pad/sword';
-import { loadCapture, replay, score, arrow, R2D, fmtDelay, type Line } from './lib/replay';
+import { loadCapture, replay, score, arrow, R2D, fmtDelay, onsetStats, delayStats, type Line } from './lib/replay';
 
 const args = process.argv.slice(2);
 const opt = (k: string) => args.find((a) => a.startsWith(`--${k}=`))?.split('=')[1];
@@ -87,6 +87,26 @@ for (const s of [...segs, loose]) {
 }
 
 console.log(`\ndetection delay after the true peak — sword strikes: ${fmtDelay(R.swordDelay)}; tennis swings: ${fmtDelay(R.tennisDelay)}`);
+
+// the tennis detector's swing ONSET (onStart): how long before the confirmed swing's peak it fires
+{
+  const o = onsetStats(R.tennisStarts, R.tennisSwings);
+  const ld = delayStats(o.leads);
+  const pct = (n: number, d: number) => (d ? `${((100 * n) / d).toFixed(1)}%` : '—');
+  console.log(`\ntennis swing onset — ${o.starts} onsets for ${o.swings} swings: lead before the peak p50 ${ld.p50.toFixed(0)} ms, p90 ${ld.p90.toFixed(0)} ms (min ${Math.min(...o.leads).toFixed(0)}); false starts ${o.falseStarts} (${pct(o.falseStarts, o.starts)}), missed ${o.missed} (${pct(o.missed, o.swings)}), duplicate onsets ${o.dupes}`);
+  console.log(`  side at the onset vs the confirmed swing: ${o.side[0]} right, ${o.side[1]} wrong, ${o.side[2]} undecided`);
+  // (a capture of a sword session is full of little flicks the tennis detector counts as swings: the ones a game is played with are the strong ones)
+  const strong = R.tennisSwings.filter((e) => e.peak >= 12);
+  const os = onsetStats(R.tennisStarts, strong);
+  const ls = delayStats(os.leads);
+  console.log(`  strokes of 12 rad/s and up (${strong.length}, power ≥ 0.33): lead p50 ${ls.p50.toFixed(0)} ms, p90 ${ls.p90.toFixed(0)} ms, missed ${os.missed}; side ${os.side[0]} right, ${os.side[1]} wrong, ${os.side[2]} undecided`);
+  if (flag('onsets')) {
+    for (const e of R.tennisSwings) {
+      const s = R.tennisStarts.filter((x) => x.t <= e.t && e.t - x.t <= 350)[0];
+      console.log(`    peak ${(e.t / 1000).toFixed(3)}s ${e.side} ${e.peak.toFixed(1)} rad/s  onset ${s ? `${(e.t - s.t).toFixed(0)} ms before, ${s.side ?? '?'}, ${s.w.toFixed(1)} rad/s` : 'none'}`);
+    }
+  }
+}
 
 if (wantCsv) {
   fs.writeFileSync(wantCsv, csv.join('\n') + '\n');

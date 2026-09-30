@@ -3,7 +3,7 @@
 import { COURT, netHeightAt, sideOf, inCourt, serviceBox, inBox, serveSideSign, fwdOf } from './court';
 import { type Seg, segPos, segVel, segTimeDown, segTimeAtZ, bounceSeg, predictPath, segApexY, PathBuf } from './ball';
 import { buildShot, humanShot, serveShot, type Stroke, type SwingInput } from './shot';
-import { TPlayer, type Ctrl, type HitPlan, type AthleticMove } from './player';
+import { TPlayer, type Ctrl, type HitPlan, type AthleticMove, type SwingState } from './player';
 import { aiShot, recoveryPos, AI_LEVELS } from './ai';
 import { Score } from './score';
 import type { Look } from '../chars/look';
@@ -128,6 +128,17 @@ const SMASH_LATE = 0.24;
 
 /** the wind-up a stroke drawn from the past is given: the racket comes back this long before contact */
 const SWING_WINDUP = 0.12;
+/**
+ * A stroke started on a phone's swing ONSET (humanSwingStart), before the swing is heard: its wind-up runs at least
+ * MIN_WINDUP and at most MAX_WINDUP from the onset (a ball far off doesn't make a slow-motion stroke), with no swing
+ * heard FEINT_AFTER after its contact it turns into a feint that eases back to the ready stance over FEINT_EASE, and
+ * a second onset RESTART after the first one's starts a new stroke (the first was a wobble that died).
+ */
+const MIN_WINDUP = 0.1;
+const MAX_WINDUP = 0.3;
+const FEINT_AFTER = 0.25;
+const FEINT_EASE = 0.2;
+const RESTART = 0.15;
 /** the furthest back in time a heard swing is put (the input clamps an age at 0.25 s; a hitch's slip may add a little) */
 const SWING_BACK_MAX = 0.4;
 /**
@@ -374,9 +385,114 @@ export class Match {
   }
 
   /**
-   * Human swing. `tEvent` is the (latency-corrected) sim time of the swing.
+   * A human's swing has just begun (a phone's onset, ~100 ms before the swing that confirms it): start the
+   * character's stroke NOW, so it is not drawn late by the time the swing takes to be heard. It only animates —
+   * no ball, no magnet, no event, no cool-down, and nothing in the judgement — and the heard swing (humanSwing)
+   * replaces it, or, if none comes, it turns into a feint. `tOnset` is the (latency-corrected) sim time of the onset.
+   */
+  humanSwingStart(slot: number, side: 'fh' | 'bh' | undefined, tOnset: number) {
+    if (this.state === 'intro' || this.state === 'over') return;
+    const mine = this.players.filter((p) => p.slot === slot);
+    if (!mine.length) return;
+    const serving = (this.state === 'serve' || this.state === 'toss') && this.server.slot === slot;
+    // (holding the ball, a swing is the toss)
+    if (serving && this.state === 'serve') return;
+    const p = serving ? this.server : (mine.find((q) => q.plan) ?? mine[0]);
+    const cur = p.swing;
+    if (cur && !cur.feint && !(cur.provisional && tOnset > cur.t0 + RESTART)) return;
+    if (this.t < p.nextSwingOK) return;
+    const t0 = Math.min(tOnset, this.t);
+    const f = p.fhSign;
+    const soon = this.t + 0.02;
+    let stroke: Stroke;
+    let tc: number;
+    let cx: number, cy: number, cz: number;
+    let serve = false;
+    const plan = p.plan;
+    if (serving) {
+      // the trophy pose into the ball at the top of the toss
+      stroke = 'serve';
+      serve = true;
+      const ideal = p.tossT + TOSS_IDEAL;
+      tc = Math.max(ideal, t0 + MIN_WINDUP, soon);
+      const b = segPos(this.ball.seg, ideal, this.sb);
+      cx = b.x;
+      cy = b.y;
+      cz = b.z;
+    } else if (this.state === 'play' && this.ball.live && plan) {
+      // the racket meets the ball where the person will (swinging on the DRAWN ball: which is held at the racket a moment)
+      stroke = plan.stroke === 'oh' ? 'oh' : (side ?? plan.stroke);
+      // (the hold is read, not latched: latching is the judgement's, on the swing itself)
+      const hold = this.holdPlan === plan ? this.holdLatched : this.holdSeconds();
+      const meet = this.holdOn && this.holdable(plan) ? this.holdUnwarp(plan, hold, plan.t) : plan.t;
+      tc = Math.max(Math.min(meet, t0 + MAX_WINDUP), t0 + MIN_WINDUP, soon);
+      const b = this.ballAt(plan.t, this.sb);
+      cx = b.x;
+      cy = b.y;
+      cz = b.z;
+    } else {
+      // nothing to hit: a swing in the air, as a whiff with no ball draws it
+      stroke = side ?? (p.lastStroke === 'bh' ? 'bh' : 'fh');
+      tc = Math.max(t0 + MIN_WINDUP, soon);
+      cx = p.x + (stroke === 'bh' ? -f : f) * 0.8;
+      cy = 0.95;
+      cz = p.z + p.fwd * 0.4;
+    }
+    p.swing = {
+      stroke,
+      t0,
+      tc,
+      te: tc + (serve ? 0.45 : 0.36),
+      cx,
+      cy,
+      cz,
+      hit: false,
+      resolved: false,
+      input: { power: 0.5, spin: 0, tau: 0 },
+      serve,
+      provisional: true,
+      ease: true,
+    };
+  }
+
+  /**
+   * Human swing. `tEvent` is the (latency-corrected) sim time of the swing. A stroke already started on its
+   * onset (humanSwingStart) gives way to it: the same arm carries on (its wind-up is not restarted), and the
+   * arm is eased across whatever difference in timing there is.
    */
   humanSwing(slot: number, inp: SwingIn, tEvent: number) {
+    let prov: SwingState | null = null;
+    let pp: TPlayer | null = null;
+    for (const q of this.players) {
+      if (q.slot === slot && q.swing?.provisional) {
+        prov = q.swing;
+        pp = q;
+        q.swing = null;
+      }
+    }
+    this.humanSwingHeard(slot, inp, tEvent);
+    if (!prov || !pp) return;
+    const ns = pp.swing;
+    if (!ns) {
+      // (nothing came of it — the swing was ignored: the stroke goes on)
+      pp.swing = prov;
+      return;
+    }
+    if (ns === prov) return;
+    ns.ease = true;
+    // the wind-up already drawn stays drawn: t0 is not pushed later (it only matters for a stroke not past its contact)
+    if (prov.t0 < ns.t0 && (ns.resolved || !ns.hit)) ns.t0 = prov.t0;
+    if (!ns.hit && !ns.resolved && ns.stroke === prov.stroke && ns.te - ns.tc > 0) {
+      // a swing that misses (too early, too late, no ball) goes on with the timeline the stroke was on
+      ns.tc = prov.tc;
+      ns.te = Math.max(prov.te, ns.te);
+      ns.cx = prov.cx;
+      ns.cy = prov.cy;
+      ns.cz = prov.cz;
+    }
+  }
+
+  private humanSwingHeard(slot: number, inp: SwingIn, tEvent: number) {
     if (this.state === 'intro') return this.startNow();
     const mine = this.players.filter((p) => p.slot === slot);
     if (!mine.length) return;
@@ -472,7 +588,7 @@ export class Match {
   humanPrep(slot: number, side: 'fh' | 'bh') {
     if (this.state !== 'play' || !this.ball.live) return;
     const p = this.players.find((q) => q.slot === slot && q.plan);
-    if (!p || !p.plan || p.swing || p.plan.stroke === 'oh' || p.plan.stroke === side) return;
+    if (!p || !p.plan || (p.swing && !p.swing.provisional) || p.plan.stroke === 'oh' || p.plan.stroke === side) return;
     if (p.plan.t - this.t < 0.18) return;
     const plan = p.planFrom(this.path, this.t, 0.02, { mustBounce: this.ball.serve, doubles: this.doubles, prefer: side });
     if (plan && plan.reachable && plan.stroke === side) p.plan = plan;
@@ -746,7 +862,7 @@ export class Match {
           this.serveSwing(p, { power: pw, spin: 0.3 }, p.tossT + TOSS_IDEAL + err);
         }
         // ball dropped without a swing: catch and re-toss
-        if (!p.swing && t > p.tossT + 1.22) {
+        if ((!p.swing || p.swing.provisional) && t > p.tossT + 1.22) {
           p.holding = true;
           this.ball.holder = p;
           this.setState('serve');
@@ -784,6 +900,12 @@ export class Match {
       if (sw.hit && !sw.resolved && t >= sw.tc) {
         sw.resolved = true;
         this.resolveHit(p, sw.tc);
+      }
+      // a stroke started on an onset that no swing followed: a feint (the arm eases back to the ready stance)
+      if (sw.provisional && !sw.feint && t > sw.tc + FEINT_AFTER) {
+        sw.feint = true;
+        sw.feintT = t;
+        sw.te = t + FEINT_EASE;
       }
       if (t >= sw.te) p.swing = null;
     }
@@ -939,7 +1061,7 @@ export class Match {
       }
       // a ball you can't quite run down gets a lunge or a flying dive; a high
       // groundstroke gets a jump (the swing is still yours to time)
-      if (!p.athletic && p.plan && !p.swing && this.state === 'play' && this.ball.live && t >= p.lockUntil) this.maybeAthletic(p, t);
+      if (!p.athletic && p.plan && !(p.swing && !p.swing.provisional) && this.state === 'play' && this.ball.live && t >= p.lockUntil) this.maybeAthletic(p, t);
       const ath = p.athletic;
       if (ath) {
         const recover = ath.move === 'dive' ? 0.85 : ath.move === 'lunge' ? 0.32 : 0.22;

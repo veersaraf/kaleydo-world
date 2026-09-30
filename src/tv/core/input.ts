@@ -175,6 +175,8 @@ export class Input {
   onSeatsChanged: () => void = () => {};
   onWave: (slot: number) => void = () => {};
   onPrep: (slot: number, side: 'fh' | 'bh') => void = () => {};
+  /** tennis: a phone's swing has begun (its onset, before it is confirmed): `age` s ago, the side if the phone could tell */
+  onSwingStart: (slot: number, side: 'fh' | 'bh' | undefined, age: number) => void = () => {};
   /** bowling: the grip went down / up, the ball was released, the arm's live angle */
   onGrip: (slot: number, down: boolean, age?: number) => void = () => {};
   onBowl: (slot: number, r: { speed: number; angle: number; spin: number }, age?: number) => void = () => {};
@@ -406,6 +408,9 @@ export class Input {
         break;
       case 'prep':
         this.onPrep(seat.slot, m.side);
+        break;
+      case 'swing-start':
+        this.onSwingStart(seat.slot, m.side, this.ageOf(rt, m.lat, m.age, 0.25, m.ts));
         break;
       case 'ori': {
         const now = performance.now();

@@ -87,11 +87,14 @@ export class Animator {
   private blinkAt = 0;
   private blinkT = 0;
   private rng = new Rng();
-  private k = { ready: key(), prep: key(), contact: key(), follow: key(), a: key(), b: key(), out: key(), last: key() };
+  private k = { ready: key(), prep: key(), contact: key(), follow: key(), a: key(), b: key(), out: key(), last: key(), from: key(), rest: key() };
   /** the swing whose arrival is being eased in (one heard after it was made is drawn well into its stroke; the arms get there over a few frames, not one) */
   private easing: object | null = null;
   private easeT = 0;
+  /** the feint whose way back to the ready stance is being drawn (started from the arm's pose then) */
+  private feinting: object | null = null;
   private anticip = 0;
+  private now = 0;
   private headYaw = 0;
   private headPitch = 0;
   private lean = 0;
@@ -128,6 +131,7 @@ export class Animator {
   }
 
   update(t: number, dt: number, ball: V3, state: string): Pose {
+    this.now = t;
     const p = this.p;
     const P = this.pose;
     const hs = p.handed;
@@ -207,37 +211,43 @@ export class Animator {
     let effort = 0;
 
     if (sw) {
-      this.swingPose(t, sw, hs, out);
-      if (sw.instant) {
-        // the stroke is drawn `age` into its follow-through: from the pose of the frame before it, in a few frames
-        if (this.easing !== sw) {
-          this.easing = sw;
-          this.easeT = 0;
+      if (sw.feint) {
+        // a stroke begun on a swing's onset that no swing followed: the arm eases from where it is back to the stance
+        if (this.feinting !== sw) {
+          this.feinting = sw;
+          copyKey(K.from, K.last);
         }
-        if (this.easeT < SWING_EASE) {
-          this.easeT += 1 / 60;
-          lerpKey(out, K.last, out, smooth(clamp(this.easeT / SWING_EASE)));
+        this.restPose(hs, dt, K.rest);
+        const t0 = sw.feintT ?? t;
+        lerpKey(out, K.from, K.rest, smooth(clamp((t - t0) / Math.max(0.05, sw.te - t0))));
+      } else {
+        this.swingPose(t, sw, hs, out);
+        if (sw.instant || sw.ease) {
+          // the stroke is drawn `age` into its follow-through (or takes over from one begun on the onset, or begins already
+          // under way): from the pose of the frame before, in a few frames
+          if (this.easing !== sw) {
+            this.easing = sw;
+            this.easeT = 0;
+            copyKey(K.from, K.last);
+          }
+          if (this.easeT < SWING_EASE) {
+            this.easeT += 1 / 60;
+            lerpKey(out, K.from, out, smooth(clamp(this.easeT / SWING_EASE)));
+          }
         }
+        // (a stroke begun on the onset is only the arm: the effort, the squash and the hit-stop cues are a real swing's)
+        if (t >= sw.tc - 0.06 && t < sw.tc + 0.18 && !sw.provisional) effort = 1;
       }
-      if (t >= sw.tc - 0.06 && t < sw.tc + 0.18) effort = 1;
       handAbs = out.hand;
     } else if (p.holding || state === 'toss') {
       this.servePose(t, hs, out);
     } else {
       // anticipation: turn and take the racket back as the ball comes
-      let a = 0;
-      let stroke = p.lastStroke;
-      if (p.plan) {
-        const tt = p.plan.t - t;
-        a = smooth(clamp((0.85 - tt) / 0.55));
-        stroke = p.plan.stroke;
-      }
-      this.anticip = damp(this.anticip, a, 10, dt);
-      this.prepKey(stroke, hs, K.prep);
-      lerpKey(out, K.ready, K.prep, this.anticip);
+      this.restPose(hs, dt, out);
     }
 
-    if (!sw) copyKey(K.last, out);
+    // (the pose of this frame, for the next one to ease from)
+    copyKey(K.last, out);
 
     // 1:1 racket: between swings the racket follows the phone in your hand
     const wantMirror = this.phone && !sw && !p.holding && state !== 'toss' ? 1 - this.anticip * 0.75 : 0;
@@ -469,6 +479,22 @@ export class Animator {
       lerpXYZ(out.off, out.off, side * 0.7, 0.24, -0.34, lie);
     }
     return face;
+  }
+
+  /** the stance between strokes: ready, turning and taking the racket back as the ball comes */
+  private restPose(hs: number, dt: number, out: Key) {
+    const p = this.p;
+    const K = this.k;
+    let a = 0;
+    let stroke = p.lastStroke;
+    if (p.plan) {
+      const tt = p.plan.t - this.now;
+      a = smooth(clamp((0.85 - tt) / 0.55));
+      stroke = p.plan.stroke;
+    }
+    this.anticip = damp(this.anticip, a, 10, dt);
+    this.prepKey(stroke, hs, K.prep);
+    lerpKey(out, K.ready, K.prep, this.anticip);
   }
 
   private readyOff(k: Key) {

@@ -240,6 +240,12 @@ export class App {
     });
     this.input.onToss = (slot) => this.match && !this.paused && this.match.humanToss(slot);
     this.input.onPrep = (slot, side) => this.match && !this.paused && !this.attract && this.match.humanPrep(slot, side);
+    // a phone's swing has begun: the character's stroke starts now (the confirmed swing, ~100 ms on, still decides everything)
+    this.input.onSwingStart = (slot, side, age) => {
+      const m = this.match;
+      if (!m || this.sport !== 'tennis' || this.paused || this.attract) return;
+      m.humanSwingStart(slot, side, m.t - age * this.timeScale + this.slippedSince(age));
+    };
     this.link.onMessage = (m) => {
       if (m.type === 'hello') {
         for (const p of m.pads) this.input.padJoin(p.pid, p.name, p.transport);

@@ -4,7 +4,9 @@
 //          so a person swings at a later sim time; the judgement maps it back (Match.judgedTime), so the timing
 //          they get (tau) should match the old build's, within noise
 // The swing is heard AGE seconds after it was made (default 0.03; AGE=0.08 for a phone through the network).
-//   npx tsx scripts/sim-human.ts            (SEEDS=12 for tighter numbers; MODE=sim|drawn for one)
+// ONSET=1 has the phone's swing-start (its onset, LEAD s before the swing, default 0.1) reach the match first, AGE after it was made: the
+// character's stroke starts on it. It only animates, so every number and the event hash must equal the run without it.
+//   npx tsx scripts/sim-human.ts            (SEEDS=12 for tighter numbers; MODE=sim|drawn for one; ONSET=1)
 import { Match, type MatchEvent } from '../src/tv/tennis/match';
 import { AI_LEVELS } from '../src/tv/tennis/ai';
 import { Rng } from '../src/tv/core/math';
@@ -13,6 +15,8 @@ import { EventHash, seedMathRandom } from './sim-hash';
 const seedOff = +(process.env.SEED ?? 0);
 const SEEDS = +(process.env.SEEDS ?? 8);
 const AGE = +(process.env.AGE ?? 0.03);
+const ONSET = process.env.ONSET === '1';
+const LEAD = +(process.env.LEAD ?? 0.1);
 const MODES = process.env.MODE ? [process.env.MODE] : ['sim', 'drawn'];
 
 interface Out { hits: number; perfect: number; whiffs: number; taus: number[]; lat: number[]; won: number; lost: number; rallies: number[]; hash: string }
@@ -35,7 +39,7 @@ function run(level: string, timingSigma: number, seed0: number, drawn: boolean):
     if (e.type === 'hit' && e.p.human) { o.hits++; if (callT >= 0) { o.lat.push(m.t - callT); callT = -1; } o.taus.push(e.tau); if (e.perfect) o.perfect++; }
     if (e.type === 'whiff' && e.p.human) o.whiffs++;
   };
-  let planned: any = null, swingAt = 0;
+  let planned: any = null, swingAt = 0, started = false;
   const hp = m.players[0];
   for (let i = 0; i < 120 * 60 * 30 && m.state !== 'over'; i++) {
     m.step(1 / 120);
@@ -46,6 +50,11 @@ function run(level: string, timingSigma: number, seed0: number, drawn: boolean):
       const want = hp.plan.t + r.gauss() * timingSigma; // when the ball, as seen, is at the racket (± the error)
       // (the sim time that is: the drawn clock runs slow near a human's contact)
       swingAt = drawn && (m as any).swingTimeFor ? m.swingTimeFor(hp.plan, want) : want;
+      started = false;
+    }
+    if (ONSET && planned && hp.plan === planned && !started && m.t >= swingAt - LEAD + AGE && m.t < swingAt + AGE) {
+      started = true;
+      m.humanSwingStart(0, undefined, swingAt - LEAD);
     }
     if (planned && hp.plan === planned && m.t >= swingAt + AGE) {
       callT = m.t;

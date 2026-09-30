@@ -2,6 +2,8 @@
 // 1/60 s), a swing made on the beat (at the plan's contact time) that reaches the match AGE ms later, and
 // a screenshot of every frame around its arrival (BEFORE before, AFTER after) cropped around the player. The frames are
 // saved as PNGs and as one contact sheet; the drawn ball's distance to the plan's ball point is printed per frame.
+// With the swing ONSET on (a build that has it; ONSET=0 leaves it out): the phone's swing-start, made LEAD ms before the swing's peak, is
+// delayed by the same AGE, so it reaches the match LEAD ms sooner than the swing: the character's stroke starts on it.
 //   BASE=http://localhost:3400 AGE=80 node scripts/hit-strip.mjs <outDir> [tag=after]
 import { chromium } from 'playwright-core';
 import sharp from 'sharp';
@@ -12,6 +14,9 @@ const OUT = process.argv[2];
 const TAG = process.argv[3] || 'after';
 const BEFORE = +(process.env.BEFORE || 6);
 const AFTER = +(process.env.AFTER || 6);
+// the swing-start is made LEAD ms before the swing's peak (the phone's detector: ~100 ms on a normal swing)
+const LEAD = +(process.env.LEAD || 100);
+const ONSET = process.env.ONSET !== '0';
 // BEAT: ms the swing is made before (-) or after (+) the plan's contact time (a perfect one, |tau| < .16, freezes the frame a moment)
 const BEAT = +(process.env.BEAT || 0);
 const W = +(process.env.CROPW || 560);
@@ -33,7 +38,7 @@ await tv.evaluate(() => {
   window.requestAnimationFrame = (cb) => { window.__tick = cb; return 1; };
 });
 await tv.waitForTimeout(300);
-await tv.evaluate(([age, beat]) => {
+await tv.evaluate(([age, beat, lead, onset]) => {
   const k = window.kaleido;
   const m = k.match;
   const human = m.players.find((q) => q.human);
@@ -61,17 +66,26 @@ await tv.evaluate(([age, beat]) => {
     const b = m.ballView(m.t, tmp);
     const tr = m.ballAt(m.t, { x: 0, y: 0, z: 0 });
     const row = { n: S.n++, dt: Math.round((m.t - S.tS) * 1000), x: +b.x.toFixed(2), y: +b.y.toFixed(2), z: +b.z.toFixed(2), tz: +tr.z.toFixed(2), dPlan: +dist(b, S.plan).toFixed(2), arrive: false, cx: S.cx, cy: S.cy };
+    // the swing's onset reaches the match (made `lead` before the peak, as old as the swing when it gets here)
+    if (onset && k.input.onSwingStart && S.started === undefined && m.t >= S.tS - lead / 1000 + age / 1000) {
+      S.started = row.n;
+      row.start = true;
+      k.input.onSwingStart(human.slot, undefined, m.t - (S.tS - lead / 1000));
+    }
     if (S.arrived < 0 && m.t >= S.tS + age / 1000) {
+      // (how far into its wind-up the stroke is, as the frame before it is drawn: 0 with none going, 1 at contact)
+      const w0 = human.swing;
+      row.phase = w0 ? +((m.t - w0.t0) / Math.max(1e-3, w0.tc - w0.t0)).toFixed(2) : 0;
       S.arrived = row.n;
       row.arrive = true;
       // the message reaches the match now: a swing made `age` ago, on the beat
       k.swing({ slot: human.slot, power: 0.8, spin: 0.2, age: m.t - S.tS, source: 'pad', side: S.plan.stroke === 'bh' ? 'bh' : 'fh' });
     }
     const sw = human.swing;
-    row.sw = sw ? `${sw.hit ? 'hit' : 'miss'} t0 ${Math.round((sw.t0 - S.tS) * 1000)} tc ${Math.round((sw.tc - S.tS) * 1000)}` : '';
+    row.sw = sw ? `${sw.provisional ? (sw.feint ? 'feint' : 'prov') : sw.hit ? 'hit' : 'miss'} t0 ${Math.round((sw.t0 - S.tS) * 1000)} tc ${Math.round((sw.tc - S.tS) * 1000)}` : '';
     return { phase: 'run', row, arrived: S.arrived };
   };
-}, [AGE, BEAT]);
+}, [AGE, BEAT, LEAD, ONSET]);
 const shots = [];
 let arrivedN = -1;
 for (let f = 0; f < 3000; f++) {
@@ -89,10 +103,11 @@ for (let f = 0; f < 3000; f++) {
 const lo = Math.max(0, arrivedN - BEFORE);
 const sel = shots.filter((s) => s.row.n >= lo && s.row.n <= arrivedN + AFTER - 1);
 console.log(`${TAG}: swing age ${AGE} ms, arrives at frame ${arrivedN}; frames ${sel[0]?.row.n}..${sel.at(-1)?.row.n}`);
+console.log(`(d) stroke phase when the swing arrives (fraction of the wind-up done: 0 none going, 1 at contact): ${shots.find((x) => x.row.arrive)?.row.phase}`);
 console.log('frame  ms after the beat   drawn ball (x,y,z)      true z   dist to plan point   swing');
 for (const s of sel) {
   const r = s.row;
-  console.log(`${String(r.n - arrivedN).padStart(4)}   ${String(r.dt).padStart(5)}   ${r.x.toFixed(2).padStart(6)} ${r.y.toFixed(2).padStart(5)} ${r.z.toFixed(2).padStart(6)}   ${r.tz.toFixed(2).padStart(6)}   ${r.dPlan.toFixed(2).padStart(5)} m   ${r.arrive ? '<- swing heard   ' : ''}${r.sw}`);
+  console.log(`${String(r.n - arrivedN).padStart(4)}   ${String(r.dt).padStart(5)}   ${r.x.toFixed(2).padStart(6)} ${r.y.toFixed(2).padStart(5)} ${r.z.toFixed(2).padStart(6)}   ${r.tz.toFixed(2).padStart(6)}   ${r.dPlan.toFixed(2).padStart(5)} m   ${r.start ? '<- onset heard   ' : ''}${r.arrive ? '<- swing heard   ' : ''}${r.sw}`);
   fs.writeFileSync(`${OUT}/${TAG}-f${String(r.n - arrivedN).replace('-', 'm')}.png`, s.buf);
 }
 // the contact sheet: 4 columns, frames in order, each labelled with its offset from the arrival
@@ -101,7 +116,7 @@ const tw = W, th = H;
 const comps = [];
 for (let i = 0; i < sel.length; i++) {
   const r = sel[i].row;
-  const label = `${r.n - arrivedN >= 0 ? '+' : ''}${r.n - arrivedN}  ${r.dt} ms  ball ${r.dPlan.toFixed(2)} m from plan${r.arrive ? '  SWING HEARD' : ''}`;
+  const label = `${r.n - arrivedN >= 0 ? '+' : ''}${r.n - arrivedN}  ${r.dt} ms  ball ${r.dPlan.toFixed(2)} m from plan${r.start ? '  ONSET' : ''}${r.arrive ? '  SWING HEARD' : ''}`;
   comps.push({ input: sel[i].buf, left: (i % cols) * tw, top: Math.floor(i / cols) * th });
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${tw}" height="24"><rect width="${tw}" height="24" fill="rgba(0,0,0,0.6)"/><text x="6" y="17" font-family="monospace" font-size="14" fill="${r.arrive ? '#ffd25e' : '#fff'}">${label}</text></svg>`;
   comps.push({ input: Buffer.from(svg), left: (i % cols) * tw, top: Math.floor(i / cols) * th });

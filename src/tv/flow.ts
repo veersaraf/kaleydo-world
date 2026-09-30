@@ -233,6 +233,10 @@ export class Flow {
       prevSwing(e);
       this.audio?.sfx.swish(e.power, 0);
     };
+    const prevStart = app.input.onSwingStart;
+    app.input.onSwingStart = (slot, side, age) => {
+      if (!this.screen) prevStart(slot, side, age); // menus: ignore swings
+    };
     // (online rooms: the roster the host sends its guests carries each phone's seat)
     app.link.seatOf = (pid) => {
       const s = app.input.seatOfPid(pid);
