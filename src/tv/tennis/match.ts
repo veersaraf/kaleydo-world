@@ -2,7 +2,7 @@
 
 import { COURT, netHeightAt, sideOf, inCourt, serviceBox, inBox, serveSideSign, fwdOf } from './court';
 import { type Seg, segPos, segVel, segTimeDown, segTimeAtZ, bounceSeg, predictPath, segApexY, PathBuf } from './ball';
-import { buildShot, humanShot, serveShot, type Stroke, type SwingInput } from './shot';
+import { buildShot, humanShot, serveShot, type ShotSpec, type Stroke, type SwingInput } from './shot';
 import { TPlayer, type Ctrl, type HitPlan, type AthleticMove } from './player';
 import { aiShot, recoveryPos, AI_LEVELS } from './ai';
 import { Score } from './score';
@@ -991,10 +991,13 @@ export class Match {
   }
 
   /** Rush: a rally drive or volley goes out at the rally's pace (the heat from before this hit) */
-  private rushShot(spec: { speed: number; clear: number }) {
+  private rushShot(spec: ShotSpec) {
     const pace = paceAt(this.heat);
     spec.speed *= pace;
-    if (spec.clear > 0) spec.clear /= Math.pow(pace, RUSH.flatten);
+    if (spec.clear > 0) {
+      spec.clear /= Math.pow(pace, RUSH.flatten);
+      spec.gMul = Math.pow(pace, RUSH.drop);
+    }
   }
 
   private resolveHit(p: TPlayer, tc: number) {

@@ -17,16 +17,22 @@ export const RUSH = {
   /** extra heat for a perfect hit */
   perfect: 0.15,
   /**
-   * how much of the ball's extra pace the players get as running speed (0..1): the ball can't
-   * gain the full pace (a flat, fast drive still has to clear the net), so running at the full
-   * multiplier would make Rush easier than the standard game
+   * how much of the ball's extra pace the players get as running speed (0..1). At 1 they run as
+   * much faster as the ball is (the sims show that keeps the rally length and reach at the
+   * standard game's level with the ball at 0.70x the hit-to-hit time)
    */
-  run: 0.7,
+  run: 1,
   /**
-   * a faster drive is also flatter: its required net clearance is divided by pace^flatten (the net
-   * clearance is what caps a drive's speed, so without this the pace multiplier barely shows)
+   * a faster drive or volley is hit flatter: its required net clearance is divided by pace^flatten
    */
-  flatten: 3,
+  flatten: 1.5,
+  /**
+   * ...and it drops harder: the flight's gravity is multiplied by pace^drop (topspin dip), so a
+   * ball that is faster still clears the net and lands at the same target. (Pace^2 would be the
+   * exact time-compressed copy of a standard shot; 1.5 keeps the bounce's kick down.) It only
+   * applies to the flight, the bounce and what follows use the standard gravity.
+   */
+  drop: 1.5,
 } as const;
 
 /** The rally's heat after a hit: a serve resets it, every other hit builds it. */

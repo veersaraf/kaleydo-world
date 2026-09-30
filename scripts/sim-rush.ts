@@ -23,6 +23,11 @@ interface Stats {
   reasons: Record<string, number>;
   kphSum: number[];
   kphN: number[];
+  /** seconds from a rally drive's contact to the opponent's next contact, by the heat before the drive */
+  h2hSum: number[];
+  h2hN: number[];
+  impactSum: number;
+  impactN: number;
   fire: number;
   longRallies: number;
   longFire: number;
@@ -33,7 +38,7 @@ interface Stats {
   matches: number;
   minutes: number;
 }
-const stats = (): Stats => ({ points: 0, rallies: [], reasons: {}, kphSum: [0, 0, 0], kphN: [0, 0, 0], fire: 0, longRallies: 0, longFire: 0, humanReturns: 0, humanLost: 0, humanWon: 0, whiffs: 0, matches: 0, minutes: 0 });
+const stats = (): Stats => ({ points: 0, rallies: [], reasons: {}, kphSum: [0, 0, 0], kphN: [0, 0, 0], h2hSum: [0, 0, 0], h2hN: [0, 0, 0], impactSum: 0, impactN: 0, fire: 0, longRallies: 0, longFire: 0, humanReturns: 0, humanLost: 0, humanWon: 0, whiffs: 0, matches: 0, minutes: 0 });
 
 function play(levelB: string, humanSigma: number | null, levelA: string, seed: number, rush: boolean, st: Stats) {
   seedMathRandom(seed);
@@ -48,14 +53,27 @@ function play(levelB: string, humanSigma: number | null, levelA: string, seed: n
   const m = new Match({ doubles: false, gamesToWin: 3, players, seed, introTime: 0.1, rush });
   let heat = 0; // the heat the hit events imply
   let peak = 0;
+  let lastT = -1, lastB = -1, lastP: unknown = null; // the previous rally drive's contact time, heat bucket and player
   m.onEvent = (e: MatchEvent) => {
+    if (e.type === 'bounce' && e.live && e.first && m.rally > 1) {
+      st.impactSum += e.impact;
+      st.impactN++;
+    }
     if (e.type === 'hit') {
       const pre = heat;
+      if (lastB >= 0 && e.p !== lastP) {
+        st.h2hSum[lastB] += m.t - lastT;
+        st.h2hN[lastB]++;
+      }
+      lastB = -1;
       if (e.kind !== 'serve') {
         if (e.kind === 'drive' || e.kind === 'volley') {
           const b = pre < 1 / 3 ? 0 : pre < 2 / 3 ? 1 : 2;
           st.kphSum[b] += e.kph;
           st.kphN[b]++;
+          lastB = b;
+          lastT = m.t;
+          lastP = e.p;
         }
         if (e.p.human) st.humanReturns++;
       }
@@ -79,6 +97,7 @@ function play(levelB: string, humanSigma: number | null, levelA: string, seed: n
       }
       heat = 0;
       peak = 0;
+      lastB = -1;
     }
   };
   let planned: any = null,
@@ -118,6 +137,9 @@ function report(label: string, off: Stats, on: Stats, human: boolean) {
   row('net', (s) => pct(s.reasons.net || 0, s.points));
   row('double fault', (s) => pct(s.reasons.double || 0, s.points));
   row('drive kph, heat 0-.33/.33-.66/.66-1', (s) => [0, 1, 2].map((b) => (s.kphN[b] ? (s.kphSum[b] / s.kphN[b]).toFixed(0) : '-')).join(' / '));
+  row('hit-to-hit s, heat 0-.33/.33-.66/.66-1', (s) => [0, 1, 2].map((b) => (s.h2hN[b] ? (s.h2hSum[b] / s.h2hN[b]).toFixed(2) : '-')).join(' / '));
+  console.log(`  ${'hit-to-hit, rush / standard'.padEnd(38)} ${[0, 1, 2].map((b) => (off.h2hN[b] && on.h2hN[b] ? (on.h2hSum[b] / on.h2hN[b] / (off.h2hSum[b] / off.h2hN[b])).toFixed(2) + 'x' : '-')).join(' / ').padStart(45)}`);
+  row('mean bounce impact m/s (rally)', (s) => (s.impactSum / Math.max(1, s.impactN)).toFixed(1));
   row('points reaching fire', (s) => `${pct(s.fire, s.points)} (${s.fire})`);
   row('rallies >= 8 reaching fire', (s) => `${pct(s.longFire, s.longRallies)} (${s.longFire}/${s.longRallies})`);
   if (human) {
@@ -137,7 +159,11 @@ const add = (t: Stats, s: Stats) => {
   for (let b = 0; b < 3; b++) {
     t.kphSum[b] += s.kphSum[b];
     t.kphN[b] += s.kphN[b];
+    t.h2hSum[b] += s.h2hSum[b];
+    t.h2hN[b] += s.h2hN[b];
   }
+  t.impactSum += s.impactSum;
+  t.impactN += s.impactN;
   t.humanReturns += s.humanReturns;
   t.humanLost += s.humanLost;
   t.humanWon += s.humanWon;
