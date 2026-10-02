@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Types, the headless rule / physics / detector checks (scripts/check, ~10 s) and a production build.
+  check:
+    name: Check (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - name: Typecheck (game)
+        run: npm run typecheck
+      - name: Typecheck (cloud worker)
+        run: npx tsc -p cloud/tsconfig.json --noEmit
+      - name: Tests (headless checks)
+        run: npm test
+      - name: Build
+        run: npm run build
+
+  # The browser end-to-end tests: a simulated phone plays against the TV page in headless Chrome
+  # (npm run test:e2e starts the dev server itself).
+  #
+  # continue-on-error: these tests time swings against a real-time game loop, and on a CI runner the
+  # page renders WebGL in software (SwiftShader), so they have only been proven on a Mac with a GPU.
+  # Look at this job's log on a pull request; remove the line below once it has been green for a while.
+  e2e:
+    name: End-to-end (headless Chrome)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Chrome
+        id: chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+      - name: End-to-end tests
+        run: npm run test:e2e
+        env:
+          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          E2E_RETRIES: 1
