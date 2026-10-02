@@ -314,7 +314,7 @@ async function padSend(req, res) {
 }
 
 // Motion captures (the remote's record mode, /rec): JSON lines appended to
-// captures/<file>.jsonl — replay one with scripts/replay-capture.ts.
+// captures/<file>.jsonl — replay one with scripts/tools/replay-capture.ts.
 const CAPTURES = path.join(ROOT, 'captures');
 
 async function captureAppend(req, res, url) {

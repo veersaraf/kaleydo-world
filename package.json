@@ -16,7 +16,8 @@
     "test:e2e": "node scripts/e2e/run.mjs",
     "test:cloud": "node scripts/e2e/run.mjs --cloud",
     "cloud:dev": "vite build && wrangler dev --port 8787",
-    "cloud:deploy": "vite build && wrangler deploy"
+    "cloud:deploy": "vite build && wrangler deploy",
+    "doctor": "node server/doctor.mjs"
   },
   "engines": {
     "node": ">=20"
