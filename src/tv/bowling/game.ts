@@ -67,7 +67,7 @@ const AIM_MAX = 0.06;
 const HOLD_DELAY = 0.35;
 
 /** The hook's sideways travel at the head pin for a speed and spin (m, − = left),
- *  measured from the lane model (scripts/bowl-hook-table.ts): it's the same whatever
+ *  measured from the lane model (scripts/check/bowl-hook-table.ts): it's the same whatever
  *  the line, so aiming a hook is aiming a straight ball at a point this far aside.
  *  K(v) = the hook per unit of spin at speed v, which saturates a little. */
 const HOOK_K: [number, number][] = [

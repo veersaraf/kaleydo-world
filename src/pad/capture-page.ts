@@ -4,7 +4,7 @@
 // button press and label goes to the server (captures/<file>.jsonl). The
 // remote's sword detector runs live alongside, so the player sees what it made
 // of each swing (and the recording keeps that too). Replay a capture offline
-// with scripts/replay-capture.ts.
+// with scripts/tools/replay-capture.ts.
 
 import { Recorder, captureName } from './capture';
 import { MotionFront, swordSample, rawMotion } from './pipeline';

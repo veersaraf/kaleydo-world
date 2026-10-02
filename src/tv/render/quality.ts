@@ -8,7 +8,7 @@
 //  • Anti-aliasing is FXAA in the final pass, not MSAA: on WebGL/ANGLE-Metal an
 //    MSAA buffer is stored and blitted every frame (three.js can't invalidate it
 //    on Chrome), which cost more than rendering at a higher scale — pr 1.75 with
-//    FXAA is sharper than pr 1.3 with MSAA 4, and cheaper (see scripts/gpu-bench.mjs).
+//    FXAA is sharper than pr 1.3 with MSAA 4, and cheaper (see scripts/perf/gpu-bench.mjs).
 //  • GPU time comes from timer queries (EXT_disjoint_timer_query_webgl2); without
 //    them we fall back to counting late frames.
 //  • It steps down quickly and up reluctantly: only with clear headroom, only if
@@ -50,7 +50,7 @@ const START_1X = 3;
 // (a new key: the levels' meaning changed with the effects tiers)
 const STORE = 'kaleido.quality.v2';
 /**
- * Relative GPU cost of an effects tier at one render scale (scripts/perf-rungs.mjs, park, plaza,
+ * Relative GPU cost of an effects tier at one render scale (scripts/perf/perf-rungs.mjs, park, plaza,
  * neon and cosmic at pr 1: tier 0 ≈ 0.55–0.85 of tier 3, tier 1 ≈ 0.65–0.95). The low tiers also
  * drop the bloom (or shorten it), shrink the shadow map and thin the scenery (FX_TIERS), so
  * they are well under the top: the governor's step-up prediction has to see that.

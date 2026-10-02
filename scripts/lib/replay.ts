@@ -2,7 +2,7 @@
 // page) through the remote's own pipeline, offline: the sensor front end
 // (src/pad/pipeline.ts), the sword detector (sword.ts) and the tennis swing
 // detector (swing.ts), fed exactly what the phone was fed. Shared by
-// scripts/replay-capture.ts (the report) and scripts/sword-capture-test.ts
+// scripts/tools/replay-capture.ts (the report) and scripts/check/sword-capture-test.ts
 // (the regression test).
 import fs from 'node:fs';
 import { MotionFront, swordSample, swingSample, type RawMotion } from '../../src/pad/pipeline';

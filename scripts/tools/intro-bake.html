@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kaleydo World · intro (bake)</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  #stage { position: fixed; inset: 0; background: radial-gradient(ellipse at 50% 45%, #3cc0f2 0%, #1f93dc 35%, #0b3f86 100%); }
+  body.clear #stage { background: transparent; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  svg#words { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+  .l { font-family: 'Fredoka', system-ui, sans-serif; font-weight: 700; fill: #fff; stroke: #1d1c33; paint-order: stroke fill; stroke-linejoin: round; }
+  .s { font-family: 'Fredoka', system-ui, sans-serif; font-weight: 700; fill: #1d1c33; stroke: #1d1c33; stroke-linejoin: round; }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="gl"></canvas><svg id="words"></svg></div>
+<script type="module">
+// The production KALEYDO WORLD intro, rendered with the real globe. scripts/tools/bake-intro.mjs drives
+// window.__frame(t) frame by frame and encodes public/brand/intro.mp4 plus the final lockup still.
+// Open it directly and it plays in real time (press R to replay).
+//
+// Timeline (seconds): 0–0.9 the big globe slides in from the right, partly off screen, turning;
+// 1.0–2.9 one complete eased revolution (it comes to rest facing the tennis island) while it
+// shrinks and glides to centre (1.15–2.65); 2.1–3.4 KALEYDO drops in over the top, WORLD rises in under it.
+import '@fontsource/fredoka/700.css';
+import * as THREE from 'three';
+import { dress } from '/src/tv/logo/globe.ts';
+
+export const DUR = 3.9;
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const seg = (t, a, b) => clamp((t - a) / (b - a));
+const easeOutCubic = (x) => 1 - (1 - x) ** 3;
+const easeInOutCubic = (x) => (x < 0.5 ? 4 * x * x * x : 1 - (-2 * x + 2) ** 3 / 2);
+const spring = (x, w = 13, z = 0.42) => (x <= 0 ? 0 : 1 - Math.exp(-z * w * x) * Math.cos(w * Math.sqrt(1 - z * z) * x));
+const lerp = (a, b, t) => a + (b - a) * t;
+
+const canvas = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
+const g = dress(renderer, false);
+const cam = g.camera;
+const BASE_HALF = Math.tan(THREE.MathUtils.degToRad(13)); // dress() frames the globe with a 26° fov
+
+/** the spin angle: turning steadily on entry, then one eased revolution that ends exactly at rest */
+function spinAngle(t) {
+  const v0 = 1.8, t0 = 1.0, D = 1.9;
+  if (t < t0) return v0 * (t - t0);
+  const s = clamp((t - t0) / D);
+  // cubic Hermite from 0 (slope v0) to 2π (slope 0)
+  return (s ** 3 - 2 * s * s + s) * D * v0 + (-2 * s ** 3 + 3 * s * s) * Math.PI * 2;
+}
+
+// ---------------------------------------------------------------- lettering
+const svg = document.getElementById('words');
+const NS = 'http://www.w3.org/2000/svg';
+function word(text) {
+  return [...text].map((ch) => {
+    const grp = document.createElementNS(NS, 'g');
+    const sh = document.createElementNS(NS, 'text');
+    const tx = document.createElementNS(NS, 'text');
+    for (const el of [sh, tx]) { el.textContent = ch; el.setAttribute('text-anchor', 'middle'); }
+    sh.setAttribute('class', 's');
+    tx.setAttribute('class', 'l');
+    grp.append(sh, tx);
+    svg.append(grp);
+    return { grp, sh, tx, w: 0 };
+  });
+}
+const TOP = word('KALEYDO'), BOT = word('WORLD');
+function layout(letters, size, sweep, cx, apexY, arch, track, progress, from) {
+  for (const L of letters) { L.tx.setAttribute('font-size', size); L.w = L.tx.getComputedTextLength() || size * 0.6; }
+  const total = letters.reduce((a, L) => a + L.w, 0) + track * size * (letters.length - 1);
+  const radius = total / ((sweep * Math.PI) / 180);
+  const cy = apexY + arch * radius;
+  let s = -total / 2;
+  letters.forEach((L, i) => {
+    const mid = s + L.w / 2;
+    s += L.w + track * size;
+    const ang = mid / radius;
+    const p = progress(i);
+    const drop = (1 - p.pos) * from;
+    const x = cx + Math.sin(ang) * (radius + drop);
+    const y = cy - arch * Math.cos(ang) * (radius + drop);
+    L.grp.setAttribute('transform', `translate(${x} ${y}) rotate(${arch * ang * (180 / Math.PI)}) scale(${p.scale})`);
+    L.grp.style.opacity = p.op;
+    for (const el of [L.tx, L.sh]) { el.setAttribute('font-size', size); el.setAttribute('stroke-width', size * 0.16); }
+    L.sh.setAttribute('transform', `translate(0 ${size * 0.07})`);
+  });
+}
+
+// ---------------------------------------------------------------- one frame
+const END = { r: 0.46, x: 0, y: -0.06 };
+const proj = new THREE.Vector3();
+function frame(t) {
+  const W = innerWidth, H = innerHeight, aspect = W / H;
+  const slide = easeOutCubic(seg(t, 0, 0.9));
+  const big = { r: 1.35, x: aspect * 0.42, y: -0.18 };
+  let r = big.r, x = lerp(aspect + big.r * 1.3, big.x, slide), y = big.y;
+  const shrink = easeInOutCubic(seg(t, 1.15, 2.65));
+  r = lerp(r, END.r, shrink);
+  x = lerp(x, END.x, shrink);
+  y = lerp(y, END.y, shrink);
+  const land = seg(t, 2.45, 3.25);
+  r *= 1 + Math.sin(land * Math.PI) * 0.025 * (1 - land);
+
+  // zoom by fov so the planet's radius covers r half-heights, pan with a view offset
+  cam.aspect = aspect;
+  cam.fov = THREE.MathUtils.radToDeg(2 * Math.atan((BASE_HALF * 0.63) / r));
+  cam.clearViewOffset();
+  cam.updateProjectionMatrix();
+  // where the planet centre lands before panning, so the pan puts it exactly at (x, y)
+  cam.updateMatrixWorld();
+  proj.set(0, 0, 0).project(cam);
+  const offX = (proj.x * aspect - x) * (H / 2), offY = (y - proj.y) * (H / 2);
+  cam.setViewOffset(W, H, offX, offY, W, H);
+  cam.updateProjectionMatrix();
+  g.setSpin(spinAngle(t) / (Math.PI * 2));
+  renderer.setPixelRatio(1);
+  renderer.setSize(W, H, false);
+  renderer.render(g.scene, cam);
+
+  const px = H / 2;
+  const gcx = W / 2 + x * px, gcy = H / 2 - y * px, gr = r * px;
+  const topSize = END.r * px * 0.62, botSize = END.r * px * 0.42;
+  const stagger = (i, start, step) => {
+    const lt = t - start - i * step;
+    const s = spring(clamp(lt / 0.9, 0, 2));
+    return { pos: s, scale: 0.6 + 0.4 * clamp(s, 0, 1.2), op: clamp(lt / 0.12) };
+  };
+  layout(TOP, topSize, 48, gcx, gcy - gr * 0.84, 1, 0.02, (i) => stagger(i, 2.1, 0.065), topSize * 1.4);
+  layout(BOT, botSize, 40, gcx, gcy + gr * 0.9 + botSize * 0.72, -1, 0.14, (i) => stagger(i, 2.5, 0.07), botSize * 1.6);
+  svg.style.visibility = t >= 2.05 ? 'visible' : 'hidden';
+}
+
+await document.fonts.load('700 100px Fredoka');
+window.__frame = (t) => frame(t);
+window.__clear = (on) => document.body.classList.toggle('clear', on);
+window.DUR = DUR;
+window.ready = true;
+// real-time playback when opened by hand
+if (!new URLSearchParams(location.search).has('bake')) {
+  let t0 = performance.now();
+  addEventListener('keydown', (e) => { if (e.key === 'r') t0 = performance.now(); });
+  const loop = (now) => { frame(Math.min(DUR, (now - t0) / 1000)); requestAnimationFrame(loop); };
+  requestAnimationFrame(loop);
+}
+</script>
+</body>
+</html>

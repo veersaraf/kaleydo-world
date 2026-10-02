@@ -55,7 +55,7 @@ export interface CpuProfile {
 
 /**
  * Each number at skill 0, then the menu's Rookie (0.3), Pro (0.65) and Ace (0.9),
- * then 1 — tuned with scripts/duel-sim.ts against simulated people: a beginner (who
+ * then 1 — tuned with scripts/check/duel-sim.ts against simulated people: a beginner (who
  * just swings, and hardly guards) should beat Rookie most matches, an average
  * player nearly always; Pro is a fair fight for them, Ace a hard one. Rookie is
  * slow and easy to read, rarely guards, doesn't read your sword, and hits softly.

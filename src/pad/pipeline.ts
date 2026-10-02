@@ -1,7 +1,7 @@
 // The remote's sensor front end: raw DeviceMotion / DeviceOrientation events in,
 // device-axis angular velocity and a fused orientation out, ready for the swing
 // detectors. main.ts feeds it the live events; the capture recorder
-// (capture.ts) and the offline replay (scripts/replay-capture.ts) feed it the
+// (capture.ts) and the offline replay (scripts/tools/replay-capture.ts) feed it the
 // same events from a recording, so a capture replays exactly as it played.
 //
 // A sensor delivers 60–100 motion events a second, and on an iPhone a garbage

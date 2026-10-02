@@ -538,7 +538,7 @@ sword.sensitivity = prefs.sens;
 sword.upSign = detector.upSign;
 const link = new PadLink(pid, () => prefs.name || 'Player');
 // ?rec (or ?rec=<name>): record the raw motion, the buttons and what the TV said while playing, to
-// captures/<name>-<date>.jsonl on the server (capture.ts; replay with scripts/replay-capture.ts)
+// captures/<name>-<date>.jsonl on the server (capture.ts; replay with scripts/tools/replay-capture.ts)
 const recParam = new URLSearchParams(location.search).get('rec');
 const rec = recParam !== null ? new Recorder(captureName(recParam || 'play'), { page: 'controller' }) : null;
 if (rec) {

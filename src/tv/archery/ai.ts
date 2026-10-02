@@ -32,7 +32,7 @@ export interface CpuProfile {
 
 /**
  * Each number at skill 0, then the menu's Rookie (0.3), Pro (0.65) and Ace
- * (0.9), then 1 — tuned with scripts/archery-sim.ts to average about 6.5, 8 and
+ * (0.9), then 1 — tuned with scripts/check/archery-sim.ts to average about 6.5, 8 and
  * 9.2 points an arrow over the three standard ends.
  */
 const SKILLS = [0, 0.3, 0.65, 0.9, 1];

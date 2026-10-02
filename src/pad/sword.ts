@@ -95,7 +95,7 @@ export interface SwordStrike {
   sweep: number;
 }
 
-/** Every stroke the detector judged, and what it made of it (for tuning: scripts/replay-capture.ts). */
+/** Every stroke the detector judged, and what it made of it (for tuning: scripts/tools/replay-capture.ts). */
 export interface SwordJudged {
   /** its peak: when, how fast (rad/s), which way */
   t: number;
@@ -148,7 +148,7 @@ const ACROSS = 0.3; // share of the tip's travel that's across the view (not str
 // The tip's way across the view, as the phone reads it, is read in the swing's plane. A hand swing
 // isn't in the view's plane: a right-hander's cuts lean (the arm swings about the shoulder), and a
 // sideways cut always carries a downward roll of the wrist. On a real player's labelled swings
-// (scripts/sword-capture-test.ts) the directions came out turned ~20° clockwise (down read ↙, left
+// (scripts/check/sword-capture-test.ts) the directions came out turned ~20° clockwise (down read ↙, left
 // ↖) and stretched downwards (a right cut read ↘, no different from a down-right one). Turn the
 // reading back by DIR_ROLL and shrink its vertical by DIR_DIP; swingRead() is that map, for tests.
 const DIR_ROLL = (12 * Math.PI) / 180;

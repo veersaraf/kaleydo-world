@@ -1,7 +1,7 @@
 // The KALEYDO WORLD hero globe: a chunky toy planet whose islands are distinct
 // little biomes (meadow, blossom, autumn, snow, desert, mountains) in one
 // cohesive style, with puffy clouds, a toy plane and a tennis-ball moon. It
-// never runs in the game: scripts/render-globe.mjs renders it to stills.
+// never runs in the game: scripts/tools/render-globe.mjs renders it to stills.
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';

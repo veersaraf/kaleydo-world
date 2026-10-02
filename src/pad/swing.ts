@@ -75,7 +75,7 @@ const FALL_MS = 25;
  * projection: the speed `hor` seconds on at that rate — would reach `proj` × MIN_PEAK (so a fast
  * riser fires while it is still slow, and a wobble that crawls over START doesn't). A swing that opens
  * already at `entry` × MIN_PEAK fires on its first sample. Slope and levels are per sensitivity, like
- * the detector's own (÷ k). Tuned on captures/veer-20260928-193627 (scripts/replay-capture.ts): with
+ * the detector's own (÷ k). Tuned on captures/veer-20260928-193627 (scripts/tools/replay-capture.ts): with
  * `hor` × `proj` any looser, false starts pass 5% for a few more ms of lead.
  *   side   |yaw share| needed to call forehand / backhand at the onset (below: undecided)
  */

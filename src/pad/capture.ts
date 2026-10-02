@@ -1,6 +1,6 @@
 // Motion capture: raw DeviceMotion / DeviceOrientation samples, button presses
 // and labels, streamed to the server as JSON lines (server.mjs appends them to
-// captures/<file>.jsonl). scripts/replay-capture.ts plays a capture back
+// captures/<file>.jsonl). scripts/tools/replay-capture.ts plays a capture back
 // through the remote's detectors offline, so thresholds can be tuned on real
 // hands instead of synthetic ones.
 //

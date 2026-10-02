@@ -11,7 +11,7 @@
 // fooled a little by an off-speed pitch when it's sitting fastball), how hard it
 // swings and its swing plane. The game starts its swing so the bat gets to the
 // ball exactly then — early and late swings look early and late. Skill 0..1 (the
-// menu: Rookie 0.3, Pro 0.6, Ace 0.9) is tuned with scripts/baseball-sim.ts to hit
+// menu: Rookie 0.3, Pro 0.6, Ace 0.9) is tuned with scripts/check/baseball-sim.ts to hit
 // about 2, 4 and 6.5 home runs in 10 pitches against the middling pitcher.
 
 import { FIELD } from './field';
@@ -139,7 +139,7 @@ export interface HitterProfile {
 
 /**
  * Each number at skill 0, then the menu's Rookie (0.3), Pro (0.6) and Ace (0.9),
- * then 1 — tuned with scripts/baseball-sim.ts: about 2, 4 and 6.5 home runs in 10
+ * then 1 — tuned with scripts/check/baseball-sim.ts: about 2, 4 and 6.5 home runs in 10
  * pitches against pitching 0.5.
  */
 const SKILLS = [0, 0.3, 0.6, 0.9, 1];

@@ -2,7 +2,7 @@
 // on every call, and the match and the animators call it hundreds of times a frame. These are the
 // same arithmetic, step for step (its scaled sum; the compensation term of its Kahan sum is 0
 // after the first term and unused after the last), so they return exactly the same numbers: a
-// rally plays out identically with either. scripts/hypot-check.ts compares them with Math.hypot.
+// rally plays out identically with either. scripts/check/hypot-check.ts compares them with Math.hypot.
 
 export function hyp2(a: number, b: number): number {
   a = Math.abs(a);

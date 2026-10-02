@@ -235,7 +235,7 @@ export class Orientation {
  * gamma is about. Documentation disagrees: MDN (and the code here, until now)
  * says alpha is about z, beta x, gamma y — 'zxy' — while WebKit and Chromium
  * appear to hand the gyro's x, y, z over as alpha, beta, gamma — 'xyz' (a
- * capture, scripts/replay-capture.ts, prints which one a phone uses). Get it
+ * capture, scripts/tools/replay-capture.ts, prints which one a phone uses). Get it
  * wrong and every swing is read about the wrong axes (a sideways cut becomes a
  * twist, a chop a sideways cut) and the orientation, integrated from the gyro
  * mid-swing, wanders off. Rather than trust either, this watches the OS's own
