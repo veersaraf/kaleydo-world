@@ -1,0 +1,73 @@
+name: Bug report
+description: Something doesn't work, or works badly.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! If it's about running the game on your own computer, `npm run doctor` often finds the problem; please paste what it says below.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+      placeholder: "In a doubles match my forehands kept registering as backhands…"
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where were you playing?
+      options:
+        - kaleydo.world (hosted)
+        - My own Cloudflare copy
+        - Locally (npm start / npm run dev)
+    validations:
+      required: true
+  - type: dropdown
+    id: sport
+    attributes:
+      label: Sport or screen
+      options:
+        - Tennis
+        - Bowling
+        - Sword duel
+        - Archery
+        - Home Run Derby
+        - Menus / setup
+        - Play online (rooms, quick match)
+        - Phone remote / joining
+        - Other
+  - type: input
+    id: phone
+    attributes:
+      label: Phone and browser
+      description: Model, OS version and browser.
+      placeholder: "iPhone 15, iOS 18.2, Safari"
+  - type: input
+    id: tv
+    attributes:
+      label: Computer / TV and browser
+      placeholder: "MacBook Air M2, macOS 15, Chrome 131"
+    validations:
+      required: true
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Phone connection (local play)
+      description: How the remote talks to the local server. Press `;` on the TV for the latency readout, which shows it. Skip for online play.
+      options:
+        - Not sure
+        - WebSocket (certificate trusted, or Android)
+        - HTTPS fallback (tapped through the certificate warning)
+        - Not applicable (online)
+  - type: textarea
+    id: doctor
+    attributes:
+      label: npm run doctor output (local play)
+      render: text
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Screenshots, a screen recording, console errors (the TV page's browser console), or a motion capture (open /rec on the local server from the phone, then attach the file from captures/).

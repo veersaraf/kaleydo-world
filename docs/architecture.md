@@ -210,7 +210,7 @@ the swing really is (up to 250 ms; `SWING_AGE_MAX` in `core/input.ts`). The matc
 swing as of when it happened**: timing is judged at that moment, the stroke is drawn from the past, and
 a ball that's already gone past is drawn back to the racket for a beat. Locally that's a few
 milliseconds; over the internet a friend 100 ms away swings as accurately as you do, to within the
-line's jitter (±10 to 30 ms). The TV's latency readout (`LatencyPanel` in `ui/hud.ts`) shows the parts.
+line's jitter (±10 to 30 ms). Press <kbd>;</kbd> on the TV for the latency readout (`LatencyPanel` in `ui/hud.ts`), which shows the parts for each swing.
 
 ## The online match stream
 

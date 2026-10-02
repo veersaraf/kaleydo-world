@@ -1,0 +1,65 @@
+name: New game mode proposal
+description: Propose a variant of a sport (new rules, pacing or format). Read docs/game-modes.md first.
+labels: [game mode]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A game mode is a variant of an existing sport, like **Rush** (every rally shot gets faster until the ball catches fire). [docs/game-modes.md](https://github.com/veersaraf/kaleydo-world/blob/main/docs/game-modes.md) explains how one is built.
+  - type: dropdown
+    id: sport
+    attributes:
+      label: Sport
+      options:
+        - Tennis
+        - Bowling
+        - Sword duel
+        - Archery
+        - Home Run Derby
+    validations:
+      required: true
+  - type: input
+    id: name
+    attributes:
+      label: Name
+      placeholder: "Golden point"
+    validations:
+      required: true
+  - type: textarea
+    id: rules
+    attributes:
+      label: The rules
+      description: How it plays, in a few sentences. What's different from the standard game?
+    validations:
+      required: true
+  - type: textarea
+    id: fun
+    attributes:
+      label: Why it's fun
+      description: What moment does it create? Who is it for (beginners, a party, competitive friends)?
+  - type: textarea
+    id: controls
+    attributes:
+      label: Controls and the phone
+      description: Does it use the existing swings and panels, or need something new on the phone?
+  - type: dropdown
+    id: online
+    attributes:
+      label: Online play
+      description: Tennis matches are streamed to guest TVs. Does the mode need anything the guests can't work out from the match events?
+      options:
+        - Not sure
+        - No, it's rules only
+        - Yes, new state to stream
+        - Not a tennis mode
+  - type: textarea
+    id: setup
+    attributes:
+      label: On the setup screen
+      description: A toggle, or a row with values? What's the default?
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Contributing
+      options:
+        - label: I'd like to build this myself
