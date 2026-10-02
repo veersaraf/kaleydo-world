@@ -1,15 +1,20 @@
 {
-  "name": "kaleido",
+  "name": "kaleydo-world",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Kaleydo World \u2014 a motion-controlled sports game across worlds. Your phone is the remote, your Mac is the TV.",
+  "description": "Motion-controlled sports in your browser. Your phone is the remote.",
   "scripts": {
     "dev": "node server/server.mjs --dev",
     "build": "vite build",
     "start": "vite build && node server/server.mjs",
     "serve": "node server/server.mjs",
     "typecheck": "tsc --noEmit",
+    "typecheck:cloud": "tsc -p cloud/tsconfig.json --noEmit",
+    "test": "npm run typecheck && npm run typecheck:cloud && node scripts/check/run.mjs",
+    "test:sims": "node scripts/check/run.mjs --sims",
+    "test:e2e": "node scripts/e2e/run.mjs",
+    "test:cloud": "node scripts/e2e/run.mjs --cloud",
     "cloud:dev": "vite build && wrangler dev --port 8787",
     "cloud:deploy": "vite build && wrangler deploy"
   },

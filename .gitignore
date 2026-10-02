@@ -9,3 +9,15 @@ captures/
 
 # e2e screenshots land in the cwd
 /*.png
+
+# screenshots and renders the scripts write (scripts/shots, scripts/tools, scripts/e2e: default output dirs)
+/shots/
+/undefined/
+/test-results/
+/playwright-report/
+
+# local env
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
