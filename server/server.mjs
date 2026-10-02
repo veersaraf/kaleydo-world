@@ -21,13 +21,12 @@ import http from 'node:http';
 import https from 'node:https';
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { exec } from 'node:child_process';
 import { WebSocketServer } from 'ws';
 import QRCode from 'qrcode';
 import { ensureCerts, mobileconfig } from './certs.mjs';
 import { joinPage } from './join-page.mjs';
+import { lanIPs, openBrowser } from './lan.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -38,20 +37,6 @@ const HTTP_PORT = Number(process.env.PORT || 3000);
 const HTTPS_PORT = Number(process.env.HTTPS_PORT || 3443);
 
 // ---------------------------------------------------------------- network
-
-function lanIPs() {
-  const found = [];
-  for (const [name, addrs] of Object.entries(os.networkInterfaces())) {
-    for (const a of addrs || []) {
-      if (a.family !== 'IPv4' || a.internal || a.address.startsWith('169.254.')) continue;
-      found.push({ name, address: a.address });
-    }
-  }
-  const rank = (n) =>
-    n.startsWith('en') ? 0 : n.startsWith('eth') || n.startsWith('wl') ? 1 : n.startsWith('bridge') ? 3 : n.startsWith('utun') ? 5 : 2;
-  found.sort((a, b) => rank(a.name) - rank(b.name));
-  return found.map((f) => f.address);
-}
 
 let ips = lanIPs();
 const certs = ensureCerts(path.join(__dirname, '.certs'), ips);
@@ -572,7 +557,11 @@ function listen(server, port, host, label) {
   return new Promise((resolve, reject) => {
     server.once('error', (e) => {
       if (e.code === 'EADDRINUSE') {
-        console.error(`\n  Port ${port} (${label}) is already in use. Is Kaleydo World already running?\n`);
+        console.error(
+          `\n  Port ${port} (${label}) is already in use. Is Kaleydo World already running?` +
+            `\n  Run \x1b[1mnpm run doctor\x1b[0m to see what is using it, or use other ports: PORT=3100 HTTPS_PORT=3543 npm start\n`,
+        );
+        process.exit(1);
       }
       reject(e);
     });
@@ -626,7 +615,15 @@ async function main() {
   If macOS asks whether node may accept incoming connections, choose ${b}Allow${r}.
 `);
 
-  if (OPEN && process.platform === 'darwin') exec(`open http://localhost:${HTTP_PORT}`);
+  // the join QR code right here in the terminal too: scan it before the browser has even opened
+  if (joinUrl()) {
+    try {
+      const qr = await QRCode.toString(joinUrl(), { type: 'terminal', small: true, errorCorrectionLevel: 'L' });
+      console.log(`  ${d}Or scan this one with your phone's camera:${r}\n\n${qr.replace(/^(?=.)/gm, '  ')}`);
+    } catch {}
+  }
+
+  if (OPEN) openBrowser(`http://localhost:${HTTP_PORT}`);
 
   // Pick up Wi-Fi changes (e.g. the Mac joins a different network).
   setInterval(() => {
