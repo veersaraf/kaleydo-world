@@ -39,7 +39,7 @@ export interface SwingEv {
   spin: number;
   /** estimated real-time age of the swing when it arrived, seconds (0..SWING_AGE_MAX) */
   age: number;
-  source: 'pad' | 'mouse' | 'key';
+  source: 'pad' | 'mouse' | 'key' | 'touch';
   side?: 'fh' | 'bh' | 'oh';
   /** racket-head direction at contact, degrees (player frame), if calibrated */
   path?: number | null;
@@ -70,6 +70,14 @@ export type Btn = PadButton;
  * lower reads a well-timed swing as late (see tennis/match.ts, whose late window is the narrow one).
  */
 export const SWING_AGE_MAX = 0.25;
+
+/** the phone preview's tap: a solid swing; a plain tap carries the keyboard swing's touch of topspin */
+const TAP_POWER = 0.75;
+const TAP_SPIN = 0.2;
+/** how far (CSS px) a finger travels before the touch is a swipe (its direction is the spin) */
+const SWIPE_PX = 24;
+/** a finger held this long (ms) without a swipe swings flat then (its swing still counts from the touch) */
+const TAP_HOLD_MS = 150;
 
 /**
  * The last few samples of something a phone streams at 20–30 Hz (its orientation: 6 numbers; the
@@ -222,6 +230,14 @@ export class Input {
   private oriOut: OriPose[] = [0, 1, 2, 3].map(() => ({ s: [0, 1, 0], n: [0, 0, 1] }));
   /** set by the app: while true the mouse drives swings (in matches) */
   mouseSwings = false;
+  /**
+   * The phone preview: a tap on the game is a swing, judged as of the moment the finger came down (swipe up for
+   * topspin, down for slice: the mouse flick's direction → spin); while the local player holds the ball to serve
+   * (`tapTosses`), a tap is the toss instead, and the next tap hits it.
+   */
+  touchSwings = false;
+  tapTosses: () => boolean = () => false;
+  private tap: { id: number; x: number; y: number; t: number; timer: number } | null = null;
   private mouse = { x: 0, y: 0, t: 0, hist: [] as { x: number; y: number; t: number }[], cool: 0 };
   lastLocalInput = 0;
 
@@ -240,6 +256,10 @@ export class Input {
         return;
       }
       if (e.button !== 0 || (e.target as HTMLElement)?.closest?.('.screen')) return;
+      if (this.touchSwings) {
+        this.tapDown(e);
+        return;
+      }
       if (this.archeryMode) {
         // shooting with the mouse: hold to draw, the cursor aims, let go to shoot
         this.lastLocalInput = performance.now();
@@ -260,7 +280,12 @@ export class Input {
     window.addEventListener('contextmenu', (e) => {
       if (this.duelMode) e.preventDefault();
     });
+    window.addEventListener('pointercancel', (e) => this.tapUp(e));
     window.addEventListener('pointerup', (e) => {
+      if (this.touchSwings) {
+        this.tapUp(e);
+        return;
+      }
       if (this.duelMode && e.button === 2) {
         this.onGuard(0, false);
         return;
@@ -605,7 +630,51 @@ export class Input {
     return Math.atan2(window.innerHeight / 2 - e.clientY, e.clientX - window.innerWidth / 2);
   }
 
+  // ---------------------------------------------------------------- the phone preview's taps
+
+  private tapDown(e: PointerEvent) {
+    if (!e.isPrimary || (e.target as HTMLElement)?.closest?.('.boot, button, a, input')) return;
+    this.lastLocalInput = performance.now();
+    // (a finger still down from before swings now)
+    this.tapFire(TAP_SPIN);
+    if (this.tapTosses()) {
+      this.onToss(0);
+      return;
+    }
+    this.tap = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), timer: window.setTimeout(() => this.tapFire(TAP_SPIN), TAP_HOLD_MS) };
+  }
+
+  private tapMove(e: PointerEvent) {
+    const tp = this.tap;
+    if (!tp || e.pointerId !== tp.id) return;
+    const dx = e.clientX - tp.x;
+    const dy = e.clientY - tp.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < SWIPE_PX) return;
+    // the mouse flick's mapping: up is topspin, down is slice, sideways is flat
+    const spin = -dy / dist;
+    this.tapFire(Math.abs(spin) < 0.35 ? 0 : spin);
+  }
+
+  private tapUp(e: PointerEvent) {
+    if (this.tap && e.pointerId === this.tap.id) this.tapFire(TAP_SPIN);
+  }
+
+  /** the touch becomes a swing, as old as the time since the finger came down */
+  private tapFire(spin: number) {
+    const tp = this.tap;
+    if (!tp) return;
+    this.tap = null;
+    window.clearTimeout(tp.timer);
+    const age = Math.min(SWING_AGE_MAX, Math.max(0, (performance.now() - tp.t) / 1000));
+    this.onSwing({ slot: 0, power: TAP_POWER, spin, age, source: 'touch' });
+  }
+
   private pointer(e: PointerEvent) {
+    if (this.touchSwings) {
+      this.tapMove(e);
+      return;
+    }
     const now = performance.now();
     if (this.bowlDrag) {
       this.bowlDrag.hist.push({ x: e.clientX, y: e.clientY, t: now });

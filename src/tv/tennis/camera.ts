@@ -25,6 +25,9 @@ const ATTRACT_SHOTS: Shot[] = [
   { pos: new THREE.Vector3(-7.5, 1.1, 1.5), look: new THREE.Vector3(2, 1.2, -10), fov: 50, drift: new THREE.Vector3(0.4, 0.2, 0) },
 ];
 
+/** the portrait play view's lens, as fitFov reads it (a 16:9 vertical fov): a 44° horizontal view */
+const PORTRAIT_FOV = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(44) / 2) / (16 / 9)));
+
 export class CameraRig {
   cam: THREE.PerspectiveCamera;
   mode: CamMode = 'attract';
@@ -43,6 +46,8 @@ export class CameraRig {
   private lastSmash: CameraRig['smash'] = null;
   /** true while this rig draws one half of a split screen */
   split = false;
+  /** the phone preview: held upright (aspect < 1), the play view gets its own portrait framing */
+  phone = false;
   /**
    * A smash chance being staged (set by the app every frame, null when none):
    * the camera swings low behind the smasher and looks up at the ball against
@@ -100,6 +105,11 @@ export class CameraRig {
     return THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(minH / 2) / a));
   }
 
+  /** a phone held upright: the play view is framed for a tall, narrow screen */
+  private get portrait() {
+    return this.phone && !this.split && this.aspect < 1;
+  }
+
   private playTarget(m: Match | null, pos: THREE.Vector3, look: THREE.Vector3, ball: V3 | undefined) {
     let px = 0;
     let bx = 0;
@@ -121,6 +131,13 @@ export class CameraRig {
       pos.set(clamp(px * 0.8, -4.5, 4.5), 4.9, s * (COURT.halfL + 9.6));
       look.set(clamp(px * 0.45 + bx * 0.1, -3, 3), 0.8, s * -4);
       return 48;
+    }
+    if (this.portrait) {
+      // a phone held upright: high behind the player and looking well down the court, so the whole court fits the
+      // width (a 44° horizontal view, kept by fitFov) — far player a third of the way down, your feet at ~3/4
+      pos.set(clamp(px * 0.3, -2, 2), 13.5, s * (COURT.halfL + 8.5 + deep));
+      look.set(clamp(px * 0.15 + bx * 0.08, -1.5, 1.5), 0, s * (2.5 + deep));
+      return PORTRAIT_FOV;
     }
     // Switch Sports-style framing: higher and steeper, so your whole player stands in
     // the bottom of the frame (feet at ~88% height) and the far baseline sits a
@@ -156,7 +173,7 @@ export class CameraRig {
         if (w) {
           const k = smooth(this.winnerBlend) * 0.35;
           tl.lerp(this.v1.set(w.x, 1.1, w.z), k);
-          fov = lerp(fov, 30, k);
+          fov = lerp(fov, this.portrait ? fov * 0.8 : 30, k);
         }
       }
       // a demo: lean in on the player it is about
@@ -194,7 +211,7 @@ export class CameraRig {
         }
         tp.lerp(sp, k);
         tl.lerp(sl, k);
-        fov = lerp(fov, lerp(58, 38, a), k);
+        fov = lerp(fov, lerp(58, 38, a) * (this.portrait ? 0.62 : 1), k);
         lambda = Math.max(lambda, lerp(4.5, 6, a));
       }
       if (this.mode === 'intro') {
@@ -204,7 +221,7 @@ export class CameraRig {
         const s = this.side === 1 ? -1 : 1;
         tp.lerp(this.v1.set(s * Math.sin(a) * 30, 22 - u * 10, s * (Math.cos(a) * 30 - 6)), 1 - u);
         tl.lerp(this.v1.set(0, 0, s * -2), 1 - u);
-        fov = lerp(48, fov, u);
+        fov = lerp(this.portrait ? 32 : 48, fov, u);
         lambda = 40;
       }
     } else {

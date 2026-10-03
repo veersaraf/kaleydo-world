@@ -2,7 +2,8 @@
 
 import * as THREE from 'three';
 import { Stage } from './render/stage';
-import { Quality, LEVELS } from './render/quality';
+import { Quality, LEVELS, START_PHONE } from './render/quality';
+import { PHONE } from './phone';
 import { BowlingGame, START_X, type Bowler, type BowlEvent } from './bowling/game';
 import { BowlCamera } from './bowling/camera';
 import { BowlPhysics } from './bowling/physics';
@@ -234,7 +235,8 @@ export class App {
     // program's log forces a synchronous compile (a hitch)
     this.renderer.debug.checkShaderErrors = !!import.meta.env.DEV;
     this.stage = new Stage(this.renderer, WORLDS);
-    this.quality = new Quality(this.renderer, window.devicePixelRatio || 1);
+    // (the phone preview: a low rung to start from, and never more than 2× — a 3× screen's own pixels cost more than they show)
+    this.quality = PHONE ? new Quality(this.renderer, Math.min(2, window.devicePixelRatio || 1), START_PHONE) : new Quality(this.renderer, window.devicePixelRatio || 1);
     this.pr = this.quality.current.pr;
     this.stage.msaa = this.quality.current.msaa;
     this.stage.fx = this.quality.current.fx;
@@ -271,7 +273,9 @@ export class App {
     };
     // (a guest TV: the host's match stream arrives here; the lobby may wrap this and pass the rest on)
     this.link.onHostMessage = (m) => this.guestMessage(m);
-    this.link.connect();
+    // (the phone preview plays on its own: no room, no socket)
+    if (!PHONE) this.link.connect();
+    this.rig.phone = PHONE;
     window.addEventListener('resize', () => this.resize());
     // (a hidden tab gets no frames: when it's back, its first gap is not the whole time away)
     document.addEventListener('visibilitychange', () => {
@@ -488,9 +492,9 @@ export class App {
     const m = this.match;
     if (!m || this.paused || this.attract) return;
     if (e.source === 'mouse' && !this.input.mouseSwings) return;
-    // a key has no swing speed: on a smash chance it's a full-blooded one
+    // a key (or a tap) has no swing speed: on a smash chance it's a full-blooded one
     const chance = this.smashCue && this.smashCue.p.slot === e.slot;
-    const power = e.source === 'key' && chance && e.power > 0.3 ? Math.max(e.power, 0.92) : e.power;
+    const power = (e.source === 'key' || e.source === 'touch') && chance && e.power > 0.3 ? Math.max(e.power, 0.92) : e.power;
     // (a swing's age is real time; in bullet time the sim has moved on less)
     const age = clamp(e.age, 0, SWING_AGE_MAX);
     m.humanSwing(e.slot, { power, spin: e.spin, side: e.side, path: e.path }, m.t - age * this.timeScale + this.slippedSince(age));

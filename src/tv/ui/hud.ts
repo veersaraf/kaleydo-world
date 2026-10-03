@@ -74,6 +74,8 @@ export class Hud {
   // (one projection result and vector, reused)
   private pv = new THREE.Vector3();
   private pr = { x: 0, y: 0, behind: false };
+  /** a narrow screen (the phone preview): a float is kept whole on screen, not centred over its point past the edge */
+  clampFloats = false;
 
   constructor(
     private teams: [TeamInfo, TeamInfo],
@@ -286,6 +288,13 @@ export class Hud {
       if (p.behind || p.x < 0.04 || p.x > 0.96) continue;
       const el = h('div', { class: `float ${cls}`, style: `left:${((v.x + p.x * v.w) * 100).toFixed(2)}%;top:${(p.y * 100).toFixed(2)}%` }, text);
       this.floats.append(el);
+      if (this.clampFloats) {
+        // (one measurement per float: they are few)
+        const W = this.floats.clientWidth;
+        // (half its width, as it swells to 1.1× popping up, and a margin)
+        const half = el.offsetWidth * 0.55 + 8;
+        if (W > 0) el.style.left = `${Math.max(half, Math.min(W - half, (v.x + p.x * v.w) * W)).toFixed(1)}px`;
+      }
       setTimeout(() => el.remove(), 1200);
     }
   }

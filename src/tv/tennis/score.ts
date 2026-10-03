@@ -2,6 +2,7 @@
 
 const NAMES = ['Love', 'Fifteen', 'Thirty', 'Forty'];
 const SHORT = ['0', '15', '30', '40'];
+const COUNT = ['Love', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
 
 export interface PointOutcome {
   gameWon: boolean;
@@ -19,6 +20,11 @@ export class Score {
   faults = 0;
   winner: -1 | 0 | 1 = -1;
   totalGames = 0;
+  /**
+   * A race to this many points instead of tennis scoring (the phone preview's short match): one game,
+   * no deuce, the serve changing every point. 0 = ordinary scoring.
+   */
+  race = 0;
 
   constructor(
     public gamesToWin: number,
@@ -44,6 +50,7 @@ export class Score {
 
   /** Is the next point a game point for `team`? */
   gamePointFor(team: 0 | 1) {
+    if (this.race) return this.points[team] + 1 >= this.race;
     const me = this.points[team];
     const them = this.points[1 - team];
     return me >= 3 && me - them >= 1;
@@ -58,6 +65,16 @@ export class Score {
     this.points[team]++;
     const me = this.points[team];
     const them = this.points[1 - team];
+    if (this.race) {
+      if (me >= this.race) {
+        this.games[team]++;
+        this.totalGames++;
+        this.winner = team;
+        return { gameWon: true, matchWon: true, call: 'Game, set and match' };
+      }
+      this.server = (1 - this.server) as 0 | 1;
+      return { gameWon: false, matchWon: false, call: this.call() };
+    }
     if (me >= 4 && me - them >= 2) {
       this.games[team]++;
       this.totalGames++;
@@ -79,6 +96,7 @@ export class Score {
     const s = this.server;
     const a = this.points[s];
     const b = this.points[1 - s];
+    if (this.race) return a === b ? `${COUNT[Math.min(9, a)]} all` : `${COUNT[Math.min(9, a)]}–${COUNT[Math.min(9, b)]}`;
     if (a >= 3 && b >= 3) {
       if (a === b) return 'Deuce';
       return `Advantage ${this.names[a > b ? s : 1 - s]}`;
@@ -89,6 +107,7 @@ export class Score {
 
   /** Short scoreboard text for a team. */
   pointText(team: 0 | 1): string {
+    if (this.race) return String(this.points[team]);
     const me = this.points[team];
     const them = this.points[1 - team];
     if (me >= 3 && them >= 3) {

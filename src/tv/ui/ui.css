@@ -4113,3 +4113,438 @@ kbd {
 .help-btns .row.go {
   flex: 1;
 }
+
+/* ------------------------------------------------------------ the phone preview (src/tv/phone.ts; <html class="phone">) */
+
+/* the game takes every touch: no scrolling, pull-to-refresh, double-tap zoom or text selection */
+html.phone,
+html.phone body {
+  overscroll-behavior: none;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html.phone #gl {
+  touch-action: none;
+}
+
+html.phone #ui {
+  /* a phone's unit comes from its shorter side, so upright and on its side read the same */
+  --u: min(1.6vw, 1.6vh);
+  --sat: env(safe-area-inset-top, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+}
+
+/* the loader: the logo sized for a narrow screen, and the line under it */
+html.phone .boot {
+  pointer-events: auto;
+}
+
+html.phone .boot-intro {
+  inset: auto;
+  left: 50%;
+  top: 46%;
+  width: min(230vw, 160vh);
+  height: auto;
+  aspect-ratio: 16 / 9;
+  transform: translate(-50%, -50%);
+  object-fit: contain;
+  /* (the video's own background melts into the loader's) */
+  -webkit-mask-image: radial-gradient(closest-side, #000 78%, transparent);
+  mask-image: radial-gradient(closest-side, #000 78%, transparent);
+}
+
+html.phone .boot-phone {
+  position: absolute;
+  left: calc(var(--sal) + 20px);
+  right: calc(var(--sar) + 20px);
+  top: calc(46% + min(230vw, 160vh) * 0.5625 * 0.36);
+  text-align: center;
+  color: #fff;
+  font-family: var(--font);
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.35;
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 8px rgba(5, 20, 70, 0.55);
+}
+
+html.phone .boot-txt {
+  bottom: calc(var(--sab) + 24px);
+  font-size: 13px;
+}
+
+/* the pill: top centre, under the notch */
+.ph-pill {
+  position: absolute;
+  top: calc(var(--sat) + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(15, 14, 40, 0.5);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-family: var(--font);
+  font-weight: 600;
+  font-size: 12.5px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  opacity: 0.88;
+  pointer-events: auto;
+  cursor: pointer;
+  transition: opacity 0.3s;
+}
+
+/* (a 46 px tall target round a 30 px pill) */
+.ph-pill::after {
+  content: '';
+  position: absolute;
+  inset: -8px -4px;
+}
+
+.ph-pill i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4be3a2;
+  box-shadow: 0 0 6px #4be3a2;
+}
+
+.ph-pill:active {
+  opacity: 1;
+}
+
+.ph-pill.off {
+  opacity: 0;
+  pointer-events: none;
+}
+
+html.phone .soundbtn {
+  top: calc(var(--sat) + 3px);
+  right: calc(var(--sar) + 6px);
+  width: 40px;
+  height: 40px;
+}
+
+/* the HUD: the score under the pill's band, top left; the rally count top right */
+html.phone .scorebug {
+  top: calc(var(--sat) + 52px);
+  left: calc(var(--sal) + 10px);
+  /* (a race to three: points only, no games column) */
+  grid-template-columns: auto auto;
+}
+
+html.phone .scorebug .g {
+  display: none;
+}
+
+html.phone .scorebug .nm {
+  min-width: calc(var(--u) * 13);
+}
+
+html.phone .rally {
+  top: calc(var(--sat) + 52px);
+  right: calc(var(--sar) + 12px);
+}
+
+html.phone .callout {
+  top: 42%;
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  font-size: calc(var(--u) * 8);
+  line-height: 1.02;
+  white-space: normal;
+}
+
+html.phone .callout.small {
+  font-size: calc(var(--u) * 6);
+}
+
+html.phone .callout .sub {
+  font-size: 0.42em;
+}
+
+html.phone .banner {
+  top: 30%;
+  width: max-content;
+  max-width: calc(100vw - 24px);
+}
+
+html.phone .banner .wn {
+  font-size: calc(var(--u) * 7);
+}
+
+html.phone .banner .wt {
+  font-size: calc(var(--u) * 2.2);
+  letter-spacing: 0.18em;
+}
+
+html.phone .hint {
+  bottom: calc(var(--sab) + 16px);
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  padding: 10px 18px;
+  font-size: 15px;
+  white-space: normal;
+  text-align: center;
+}
+
+html.phone .float {
+  width: max-content;
+  max-width: 86vw;
+  font-size: calc(var(--u) * 3);
+  line-height: 1.05;
+  white-space: normal;
+  text-align: center;
+}
+
+html.phone .float.perfect {
+  font-size: calc(var(--u) * 4.2);
+}
+
+html.phone .float.soft {
+  font-size: calc(var(--u) * 2.4);
+}
+
+html.phone .speed {
+  right: calc(var(--sar) + 12px);
+  bottom: calc(var(--sab) + 66px);
+}
+
+html.phone .toast {
+  top: calc(var(--sat) + 48px);
+}
+
+/* (hidden, it waits wholly above the screen) */
+html.phone .toast:not(.show) {
+  transform: translate(-50%, calc(-100% - var(--sat) - 60px));
+}
+
+html.phone .ptags .ptag,
+html.phone .ptags .sbadge {
+  font-size: 12px;
+}
+
+html.phone .sm-title {
+  top: calc(var(--sat) + 124px);
+}
+
+html.phone .sm-title b {
+  font-size: calc(var(--u) * 9);
+}
+
+html.phone .sm-title span {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+html.phone .sm-hit b {
+  font-size: calc(var(--u) * 6.4);
+}
+
+html.phone .sm-hit.perfect b {
+  font-size: calc(var(--u) * 6);
+}
+
+html.phone .sm-hit span {
+  font-size: calc(var(--u) * 4.4);
+}
+
+/* the card: after the match, or from the pill */
+html.phone .phend {
+  padding: calc(var(--sat) + 12px) calc(var(--sar) + 12px) calc(var(--sab) + 12px) calc(var(--sal) + 12px);
+}
+
+html.phone .phcard {
+  width: min(100%, 420px);
+  max-height: 100%;
+  overflow-y: auto;
+  touch-action: pan-y;
+  padding: 28px 20px 14px;
+  gap: 18px;
+  text-align: center;
+  color: var(--ink);
+}
+
+.phcard .ph-txt {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.phcard .ph-result {
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #6c6a84;
+}
+
+.phcard .ph-result.won {
+  color: var(--accent);
+}
+
+.phcard .ph-head {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 30px;
+  line-height: 1.05;
+}
+
+.phcard .ph-line {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.4;
+  font-weight: 500;
+  color: #4a4966;
+}
+
+.phcard .ph-acts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ph-btn {
+  min-height: 50px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 16px;
+  background: #fff;
+  color: var(--ink);
+  font-family: var(--font);
+  font-weight: 600;
+  font-size: 17px;
+  box-shadow:
+    0 3px 0 rgba(20, 20, 60, 0.12),
+    inset 0 0 0 1.5px rgba(20, 20, 60, 0.08);
+  cursor: pointer;
+  transition:
+    transform 0.15s,
+    opacity 0.15s;
+}
+
+.ph-btn:active {
+  transform: scale(0.97);
+}
+
+.ph-btn.go {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 4px 0 #1d7fd0;
+}
+
+.ph-btn:disabled {
+  opacity: 0.45;
+}
+
+.phcard .ph-join {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  text-align: left;
+}
+
+.phcard .ph-join label {
+  padding-left: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #6c6a84;
+}
+
+.phcard .ph-jrow {
+  display: flex;
+  gap: 8px;
+}
+
+.phcard .ph-code {
+  flex: 1;
+  min-width: 0;
+  height: 50px;
+  padding: 0 14px;
+  border: 2px solid rgba(20, 20, 60, 0.14);
+  border-radius: 14px;
+  background: #fff;
+  color: var(--ink);
+  font-family: var(--font);
+  font-weight: 700;
+  /* (16 px or more: iOS doesn't zoom into it) */
+  font-size: 18px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  -webkit-user-select: text;
+  user-select: text;
+  touch-action: manipulation;
+}
+
+.phcard .ph-code::placeholder {
+  color: rgba(29, 28, 51, 0.3);
+}
+
+.phcard .ph-code:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.phcard .ph-jrow .ph-btn {
+  padding: 0 22px;
+}
+
+.phcard .ph-full {
+  align-self: center;
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 8px;
+  font-size: 14px;
+  color: #5b5a78;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* on its side: a short screen, so the card goes two columns (words left, buttons right) */
+@media (orientation: landscape) {
+  html.phone .phcard {
+    width: min(100%, 720px);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: center;
+    gap: 22px;
+    padding: 20px 22px 8px;
+    text-align: left;
+  }
+
+  html.phone .phcard .ph-head {
+    font-size: 26px;
+  }
+
+  html.phone .phcard .ph-acts {
+    gap: 8px;
+  }
+
+  html.phone .ph-btn,
+  html.phone .phcard .ph-code {
+    min-height: 44px;
+    height: 44px;
+  }
+
+  html.phone .phcard .ph-full {
+    min-height: 44px;
+  }
+}

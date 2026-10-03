@@ -46,6 +46,8 @@ export const LEVELS: QLevel[] = [
 const START_RETINA = 9;
 /** …and a 1× screen: native resolution with every effect */
 const START_1X = 3;
+/** the phone preview starts low (a phone has a small GPU budget and little memory): native CSS pixels, the middle effects tier */
+export const START_PHONE = 2;
 
 // (a new key: the levels' meaning changed with the effects tiers)
 const STORE = 'kaleido.quality.v2';
@@ -77,7 +79,8 @@ export class Quality {
   private failed = new Map<string, number>();
   private saved: Record<string, number> = {};
 
-  constructor(renderer: THREE.WebGLRenderer, dpr: number) {
+  /** `start`: the level to begin at, if not the screen's default (the phone preview's) */
+  constructor(renderer: THREE.WebGLRenderer, dpr: number, start?: number) {
     this.gl = renderer.getContext() as WebGL2RenderingContext;
     this.ext = this.gl.getExtension('EXT_disjoint_timer_query_webgl2');
     // rendering beyond the screen's own pixels buys nothing
@@ -87,7 +90,7 @@ export class Quality {
     });
     this.maxLevel = max;
     // a Retina screen starts at 1.5× with every effect (sharp, and affordable on most Macs)
-    this.level = Math.min(max, dpr > 1.2 ? START_RETINA : START_1X);
+    this.level = Math.min(max, start ?? (dpr > 1.2 ? START_RETINA : START_1X));
     try {
       this.saved = JSON.parse(localStorage.getItem(STORE) || '{}');
     } catch {

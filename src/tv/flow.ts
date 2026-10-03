@@ -34,6 +34,11 @@ import type { DuelEvent, Duelist } from './duel/types';
 import type { BowlEvent } from './bowling/game';
 import type { MatchmakingEvent, PadMode, PadMsg } from '../shared/protocol';
 import type { NetEnd, NetStart } from '../shared/net';
+import { PHONE, SITE_URL } from './phone';
+import { ROOM_CHARS } from './core/link';
+
+/** the phone preview's match: a race to this many points (Score.race) */
+const PHONE_RACE = 3;
 
 type Level = 'rookie' | 'club' | 'pro' | 'ace';
 
@@ -201,6 +206,15 @@ export class Flow {
   // ---- online: quick match (the lobby pairs this TV with another; the host of the pair plays the match)
   private mm: MatchState | null = null;
   private quick: QuickPanel | null = null;
+  // ---- the phone preview (src/tv/phone.ts)
+  /** the "Phone preview · Best on a laptop" pill at the top during play */
+  private pill: HTMLElement | null = null;
+  /** the player has served once (the "tap to toss, tap to hit" hint is for their first serve only) */
+  private phoneServed = false;
+  /** balls coming at the player still to get the timing ring, the hit whose flight was last looked at, and whether it has one */
+  private phoneRingsLeft = 2;
+  private phoneRingSeg = -1;
+  private phoneRingOn = false;
 
   constructor(private app: App) {
     this.root = document.getElementById('ui')!;
@@ -353,8 +367,9 @@ export class Flow {
     const unlock = () => this.unlockAudio();
     window.addEventListener('pointerdown', unlock);
     window.addEventListener('keydown', unlock);
+    if (PHONE) this.phoneSetup();
 
-    this.go(this.titleScreen());
+    this.go(PHONE ? null : this.titleScreen());
     void this.boot();
   }
 
@@ -388,6 +403,7 @@ export class Flow {
       el.append(video);
     }
     el.append(status);
+    if (PHONE) el.append(h('div', { class: 'boot-phone' }, 'Phone preview · the full game plays on a laptop or TV'));
     this.root.append(el);
     // priming stalls frames on purpose: don't let the quality governor react to it
     this.app.quality.hold(Infinity);
@@ -402,6 +418,8 @@ export class Flow {
       el.classList.add('done');
       window.setTimeout(() => el.remove(), 700);
       this.app.quality.hold(performance.now() + 1500);
+      // the phone preview: no title, no menus — straight into a match
+      if (PHONE) this.beginPhoneMatch();
     };
     const settle = () => {
       if (primed && videoDone) finish();
@@ -421,7 +439,18 @@ export class Flow {
       video.addEventListener('error', ended);
       video.play().catch(ended);
     }
-    const ids = WORLDS.map((w) => w.id);
+    if (PHONE) {
+      // a tap skips the rest of the intro (and starts the sound)
+      el.addEventListener('pointerdown', () => {
+        if (videoDone) return;
+        videoDone = true;
+        video?.pause();
+        if (!primed) status.classList.add('on');
+        settle();
+      });
+    }
+    // (a phone has little memory: only Sports Park, the world its match is played in; nothing else of any sport)
+    const ids = PHONE ? ['park'] : WORLDS.map((w) => w.id);
     for (let i = 0; i < ids.length; i++) {
       status.textContent = `Polishing ${worldDef(ids[i]).name}…`;
       await this.app.stage.prime(ids[i], this.app.rig.cam);
@@ -526,6 +555,7 @@ export class Flow {
     }
     this.screen = s;
     if (s) this.screenLayer.append(s.el);
+    if (this.pill) this.pill.classList.toggle('off', !!s || this.app.attract || !this.app.match);
     this.syncPads(true);
   }
 
@@ -541,6 +571,10 @@ export class Flow {
     }
     // (the first-time demo takes an A: its player's skips it)
     if (b === 'a' && this.app.demoTaken(slot)) return;
+    if (PHONE && (b === 'home' || b === 'plus' || b === 'b')) {
+      this.phonePause();
+      return;
+    }
     if (b === 'home' || b === 'plus' || b === 'b') this.pause();
     if (b === 'a') {
       this.app.match?.startNow();
@@ -2943,6 +2977,7 @@ export class Flow {
     switch (e.type) {
       case 'hit': {
         this.hitSeq++;
+        if (e.serve && e.p.human) this.phoneServed = true;
         if (this.lab && e.p.human) this.labReadout({ kind: 'hit', stroke: e.stroke, dtMs: e.dtMs, kph: e.kph, crossed: e.crossed, perfect: e.perfect });
         this.hitTimes.push(m.t);
         if (this.hitTimes.length > 8) this.hitTimes.shift();
@@ -3052,7 +3087,8 @@ export class Flow {
         if (real && this.mine(e.p)) {
           const seat = this.app.input.seats[e.p.slot];
           if (seat?.pid) this.app.link.toPad(seat.pid, { type: 'fx', fx: 'toss' });
-          this.hud?.setHint('<b>SWING!</b>', seat?.color);
+          // (the phone preview's own hints say what to do: see phoneFrame)
+          if (!PHONE) this.hud?.setHint('<b>SWING!</b>', seat?.color);
         }
         break;
       case 'catch':
@@ -3128,7 +3164,8 @@ export class Flow {
           (e.reason === 'winner' && (lh.kind === 'smash' || lh.perfect || lh.kph > 118)) ||
           (e.reason === 'ace' && lh.kph > 150) ||
           ((e.gameWon || e.matchWon) && e.rally >= 3);
-        if (highlight && (smashWon || this.pointsSinceReplay >= 3 || e.matchWon || e.rally >= 12)) {
+        // (the phone preview's match is a short taste: no replays)
+        if (!PHONE && highlight && (smashWon || this.pointsSinceReplay >= 3 || e.matchWon || e.rally >= 12)) {
           const tPoint = m.t;
           const from = smashWon && ls ? Math.max(tPoint - 6.5, ls.t - 2.4) : Math.max(tPoint - 6.5, (this.hitTimes[this.hitTimes.length - 3] ?? tPoint - 4) - 0.5);
           window.setTimeout(() => {
@@ -3154,9 +3191,12 @@ export class Flow {
       case 'state':
         if (e.state === 'over' && real && !this.resultsShown) {
           this.resultsShown = true;
-          window.setTimeout(() => {
-            if (this.app.match === m && m.state === 'over') this.go(this.resultsScreen());
-          }, 900);
+          window.setTimeout(
+            () => {
+              if (this.app.match === m && m.state === 'over' && !this.screen) this.go(PHONE ? this.phoneCard(false) : this.resultsScreen());
+            },
+            PHONE ? 1600 : 900,
+          );
         }
         if (e.state === 'serve' || e.state === 'reset') this.hud?.setScore(m);
         this.syncPads();
@@ -3187,6 +3227,8 @@ export class Flow {
    */
   private maybeDemo(m: Match) {
     const app = this.app;
+    // (the phone preview teaches tapping, not swinging a phone: see phoneFrame)
+    if (PHONE) return;
     if (app.attract || app.demo || app.replay || this.guestRun || this.screen || this.lab || m.cfg.practice || m.second || app.sport !== 'tennis') return;
     const srv = m.server;
     let who: TPlayer | null = null;
@@ -3449,6 +3491,187 @@ export class Flow {
     }
   }
 
+  // ---------------------------------------------------------------- the phone preview (src/tv/phone.ts)
+
+  /** Taps swing (no mouse flicks), the local seat is "You", sound starts on the first tap, and the pill. */
+  private phoneSetup() {
+    const input = this.app.input;
+    input.mouseSwings = false;
+    input.touchSwings = true;
+    // (holding the ball to serve, or the match's fly-in: a tap tosses / starts, it doesn't swing)
+    input.tapTosses = () => {
+      const m = this.app.match;
+      if (!m || this.app.attract || this.app.paused || this.screen) return false;
+      return m.state === 'intro' || (m.state === 'serve' && !!m.server?.human && m.server.slot === 0);
+    };
+    const seat = input.seats[0];
+    if (seat) seat.name = 'You';
+    // (iOS lets sound start at the end of a touch, not at its start)
+    const unlock = () => {
+      if (!this.audio?.ready) this.unlockAudio();
+    };
+    window.addEventListener('touchend', unlock);
+    window.addEventListener('click', unlock);
+    const pill = h('button', { class: 'ph-pill off', type: 'button', 'aria-label': 'Phone preview, best on a laptop: send it to your laptop' }, h('i'), 'Phone preview · Best on a laptop');
+    // (the pill is not a swing)
+    pill.addEventListener('pointerdown', (e) => e.stopPropagation());
+    pill.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.unlockAudio();
+      this.phonePause();
+    });
+    this.root.append(pill);
+    this.pill = pill;
+  }
+
+  /** A new short match: the phone's player ("You") against a Rookie CPU in Sports Park, first to PHONE_RACE points, no shatters. */
+  private beginPhoneMatch() {
+    const color = this.app.input.seats[0]?.color ?? '#3aa8ff';
+    const you = this.app.humanSpec(0, 0);
+    you.name = 'You';
+    const look = randomLook(this.rng, this.rng.pick(['#6c6a84', '#4b4f73', '#8a5a9a', '#3d6b6b']));
+    const cpu: PlayerSpec = { team: 1, name: 'CPU', look, handed: this.rng.chance(0.2) ? -1 : 1, ctrl: { kind: 'cpu', ai: AI_LEVELS.rookie } };
+    this.teams = [
+      { name: 'You', color },
+      { name: 'CPU', color: '#6c6a84' },
+    ];
+    this.mode = 'quick';
+    this.phoneRingSeg = -1;
+    this.phoneRingOn = false;
+    // (they serve first: their first touch is the serve, then the CPU's return comes at them)
+    this.beginMatch('park', false, { doubles: false, gamesToWin: 1, race: PHONE_RACE, players: [you, cpu], teamNames: ['You', 'CPU'], firstServer: 0 });
+    if (this.hud) this.hud.clampFloats = true;
+    this.pill?.classList.remove('off');
+  }
+
+  /** The pill: the send-it-to-a-laptop card, over the match (which waits). */
+  private phonePause() {
+    const m = this.app.match;
+    if (!m || this.app.attract || this.screen || m.state === 'over') return;
+    this.app.paused = true;
+    this.go(this.phoneCard(true));
+    this.sound('select');
+  }
+
+  /**
+   * Every frame of a phone match: the first touch. Their first serve says how ("Tap to toss, tap to hit"); the first
+   * two balls coming at them get the timing ring (the smash cue's look) and "Tap when the ball reaches you". Then nothing.
+   */
+  private phoneFrame(m: Match) {
+    const hud = this.hud!;
+    const p = m.players.find((q) => q.human);
+    let ringing = false;
+    if (p && m.state === 'play' && m.ball.live && !this.app.smashCue) {
+      // a new flight: is it one coming at them that still gets a ring?
+      if (this.phoneRingSeg !== this.hitSeq) {
+        this.phoneRingSeg = this.hitSeq;
+        this.phoneRingOn = this.phoneRingsLeft > 0 && !!m.ball.lastHitter && m.ball.lastHitter.team !== p.team;
+        if (this.phoneRingOn) this.phoneRingsLeft--;
+      }
+      ringing = this.phoneRingOn;
+    }
+    const plan = p?.plan;
+    if (ringing && p && plan && !p.swing) hud.timingRing({ team: p.team, tl: plan.t - m.t, ball: m.ballView(m.t, this.cueBall), word: 'TAP!' });
+    else hud.timingRing(null);
+    const srv = m.server;
+    const serving = !this.phoneServed && !!srv?.human && (m.state === 'intro' || m.state === 'serve' || m.state === 'toss');
+    hud.setHint(serving ? 'Tap to <b>toss</b>, tap to <b>hit</b>' : ringing ? 'Tap when the ball <b>reaches you</b>' : '');
+  }
+
+  /**
+   * The phone preview's card: after the match (`mid` false: "That was the taste."), or from the pill during one
+   * (`mid`: the match waits behind it). Send the site to a laptop (the share sheet, or copy), copy it, play again
+   * (or go back to the match), join a friend's room by its code, or open the full game here anyway.
+   */
+  private phoneCard(mid: boolean): Screen {
+    const m = this.app.match;
+    const done = !mid && !!m && m.score.winner >= 0;
+    const won = done && m!.score.winner === 0;
+    const [a, b] = m ? m.score.points : [0, 0];
+    const btn = (label: string, cls = '') => h('button', { class: `ph-btn ${cls}`, type: 'button' }, label);
+    const send = btn('Send to my laptop', 'go');
+    const copyBtn = btn('Copy link');
+    const again = btn(mid ? 'Back to the match' : 'Play again');
+    /** copy the link; the button says so for a moment */
+    const copy = async (el: HTMLButtonElement, label: string) => {
+      let ok = false;
+      try {
+        await navigator.clipboard.writeText(SITE_URL);
+        ok = true;
+      } catch {
+        // (no clipboard API outside a secure page, or not allowed: the old way)
+        try {
+          const ta = h('textarea', { readonly: true, style: 'position:fixed;top:0;left:0;opacity:0' });
+          ta.value = SITE_URL;
+          document.body.append(ta);
+          ta.select();
+          ok = document.execCommand('copy');
+          ta.remove();
+        } catch {}
+      }
+      el.textContent = ok ? 'Link copied ✓' : SITE_URL.replace('https://', '');
+      window.setTimeout(() => (el.textContent = label), 2200);
+    };
+    send.addEventListener('click', () => {
+      const data = { title: 'Kaleydo World', text: 'Play Kaleydo World on your laptop — your phone becomes the racket.', url: SITE_URL };
+      if (typeof navigator.share === 'function')
+        navigator.share(data).catch((err: unknown) => {
+          if ((err as Error)?.name !== 'AbortError') void copy(send, 'Send to my laptop');
+        });
+      else void copy(send, 'Send to my laptop');
+    });
+    copyBtn.addEventListener('click', () => void copy(copyBtn, 'Copy link'));
+    again.addEventListener('click', () => {
+      this.sound('select');
+      if (mid) this.resume();
+      else this.beginPhoneMatch();
+    });
+    // a friend's game: their room's five-letter code opens the remote in it
+    const code = h('input', { class: 'ph-code', type: 'text', maxlength: 5, placeholder: 'CODE', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', 'aria-label': 'Room code' });
+    const join = btn('Join');
+    join.disabled = true;
+    const valid = () => code.value.length === 5;
+    code.addEventListener('input', () => {
+      const v = [...code.value.toUpperCase()].filter((c) => ROOM_CHARS.includes(c)).join('').slice(0, 5);
+      if (v !== code.value) code.value = v;
+      join.disabled = !valid();
+    });
+    const go = () => {
+      if (valid()) location.href = `/c?room=${code.value}`;
+    };
+    join.addEventListener('click', go);
+    code.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') go();
+    });
+    const sheet = h(
+      'div',
+      { class: 'sheet panel phcard' },
+      h(
+        'div',
+        { class: 'ph-txt' },
+        done ? h('div', { class: `ph-result${won ? ' won' : ''}` }, won ? `You won ${a}–${b}` : `CPU won ${b}–${a}`) : null,
+        h('h2', { class: 'ph-head' }, mid ? 'Best on a laptop or TV' : 'That was the taste.'),
+        h('p', { class: 'ph-line' }, 'On a laptop or TV, your phone becomes the racket. You swing it for real.'),
+      ),
+      h(
+        'div',
+        { class: 'ph-acts' },
+        send,
+        copyBtn,
+        again,
+        h('div', { class: 'ph-join' }, h('label', null, 'Join a friend’s game'), h('div', { class: 'ph-jrow' }, code, join)),
+        h('a', { class: 'ph-full', href: '/?tv=1' }, 'Open the full game here anyway'),
+      ),
+    );
+    return {
+      name: mid ? 'phone-pause' : 'phone-end',
+      el: h('div', { class: 'screen center phend' }, sheet),
+      input: (_slot, bt) => {
+        if (mid && (bt === 'b' || bt === 'home' || bt === 'plus')) this.resume();
+      },
+    };
+  }
+
   // ---------------------------------------------------------------- per frame
 
   private frame(dt: number) {
@@ -3474,6 +3697,8 @@ export class Flow {
         this.hud.caption('');
         this.hud.setHint('');
         this.hud.timingRing(null);
+      } else if (PHONE) {
+        this.phoneFrame(m);
       } else if ((m.state === 'serve' || m.state === 'intro') && srv?.human) {
         // the "Server" badge by the player says what to do; keep the bottom of the screen clear
         this.hud.setHint('');
@@ -3486,13 +3711,13 @@ export class Flow {
       const cue = this.app.smashCue;
       if (cue) {
         const seat = this.app.input.seats[cue.p.slot];
-        this.hud.smashFrame({ team: cue.p.team, tl: cue.tl, w: cue.w, ball: m.ballView(m.t, this.cueBall), hint: seat?.local && !this.guestRun ? 'press SPACE as the ring closes' : 'swing hard as the ring closes' });
+        this.hud.smashFrame({ team: cue.p.team, tl: cue.tl, w: cue.w, ball: m.ballView(m.t, this.cueBall), hint: seat?.local && !this.guestRun ? (PHONE ? 'tap as the ring closes' : 'press SPACE as the ring closes') : 'swing hard as the ring closes' });
       } else this.hud.smashFrame(null);
       // (a guest TV's own seats are not the host's: its phones are told by the roster)
       const seat = srv?.human ? this.app.input.seats[srv.slot] : null;
-      const tossHint = this.guestRun ? (srv && this.mine(srv) && this.guestOwns(srv.slot) ? 'lift your phone to toss' : '') : !seat ? '' : seat.local ? 'Space to toss' : 'lift your phone to toss';
+      const tossHint = this.guestRun ? (srv && this.mine(srv) && this.guestOwns(srv.slot) ? 'lift your phone to toss' : '') : !seat ? '' : seat.local ? (PHONE ? 'tap to toss' : 'Space to toss') : 'lift your phone to toss';
       this.hud.track(m, dt, demo ? '' : tossHint);
-      if (!demo) this.ringFrame(m);
+      if (!demo && !PHONE) this.ringFrame(m);
       if (m.state === 'serve' && !this.tossHintShown) this.tossHintShown = true;
     }
     // attract mode showcases the worlds — and the sports, one after another

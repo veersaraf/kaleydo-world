@@ -1,3 +1,5 @@
+// (first: whether this is the phone preview is decided before anything is built)
+import './phone';
 import '@fontsource/fredoka/latin-400.css';
 import '@fontsource/fredoka/latin-600.css';
 import '@fontsource/fredoka/latin-700.css';

@@ -38,6 +38,8 @@ export interface MatchConfig {
   timingScale?: number;
   /** Rush: rallies start faster and every hit builds heat (ball and players speed up) */
   rush?: boolean;
+  /** a race to this many points instead of tennis scoring (see Score.race; the phone preview's short match) */
+  race?: number;
 }
 
 export interface SwingIn {
@@ -257,6 +259,7 @@ export class Match {
       this.team(1).map((p) => p.name).join(' & '),
     ];
     this.score = new Score(cfg.gamesToWin, cfg.firstServer ?? 0, names);
+    if (cfg.race) this.score.race = cfg.race;
     this.ball = {
       seg: { t0: 0, px: 0, py: 1, pz: 0, vx: 0, vy: 0, vz: 0, g: 0, k: 0, spin: 0 },
       holder: null,
