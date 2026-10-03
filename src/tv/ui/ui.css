@@ -4398,6 +4398,10 @@ html.phone #ui:has(.phmenu) .banner {
 }
 
 html.phone .phmenu {
+  /* (a phone's menus sit right on top of a busy court: dimmer and softer than the TV's) */
+  background: rgba(12, 12, 32, 0.74);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
   padding: calc(var(--sat) + 16px) calc(var(--sar) + 16px) calc(var(--sab) + 16px) calc(var(--sal) + 16px);
 }
 
