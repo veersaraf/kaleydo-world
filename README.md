@@ -91,28 +91,6 @@ WebSockets, which shave a little latency.
 The game was developed on macOS with iPhones as remotes. The local server is plain Node, so Linux and
 Windows should work too; reports and fixes are welcome.
 
-## Host your own online copy
-
-The hosted version runs on Cloudflare Workers: the Worker serves the built game, and each TV's room is a
-Durable Object that relays between the TV, its phones and any guest TVs. With a real domain the site has
-a real certificate, so phones get motion sensors with no warning, and **Play online** (rooms by code,
-quick match) is switched on. The free plan is plenty for a hobby game: idle rooms hibernate and cost
-nothing.
-
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/veersaraf/kaleydo-world)
-
-The button copies this repo into your GitHub account and sets up a Worker that builds and deploys it on
-every push. Or deploy from your own clone (Node 22+):
-
-```bash
-npx wrangler login     # once: sign in to your Cloudflare account
-npm run cloud:deploy   # build, then publish to <name>.<your-subdomain>.workers.dev
-npm run cloud:dev      # or try it locally first on http://127.0.0.1:8787
-```
-
-To use your own domain: Cloudflare dashboard → Workers & Pages → your Worker → Settings → Domains &
-Routes. The Worker is named `kaleido` in `wrangler.jsonc`; change `name` there for a different one.
-
 ## Controls
 
 Every sport can also be played with a mouse and keyboard on the computer (handy for trying it out).
