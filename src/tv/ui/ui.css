@@ -4145,6 +4145,11 @@ html.phone .boot {
   pointer-events: auto;
 }
 
+/* (fading out, it lets taps through) */
+html.phone .boot.done {
+  pointer-events: none;
+}
+
 html.phone .boot-intro {
   inset: auto;
   left: 50%;
@@ -4179,12 +4184,11 @@ html.phone .boot-txt {
   font-size: 13px;
 }
 
-/* the pill: top centre, under the notch */
+/* the pill: top left, under the notch (the pause and sound buttons have the right) */
 .ph-pill {
   position: absolute;
-  top: calc(var(--sat) + 8px);
-  left: 50%;
-  transform: translateX(-50%);
+  top: calc(var(--sat) + 10px);
+  left: calc(var(--sal) + 10px);
   z-index: 6;
   display: flex;
   align-items: center;
@@ -4233,11 +4237,26 @@ html.phone .boot-txt {
   pointer-events: none;
 }
 
+/* the sound button and, left of it, the pause button: 44 px targets in the top-right corner */
 html.phone .soundbtn {
   top: calc(var(--sat) + 3px);
   right: calc(var(--sar) + 6px);
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
+}
+
+html.phone .soundbtn.pausebtn {
+  right: calc(var(--sar) + 56px);
+}
+
+.pausebtn svg {
+  width: 44%;
+  height: 44%;
+}
+
+.pausebtn.off {
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* the HUD: the score under the pill's band, top left; the rally count top right */
@@ -4372,187 +4391,199 @@ html.phone .sm-hit span {
   font-size: calc(var(--u) * 4.4);
 }
 
-/* the card: after the match, or from the pill */
-html.phone .phend {
-  padding: calc(var(--sat) + 12px) calc(var(--sar) + 12px) calc(var(--sab) + 12px) calc(var(--sal) + 12px);
+/* the pause menu and the end card: the TV's quiet pause menu (.pausemenu), at a phone's size */
+/* (paused in the match's fly-in: the world's title banner doesn't show through the menu) */
+html.phone #ui:has(.phmenu) .banner {
+  visibility: hidden;
 }
 
-html.phone .phcard {
-  width: min(100%, 420px);
+html.phone .phmenu {
+  padding: calc(var(--sat) + 16px) calc(var(--sar) + 16px) calc(var(--sab) + 16px) calc(var(--sal) + 16px);
+}
+
+html.phone .phmenu .sheet {
+  width: min(100%, 360px);
   max-height: 100%;
+  gap: 16px;
+}
+
+html.phone .phmenu .sheet h2 {
+  font-size: 13px;
+}
+
+html.phone .phmenu .menu {
+  gap: 4px;
+}
+
+html.phone .phmenu .item {
+  min-height: 50px;
+  padding: 8px 22px;
+  font-size: 18px;
+}
+
+html.phone .phmenu .item .txt {
+  align-items: center;
+  text-align: center;
+  gap: 1px;
+}
+
+html.phone .phmenu .item .sub {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* the end card: the words, then the column; it scrolls if a short screen can't hold it */
+html.phone .phend .sheet {
   overflow-y: auto;
   touch-action: pan-y;
-  padding: 28px 20px 14px;
-  gap: 18px;
+  gap: 22px;
   text-align: center;
-  color: var(--ink);
 }
 
-.phcard .ph-txt {
+.phend .ph-txt,
+.phend .ph-acts {
+  width: 100%;
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 8px;
 }
 
-.phcard .ph-result {
-  font-weight: 700;
-  font-size: 13px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: #6c6a84;
+.phend .ph-acts {
+  gap: 14px;
 }
 
-.phcard .ph-result.won {
-  color: var(--accent);
-}
-
-.phcard .ph-head {
-  margin: 0;
-  font-family: var(--display);
-  font-weight: 700;
-  font-size: 30px;
+html.phone .phend .sheet h2 {
+  font-size: 32px;
   line-height: 1.05;
+  letter-spacing: -0.01em;
+  text-transform: none;
+  opacity: 1;
 }
 
-.phcard .ph-line {
-  margin: 0;
-  font-size: 16px;
+html.phone .phend .olabel {
+  font-size: 11px;
+}
+
+html.phone .phend .hintline {
+  max-width: 300px;
+  font-size: 15px;
   line-height: 1.4;
-  font-weight: 500;
-  color: #4a4966;
+  opacity: 0.7;
 }
 
-.phcard .ph-acts {
+/* join a friend's game: a glass code field (a room code's tile) and a white pill */
+.phend .ph-join {
+  width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  align-items: center;
+  gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
 }
 
-.ph-btn {
-  min-height: 50px;
-  padding: 0 18px;
-  border: 0;
-  border-radius: 16px;
-  background: #fff;
-  color: var(--ink);
-  font-family: var(--font);
-  font-weight: 600;
-  font-size: 17px;
-  box-shadow:
-    0 3px 0 rgba(20, 20, 60, 0.12),
-    inset 0 0 0 1.5px rgba(20, 20, 60, 0.08);
-  cursor: pointer;
-  transition:
-    transform 0.15s,
-    opacity 0.15s;
-}
-
-.ph-btn:active {
-  transform: scale(0.97);
-}
-
-.ph-btn.go {
-  background: var(--accent);
-  color: #fff;
-  box-shadow: 0 4px 0 #1d7fd0;
-}
-
-.ph-btn:disabled {
-  opacity: 0.45;
-}
-
-.phcard .ph-join {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 4px;
-  text-align: left;
-}
-
-.phcard .ph-join label {
-  padding-left: 4px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #6c6a84;
-}
-
-.phcard .ph-jrow {
+.phend .ph-jrow {
+  width: 100%;
   display: flex;
   gap: 8px;
 }
 
-.phcard .ph-code {
+.phend .ph-code {
   flex: 1;
   min-width: 0;
-  height: 50px;
-  padding: 0 14px;
-  border: 2px solid rgba(20, 20, 60, 0.14);
+  height: 48px;
+  padding: 0 16px;
+  border: 0;
   border-radius: 14px;
-  background: #fff;
-  color: var(--ink);
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  color: #fff;
   font-family: var(--font);
   font-weight: 700;
   /* (16 px or more: iOS doesn't zoom into it) */
   font-size: 18px;
   letter-spacing: 0.3em;
+  text-align: center;
   text-transform: uppercase;
   -webkit-user-select: text;
   user-select: text;
   touch-action: manipulation;
 }
 
-.phcard .ph-code::placeholder {
-  color: rgba(29, 28, 51, 0.3);
+.phend .ph-code::placeholder {
+  color: rgba(255, 255, 255, 0.35);
 }
 
-.phcard .ph-code:focus {
+.phend .ph-code:focus {
   outline: none;
-  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.6);
 }
 
-.phcard .ph-jrow .ph-btn {
+.phend .ph-jbtn {
+  min-width: 88px;
+  height: 48px;
   padding: 0 22px;
+  border: 0;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink);
+  font-family: var(--font);
+  font-weight: 700;
+  font-size: 17px;
+  cursor: pointer;
+  transition: opacity 0.16s;
 }
 
-.phcard .ph-full {
-  align-self: center;
+.phend .ph-jbtn:disabled {
+  opacity: 0.3;
+}
+
+.phend .ph-full {
   display: flex;
   align-items: center;
   min-height: 44px;
   padding: 0 8px;
   font-size: 14px;
-  color: #5b5a78;
+  color: rgba(255, 255, 255, 0.55);
   text-decoration: underline;
   text-underline-offset: 3px;
 }
 
-/* on its side: a short screen, so the card goes two columns (words left, buttons right) */
+/* on its side: a short screen, so the words go left and the column right */
 @media (orientation: landscape) {
-  html.phone .phcard {
+  html.phone .phmenu .sheet {
+    gap: 10px;
+  }
+
+  html.phone .phmenu .item {
+    min-height: 44px;
+    padding: 4px 22px;
+  }
+
+  html.phone .phend .sheet {
     width: min(100%, 720px);
     display: grid;
     grid-template-columns: 1fr 1fr;
     align-items: center;
-    gap: 22px;
-    padding: 20px 22px 8px;
-    text-align: left;
+    gap: 28px;
   }
 
-  html.phone .phcard .ph-head {
-    font-size: 26px;
+  html.phone .phend .sheet h2 {
+    font-size: 28px;
   }
 
-  html.phone .phcard .ph-acts {
+  .phend .ph-acts {
     gap: 8px;
   }
 
-  html.phone .ph-btn,
-  html.phone .phcard .ph-code {
-    min-height: 44px;
-    height: 44px;
+  .phend .ph-join {
+    padding-top: 8px;
+    gap: 6px;
   }
 
-  html.phone .phcard .ph-full {
-    min-height: 44px;
+  .phend .ph-code,
+  .phend .ph-jbtn {
+    height: 44px;
   }
 }

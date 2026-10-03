@@ -1,8 +1,9 @@
 // Smoke test: the phone preview (src/tv/phone.ts). An iPhone-sized touch context opens the TV page: the loader says
-// it's a preview, the match starts without menus, taps timed to the ball (two for a serve) are swings, the pill is up,
-// the match ends on the card with all its buttons, Play again restarts. ?tv=1 on the phone and a desktop get the title.
+// it's a preview, the match starts without menus, the pause button pauses it (Resume, or a tap outside the menu, goes
+// back), taps timed to the ball (two for a serve) are swings, the pill is up, the match ends on the card with all its
+// rows, Play again restarts. ?tv=1 on the phone and a desktop get the title.
 //
-//   BASE=http://localhost:3520 node scripts/e2e/phone-preview-e2e.mjs      (SHOTS=dir saves two screenshots)
+//   BASE=http://localhost:3520 node scripts/e2e/phone-preview-e2e.mjs      (SHOTS=dir saves three screenshots)
 import { launchChrome } from '../lib/chrome.mjs';
 
 const BASE = process.env.BASE || 'http://localhost:3000';
@@ -37,6 +38,27 @@ await page.waitForFunction(() => window.kaleido.match && !window.kaleido.attract
 check(!(await page.$('.screen')), 'the match starts with no title or menus');
 check(await page.evaluate(() => window.kaleido.match.score.race === 3 && window.kaleido.match.players[0].name === 'You'), 'You vs CPU, first to 3');
 check(await page.evaluate(() => !document.querySelector('.ph-pill').classList.contains('off')), 'the pill is up');
+// pause: the button by the sound button; the menu; Resume, then a tap outside the menu
+const pb = await page.evaluate(() => {
+  const r = document.querySelector('.pausebtn').getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height, on: !document.querySelector('.pausebtn').classList.contains('off') };
+});
+check(pb.on && pb.w >= 44 && pb.h >= 44, 'the pause button is up, a 44 px target', `${pb.w}x${pb.h}`);
+await page.touchscreen.tap(pb.x, pb.y);
+await page.waitForSelector('.phpause', { timeout: 3000 });
+await sleep(500);
+const menu = await page.evaluate(() => ({ paused: window.kaleido.paused, items: [...document.querySelectorAll('.phpause .item > .txt > span:first-child')].map((e) => e.textContent) }));
+check(menu.paused && ['Resume', 'Restart match', 'Send the link to my laptop', 'Open the full game here'].every((t) => menu.items.includes(t)) && menu.items.some((t) => t.startsWith('Sound')), 'it pauses, and the pause menu shows', menu.items.join(' | '));
+if (SHOTS) await page.screenshot({ path: `${SHOTS}/pause.png` });
+await page.tap('.phpause .item:has-text("Resume")');
+await page.waitForFunction(() => !document.querySelector('.screen') && !window.kaleido.paused, null, { timeout: 3000 });
+check(true, 'Resume goes back to the match');
+await page.touchscreen.tap(pb.x, pb.y);
+await page.waitForSelector('.phpause', { timeout: 3000 });
+await sleep(500);
+await page.touchscreen.tap(195, 800);
+await page.waitForFunction(() => !document.querySelector('.screen') && !window.kaleido.paused, null, { timeout: 3000 });
+check(true, 'a tap outside the menu resumes too');
 check(await page.evaluate(() => window.kaleido.quality.level <= 3), 'starts on a low quality rung', String(await page.evaluate(() => window.kaleido.quality.level)));
 await page.evaluate(() => {
   window.__ev = [];
@@ -96,21 +118,21 @@ check(await page.evaluate(() => window.kaleido.match.state === 'over'), 'the mat
 await page.waitForSelector('.phend', { timeout: 5000 });
 await sleep(600);
 const card = await page.evaluate(() => ({
-  head: document.querySelector('.ph-head')?.textContent,
-  btns: [...document.querySelectorAll('.phcard button')].map((b) => b.textContent),
+  head: document.querySelector('.phend h2')?.textContent,
+  btns: [...document.querySelectorAll('.phend .item > .txt > span:first-child, .phend button')].map((b) => b.textContent),
   code: !!document.querySelector('.ph-code'),
   full: document.querySelector('.ph-full')?.getAttribute('href'),
-  fits: [...document.querySelectorAll('.phcard button, .ph-code, .ph-full')].every((el) => {
+  fits: [...document.querySelectorAll('.phend .item, .phend button, .ph-code, .ph-full')].every((el) => {
     const r = el.getBoundingClientRect();
     return r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight && r.height >= 44;
   }),
 }));
 check(card.head === 'That was the taste.', 'the end card', card.head);
-check(['Send to my laptop', 'Copy link', 'Play again', 'Join'].every((b) => card.btns.includes(b)) && card.code && card.full === '/?tv=1', 'with all its buttons', card.btns.join(' | '));
+check(['Send the link to my laptop', 'Copy link', 'Play again', 'Join'].every((b) => card.btns.includes(b)) && card.code && card.full === '/?tv=1', 'with all its buttons', card.btns.join(' | '));
 check(card.fits, 'all on screen, every target ≥ 44 px tall');
 if (SHOTS) await page.screenshot({ path: `${SHOTS}/end-card.png` });
 const before = await page.evaluate(() => window.kaleido.match);
-await page.tap('.phcard button:text("Play again")');
+await page.tap('.phend .item:has-text("Play again")');
 await page.waitForFunction(() => !document.querySelector('.phend') && window.kaleido.match.state !== 'over', null, { timeout: 5000 });
 check(await page.evaluate((m) => window.kaleido.match !== m, before), 'Play again starts a new match');
 

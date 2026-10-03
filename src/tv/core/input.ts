@@ -633,7 +633,7 @@ export class Input {
   // ---------------------------------------------------------------- the phone preview's taps
 
   private tapDown(e: PointerEvent) {
-    if (!e.isPrimary || (e.target as HTMLElement)?.closest?.('.boot, button, a, input')) return;
+    if (!e.isPrimary || (e.target as HTMLElement)?.closest?.('.boot, .screen, button, a, input')) return;
     this.lastLocalInput = performance.now();
     // (a finger still down from before swings now)
     this.tapFire(TAP_SPIN);

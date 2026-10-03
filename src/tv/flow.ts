@@ -209,6 +209,8 @@ export class Flow {
   // ---- the phone preview (src/tv/phone.ts)
   /** the "Phone preview · Best on a laptop" pill at the top during play */
   private pill: HTMLElement | null = null;
+  /** the pause button by the sound button during play */
+  private pauseBtn: HTMLElement | null = null;
   /** the player has served once (the "tap to toss, tap to hit" hint is for their first serve only) */
   private phoneServed = false;
   /** balls coming at the player still to get the timing ring, the hit whose flight was last looked at, and whether it has one */
@@ -500,6 +502,9 @@ export class Flow {
     if (!this.audio.music.song) this.audio.playSong(this.app.stage.current?.def.song ?? 'plaza');
   }
 
+  /** the sound button's toggle (the phone preview's pause menu has it too) */
+  private soundToggle: () => void = () => {};
+
   /** The round sound button in the top-right corner, on every screen (M toggles it too). */
   private soundButton() {
     const ns = 'http://www.w3.org/2000/svg';
@@ -529,6 +534,7 @@ export class Flow {
       this.audio?.setMuted(this.settings.muted);
       show();
     };
+    this.soundToggle = toggle;
     // (the button is not a swing or a menu click)
     btn.addEventListener('pointerdown', (e) => e.stopPropagation());
     btn.addEventListener('click', (e) => {
@@ -555,7 +561,7 @@ export class Flow {
     }
     this.screen = s;
     if (s) this.screenLayer.append(s.el);
-    if (this.pill) this.pill.classList.toggle('off', !!s || this.app.attract || !this.app.match);
+    for (const el of [this.pill, this.pauseBtn]) el?.classList.toggle('off', !!s || this.app.attract || !this.app.match);
     this.syncPads(true);
   }
 
@@ -3193,7 +3199,7 @@ export class Flow {
           this.resultsShown = true;
           window.setTimeout(
             () => {
-              if (this.app.match === m && m.state === 'over' && !this.screen) this.go(PHONE ? this.phoneCard(false) : this.resultsScreen());
+              if (this.app.match === m && m.state === 'over' && !this.screen) this.go(PHONE ? this.phoneCard() : this.resultsScreen());
             },
             PHONE ? 1600 : 900,
           );
@@ -3520,8 +3526,19 @@ export class Flow {
       this.unlockAudio();
       this.phonePause();
     });
-    this.root.append(pill);
+    // the pause button, left of the sound button
+    const pause = h('button', { class: 'soundbtn pausebtn off', type: 'button', 'aria-label': 'Pause' });
+    pause.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4.2" height="14" rx="1.3"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.3"/></svg>';
+    pause.addEventListener('pointerdown', (e) => e.stopPropagation());
+    pause.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.unlockAudio();
+      this.phonePause();
+      pause.blur();
+    });
+    this.root.append(pill, pause);
     this.pill = pill;
+    this.pauseBtn = pause;
   }
 
   /** A new short match: the phone's player ("You") against a Rookie CPU in Sports Park, first to PHONE_RACE points, no shatters. */
@@ -3542,15 +3559,91 @@ export class Flow {
     this.beginMatch('park', false, { doubles: false, gamesToWin: 1, race: PHONE_RACE, players: [you, cpu], teamNames: ['You', 'CPU'], firstServer: 0 });
     if (this.hud) this.hud.clampFloats = true;
     this.pill?.classList.remove('off');
+    this.pauseBtn?.classList.remove('off');
   }
 
-  /** The pill: the send-it-to-a-laptop card, over the match (which waits). */
+  /** The pause button (or the pill): the match waits behind the pause menu. */
   private phonePause() {
     const m = this.app.match;
     if (!m || this.app.attract || this.screen || m.state === 'over') return;
     this.app.paused = true;
-    this.go(this.phoneCard(true));
+    this.go(this.phonePauseScreen());
     this.sound('select');
+  }
+
+  /** a menu row as the TV's quiet pause menu has them (the chosen one is a white pill), with an optional second line */
+  private phoneItem(label: string, sub?: string) {
+    const txt = h('span', null, label);
+    return { el: h('div', { class: 'item' }, h('div', { class: 'txt' }, txt, sub ? h('span', { class: 'sub' }, sub) : null)), txt };
+  }
+
+  /** copy the site's link; true if it went */
+  private async phoneCopy(): Promise<boolean> {
+    try {
+      await navigator.clipboard.writeText(SITE_URL);
+      return true;
+    } catch {
+      // (no clipboard API outside a secure page, or not allowed: the old way)
+      try {
+        const ta = h('textarea', { readonly: true, style: 'position:fixed;top:0;left:0;opacity:0' });
+        ta.value = SITE_URL;
+        document.body.append(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        ta.remove();
+        return ok;
+      } catch {
+        return false;
+      }
+    }
+  }
+
+  /** copy the link; `el` (a row's label) says so for a moment */
+  private async phoneCopyTo(el: HTMLElement, label: string) {
+    const ok = await this.phoneCopy();
+    el.textContent = ok ? 'Link copied' : SITE_URL.replace('https://', '');
+    window.setTimeout(() => (el.textContent = label), 2200);
+  }
+
+  /** hand the link on to a laptop: the share sheet (AirDrop, Messages, email), or else copy it */
+  private phoneSend(el: HTMLElement, label: string) {
+    const data = { title: 'Kaleydo World', text: 'Play Kaleydo World on your laptop — your phone becomes the racket.', url: SITE_URL };
+    if (typeof navigator.share === 'function')
+      navigator.share(data).catch((err: unknown) => {
+        if ((err as Error)?.name !== 'AbortError') void this.phoneCopyTo(el, label);
+      });
+    else void this.phoneCopyTo(el, label);
+  }
+
+  /** The phone's pause menu: the TV's quiet one (the match dims and blurs behind a short column). A tap outside it resumes. */
+  private phonePauseScreen(): Screen {
+    const SEND = 'Send the link to my laptop';
+    const resume = this.phoneItem('Resume');
+    const restart = this.phoneItem('Restart match');
+    const send = this.phoneItem(SEND, 'AirDrop, Messages or email');
+    const snd = this.phoneItem('');
+    const full = this.phoneItem('Open the full game here');
+    const showSnd = () => (snd.txt.textContent = this.settings.muted ? 'Sound: off' : 'Sound: on');
+    showSnd();
+    const nav = new Nav([
+      { el: resume.el, onSelect: () => this.resume() },
+      { el: restart.el, onSelect: () => this.beginPhoneMatch() },
+      { el: send.el, onSelect: () => this.phoneSend(send.txt, SEND) },
+      {
+        el: snd.el,
+        onSelect: () => {
+          this.soundToggle();
+          showSnd();
+        },
+      },
+      { el: full.el, onSelect: () => (location.href = '/?tv=1') },
+    ]);
+    const sheet = h('div', { class: 'sheet' }, h('h2', null, 'Paused'), h('div', { class: 'menu' }, resume.el, restart.el, send.el, snd.el, full.el));
+    const el = h('div', { class: 'screen pausemenu phmenu phpause' }, sheet);
+    el.addEventListener('click', (e) => {
+      if (!sheet.contains(e.target as Node)) this.resume();
+    });
+    return this.navScreen('phone-pause', el, nav, () => this.resume(), { title: 'Paused', hint: 'A to choose · B resume' });
   }
 
   /**
@@ -3579,56 +3672,26 @@ export class Flow {
   }
 
   /**
-   * The phone preview's card: after the match (`mid` false: "That was the taste."), or from the pill during one
-   * (`mid`: the match waits behind it). Send the site to a laptop (the share sheet, or copy), copy it, play again
-   * (or go back to the match), join a friend's room by its code, or open the full game here anyway.
+   * The phone preview's end card, in the pause menu's look: "That was the taste.", then send the link to a laptop
+   * (the share sheet, or copy), copy it, play again, join a friend's room by its code, or open the full game here anyway.
    */
-  private phoneCard(mid: boolean): Screen {
+  private phoneCard(): Screen {
     const m = this.app.match;
-    const done = !mid && !!m && m.score.winner >= 0;
+    const done = !!m && m.score.winner >= 0;
     const won = done && m!.score.winner === 0;
     const [a, b] = m ? m.score.points : [0, 0];
-    const btn = (label: string, cls = '') => h('button', { class: `ph-btn ${cls}`, type: 'button' }, label);
-    const send = btn('Send to my laptop', 'go');
-    const copyBtn = btn('Copy link');
-    const again = btn(mid ? 'Back to the match' : 'Play again');
-    /** copy the link; the button says so for a moment */
-    const copy = async (el: HTMLButtonElement, label: string) => {
-      let ok = false;
-      try {
-        await navigator.clipboard.writeText(SITE_URL);
-        ok = true;
-      } catch {
-        // (no clipboard API outside a secure page, or not allowed: the old way)
-        try {
-          const ta = h('textarea', { readonly: true, style: 'position:fixed;top:0;left:0;opacity:0' });
-          ta.value = SITE_URL;
-          document.body.append(ta);
-          ta.select();
-          ok = document.execCommand('copy');
-          ta.remove();
-        } catch {}
-      }
-      el.textContent = ok ? 'Link copied ✓' : SITE_URL.replace('https://', '');
-      window.setTimeout(() => (el.textContent = label), 2200);
-    };
-    send.addEventListener('click', () => {
-      const data = { title: 'Kaleydo World', text: 'Play Kaleydo World on your laptop — your phone becomes the racket.', url: SITE_URL };
-      if (typeof navigator.share === 'function')
-        navigator.share(data).catch((err: unknown) => {
-          if ((err as Error)?.name !== 'AbortError') void copy(send, 'Send to my laptop');
-        });
-      else void copy(send, 'Send to my laptop');
-    });
-    copyBtn.addEventListener('click', () => void copy(copyBtn, 'Copy link'));
-    again.addEventListener('click', () => {
-      this.sound('select');
-      if (mid) this.resume();
-      else this.beginPhoneMatch();
-    });
+    const SEND = 'Send the link to my laptop';
+    const send = this.phoneItem(SEND, 'AirDrop, Messages or email');
+    const copy = this.phoneItem('Copy link');
+    const again = this.phoneItem('Play again');
+    const nav = new Nav([
+      { el: send.el, onSelect: () => this.phoneSend(send.txt, SEND) },
+      { el: copy.el, onSelect: () => void this.phoneCopyTo(copy.txt, 'Copy link') },
+      { el: again.el, onSelect: () => this.beginPhoneMatch() },
+    ]);
     // a friend's game: their room's five-letter code opens the remote in it
     const code = h('input', { class: 'ph-code', type: 'text', maxlength: 5, placeholder: 'CODE', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', 'aria-label': 'Room code' });
-    const join = btn('Join');
+    const join = h('button', { class: 'ph-jbtn', type: 'button' }, 'Join');
     join.disabled = true;
     const valid = () => code.value.length === 5;
     code.addEventListener('input', () => {
@@ -3645,31 +3708,23 @@ export class Flow {
     });
     const sheet = h(
       'div',
-      { class: 'sheet panel phcard' },
+      { class: 'sheet' },
       h(
         'div',
         { class: 'ph-txt' },
-        done ? h('div', { class: `ph-result${won ? ' won' : ''}` }, won ? `You won ${a}–${b}` : `CPU won ${b}–${a}`) : null,
-        h('h2', { class: 'ph-head' }, mid ? 'Best on a laptop or TV' : 'That was the taste.'),
-        h('p', { class: 'ph-line' }, 'On a laptop or TV, your phone becomes the racket. You swing it for real.'),
+        done ? h('div', { class: 'olabel' }, won ? `You won ${a}–${b}` : `CPU won ${b}–${a}`) : null,
+        h('h2', null, 'That was the taste.'),
+        h('div', { class: 'hintline' }, 'On a laptop or TV, your phone becomes the racket. You swing it for real.'),
       ),
       h(
         'div',
         { class: 'ph-acts' },
-        send,
-        copyBtn,
-        again,
-        h('div', { class: 'ph-join' }, h('label', null, 'Join a friend’s game'), h('div', { class: 'ph-jrow' }, code, join)),
+        h('div', { class: 'menu' }, send.el, copy.el, again.el),
+        h('div', { class: 'ph-join' }, h('div', { class: 'olabel' }, 'Join a friend’s game'), h('div', { class: 'ph-jrow' }, code, join)),
         h('a', { class: 'ph-full', href: '/?tv=1' }, 'Open the full game here anyway'),
       ),
     );
-    return {
-      name: mid ? 'phone-pause' : 'phone-end',
-      el: h('div', { class: 'screen center phend' }, sheet),
-      input: (_slot, bt) => {
-        if (mid && (bt === 'b' || bt === 'home' || bt === 'plus')) this.resume();
-      },
-    };
+    return this.navScreen('phone-end', h('div', { class: 'screen pausemenu phmenu phend' }, sheet), nav);
   }
 
   // ---------------------------------------------------------------- per frame
