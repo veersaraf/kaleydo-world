@@ -361,15 +361,24 @@ export class Stage {
     }
   }
 
-  /** Render one camera full screen, or one camera per view side by side. */
-  render(cams: THREE.PerspectiveCamera | THREE.PerspectiveCamera[]) {
+  /**
+   * Render one camera full screen, or one camera per view side by side. `far`: the one camera looks from the far
+   * end (an online guest's own end), so the scenery turns round as it does for the far split-screen half — the far
+   * end's stands and props are built as backdrop and would sit right in front of it.
+   */
+  render(cams: THREE.PerspectiveCamera | THREE.PerspectiveCamera[], far = false) {
     if (!this.current) return;
     this.pinPrograms();
     const list = Array.isArray(cams) ? cams : [cams];
     if (this.views === 1 || list.length < 2) {
-      this.current.setView(0);
-      this.next?.setView(0);
+      const v = far ? 1 : 0;
+      this.current.setView(v);
+      this.next?.setView(v);
       this.renderView(list[0]);
+      if (far) {
+        this.current.setView(0);
+        this.next?.setView(0);
+      }
       return;
     }
     const r = this.renderer;

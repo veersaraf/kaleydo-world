@@ -1558,7 +1558,7 @@ export class App {
     view.state = m.state;
     view.beat = this.beat();
     this.stage.update(view);
-    this.stage.render(this.rig.cam);
+    this.stage.render(this.rig.cam, this.rig.side === 1);
     this.onFrame(realDt);
   }
 
