@@ -175,8 +175,13 @@ export class App {
 
   /** player preference: give each side its own view in local versus */
   splitPref = true;
-  /** this match wants a split screen (humans on both teams) */
+  /** this match wants a split screen (people at this screen on both teams) */
   split = false;
+  /** whether seat `slot` plays at this screen (the keyboard, or a phone of this TV's own), not on a guest TV's in another room */
+  private seatHere(slot: number) {
+    const pid = slot >= 0 ? this.input.seats[slot]?.pid : null;
+    return !pid || !this.link.padVia(pid);
+  }
   /** split screen is on right now (not during replays, menus…) */
   splitOn = false;
   onSplit: (on: boolean) => void = () => {};
@@ -400,7 +405,8 @@ export class App {
     this.match.onEvent = (e) => this.event(e);
     // (a guest TV may have had the main camera at the far end)
     this.rig.side = 0;
-    const humans = (team: number) => this.match!.players.some((p) => p.human && p.team === team);
+    // (a split screen is for two people at this screen: a phone that joined through a guest TV plays on its own screen)
+    const humans = (team: number) => this.match!.players.some((p) => p.human && p.team === team && this.seatHere(p.slot));
     this.split = !cfg.attract && !cfg.practice && this.splitPref && humans(0) && humans(1);
     this.anims = this.match.players.map((p) => new Animator(p));
     this.livePoses = this.anims.map((a) => a.pose);
@@ -1194,7 +1200,7 @@ export class App {
     };
     this.duelAnims = duelists.map((d) => new DuelAnimator(d.handed, d.look));
     this.stage.setPlayers(duelists.map((d) => d.look));
-    this.split = this.splitPref && duelists[0].cpu === null && duelists[1].cpu === null;
+    this.split = this.splitPref && duelists.every((d) => d.cpu === null && this.seatHere(d.slot));
     this.splitOn = this.split;
     this.applyViews();
     this.duelCam.snap();

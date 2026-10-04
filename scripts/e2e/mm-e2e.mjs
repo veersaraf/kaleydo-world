@@ -303,6 +303,11 @@ const seatsOk = await A.evaluate(() => {
   return { own: !l.padVia(s0.pid), via: l.padVia(s1.pid) === l.guests[0].gid };
 });
 check('team 0 is the host’s own phone, team 1 the phone opened from the guest’s QR code', seatsOk.own && seatsOk.via, JSON.stringify(seatsOk));
+{
+  // two people, but one at each screen: each TV draws its own player's view full screen
+  const sp = await A.evaluate(() => ({ pref: window.kaleido.splitPref, split: window.kaleido.split, on: window.kaleido.splitOn, mode: window.kaleido.rig.mode }));
+  check('the host is not split screen (the other person plays on their own TV)', sp.pref && !sp.split && !sp.on, JSON.stringify(sp));
+}
 await shot(A, '5-host-match');
 await shot(B, '6-guest-match');
 
